@@ -183,7 +183,8 @@ type error_ctx =
   [ `Table of tag | `Offset_table | `Table_directory ]
 (** The type for error contexts. *)
 
-type error = [
+type error =
+[
   | `Unknown_flavour of tag
   | `Unsupported_TTC
   | `Unsupported_cmaps of (int * int * int) list
@@ -196,7 +197,9 @@ type error = [
   | `Invalid_cp of int
   | `Invalid_cp_range of int * int
   | `Invalid_postscript_name of string
-  | `Unexpected_eoi of error_ctx ]
+  | `Unexpected_eoi of error_ctx
+  | `Invalid_cff  (* added by gfn *)
+]
 (** The type for decoding errors.
 
     {b Note.} In case of [`Invalid_poscript_name] a string of {e bytes} is
