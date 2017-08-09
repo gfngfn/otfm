@@ -215,13 +215,14 @@ let decoder src =
     buf = Buffer.create 253; }
 
 let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
-let err e = Error(e)
-let err_eoi d = Error(`Unexpected_eoi(d.ctx))
-let err_version d v = Error(`Unknown_version(d.ctx, v))
-let err_loca_format d v = Error(`Unknown_loca_format(d.ctx, v))
+let err e                    = Error(e)
+let err_eoi d                = Error(`Unexpected_eoi(d.ctx))
+let err_version d v          = Error(`Unknown_version(d.ctx, v))
+let err_loca_format d v      = Error(`Unknown_loca_format(d.ctx, v))
 let err_composite_format d v = Error(`Unknown_composite_format(d.ctx, v))
-let err_fatal d e = begin d.state <- `Fatal(e) ; Error(e) end
-let set_ctx d ctx = begin d.ctx <- ctx ; end
+let err_fatal d e            = begin d.state <- `Fatal(e) ; Error(e) end
+let set_ctx d ctx            = begin d.ctx <- ctx ; end
+
 let miss d count = d.i_max - d.i_pos + 1 < count
 let cur_pos d = d.i_pos
 let seek_pos pos d =
@@ -1108,6 +1109,28 @@ let loca d gid =
   ---------------------------------------------------------------------------*)
 
 type offsize = OffSize1 | OffSize2 | OffSize3 | OffSize4
+type keytype = ShortKey of int | LongKey of int
+
+module DictMap = Map.Make
+  (struct
+    type t = keytype
+    let compare kt1 kt2 =
+      match (kt1, kt2) with
+      | (ShortKey(i1), ShortKey(i2)) -> Pervasives.compare i1 i2
+      | (ShortKey(_), LongKey(_))    -> -1
+      | (LongKey(_), ShortKey(_))    -> 1
+      | (LongKey(i1), LongKey(i2))   -> Pervasives.compare i1 i2
+  end)
+
+let (~@) = Int32.of_int
+let (?@) = Int32.to_int
+let (-@) = Int32.sub
+let return v = Ok(v)
+let is_in_range a b x = (a <= x && x <= b)
+
+
+let confirm b =
+  if not b then Error(`Invalid_cff) else Ok()
 
 let d_offsize d =
   d_uint8 d >>= fun i ->
@@ -1120,22 +1143,75 @@ let d_offsize d =
 
 let d_offset ofsz d =
   match ofsz with
-  | OffSize1 -> d_uint8 d >>= fun i -> Ok(Int32.of_int i)
-  | OffSize2 -> d_uint16 d >>= fun i -> Ok(Int32.of_int i)
-  | OffSize3 -> d_uint24 d >>= fun i -> Ok(Int32.of_int i)
+  | OffSize1 -> d_uint8 d >>= fun i -> Ok(~@ i)
+  | OffSize2 -> d_uint16 d >>= fun i -> Ok(~@ i)
+  | OffSize3 -> d_uint24 d >>= fun i -> Ok(~@ i)
   | OffSize4 -> d_uint32 d
 
-let d_offset_singleton ofsz decoder d =
-  d_offset ofsz d >>= fun offset1 ->
-  if offset1 <> Int32.of_int 1 then Error(`Invalid_cff) else
-  d_offset ofsz d >>= fun offset2 ->
-  decoder (Int32.sub offset2 offset1) d
+let d_offset_singleton ofsz dl d =
+  d_offset ofsz d          >>= fun offset1 ->
+  confirm (offset1 = ~@ 1) >>= fun () ->
+  d_offset ofsz d          >>= fun offset2 ->
+  dl (offset2 -@ offset1) d
 
-let d_index_singleton d decoder =
+let d_index_singleton dl d =
+  d_uint8 d                       >>= fun count ->
+  confirm (count = 1)             >>= fun () ->
+  d_offsize d                     >>= fun offSize ->
+  d_offset_singleton offSize dl d >>= fun v ->
+  return v
+
+(*
+let d_index dl d =
   d_uint8 d   >>= fun count ->
-  if count <> 1 then Error(`Invalid_cff) else
   d_offsize d >>= fun offSize ->
-  d_offset_singleton offSize decoder d >>= fun v -> Ok(v)
+  d_offset offSize 
+*)
+
+let d_dict_value d =
+  d_uint8 d >>= function
+    | b0  when b0 |> is_in_range 32 246 ->
+        return (1, b0 - 139)
+    | b0  when b0 |> is_in_range 247 250 ->
+        d_uint8 d >>= fun b1 ->
+        return (2, (b0 - 247) * 256 + b1 + 108)
+    | b0  when b0 |> is_in_range 251 254 ->
+        d_uint8 d >>= fun b1 ->
+        return (2, -(b0 - 251) * 256 - b1 - 108)
+    | 28 ->
+        d_uint8 d >>= fun b1 ->
+        d_uint8 d >>= fun b2 ->
+        return (3, (b1 lsl 8) lor b2)
+    | 29 ->
+        d_uint8 d >>= fun b1 ->
+        d_uint8 d >>= fun b2 ->
+        d_uint8 d >>= fun b3 ->
+        d_uint8 d >>= fun b4 ->
+        return (5, (b1 lsl 24) lor (b2 lsl 16) lor (b3 lsl 8) lor b4)
+    | 30 -> failwith "a real number operand; remains to be implemented."
+    | _ -> err `Invalid_cff
+
+let d_dict_key d =
+  d_uint8 d >>= function
+    | k0  when k0 |> is_in_range 0 11 ->
+        return (1, ShortKey(k0))
+    | k0  when k0 |> is_in_range 13 21 ->
+        return (1, ShortKey(k0))
+    | 12 ->
+        d_uint8 d >>= fun k1 ->
+        return (2, LongKey(k1))
+    | _ ->
+        err `Invalid_cff
+
+let d_dict len d =
+  let rec loop_keyval mapacc len d =
+    if len = 0 then return mapacc else
+    if len < 0 then err `Invalid_cff else
+      d_dict_value d >>= fun (stepv, v) ->
+      d_dict_key d   >>= fun (stepk, k) ->
+      loop_keyval (mapacc |> DictMap.add k v) (len - stepv - stepk) d
+  in
+    loop_keyval DictMap.empty len d
 
 let init_cff d =
   init_decoder d >>=
@@ -1147,5 +1223,8 @@ let init_cff d =
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
   (* Name INDEX (should contain only one element): *)
-    d_index_singleton d (fun i -> d_bytes (Int32.to_int i)) >>= fun name ->
-      Ok(name)  (* temporary *)
+    d_index_singleton (fun i -> d_bytes (?@ i)) d >>= fun name ->
+
+  (* Top DICT INDEX (should contain only one DICT): *)
+    d_index_singleton (fun i -> d_dict (?@ i)) d  >>= fun dictmap ->
+      Ok((name, dictmap))  (* temporary *)
