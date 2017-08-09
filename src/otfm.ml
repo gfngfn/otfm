@@ -1161,12 +1161,27 @@ let d_index_singleton dl d =
   d_offset_singleton offSize dl d >>= fun v ->
   return v
 
-(*
+let d_offset_list ofsz count d =
+  let rec aux offsetprev acc i =
+    if i >= count then return (List.rev acc) else
+    d_offset ofsz d >>= fun offset ->
+    aux offset ((offset -@ offsetprev) :: acc) (i + 1)
+  in
+  d_offset ofsz d          >>= fun offset1 ->
+  confirm (offset1 = ~@ 1) >>= fun () ->
+  aux (~@ 1) [] 0
+
 let d_index dl d =
-  d_uint8 d   >>= fun count ->
-  d_offsize d >>= fun offSize ->
-  d_offset offSize 
-*)
+  let rec loop_data acc = function
+    | []          -> return (List.rev acc)
+    | len :: tail ->
+        dl len d >>= fun v ->
+        loop_data (v :: acc) tail
+  in
+  d_uint8 d                     >>= fun count ->
+  d_offsize d                   >>= fun offSize ->
+  d_offset_list offSize count d >>= fun lenlst ->
+  loop_data [] lenlst
 
 let d_dict_value d =
   d_uint8 d >>= function
