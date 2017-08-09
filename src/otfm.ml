@@ -1239,7 +1239,10 @@ let init_cff d =
     d_skip (hdrSize - 4) d >>= fun () ->
   (* Name INDEX (should contain only one element): *)
     d_index_singleton (fun i -> d_bytes (?@ i)) d >>= fun name ->
-
   (* Top DICT INDEX (should contain only one DICT): *)
     d_index_singleton (fun i -> d_dict (?@ i)) d  >>= fun dictmap ->
-      Ok((name, dictmap))  (* temporary *)
+  (* String INDEX: *)
+    d_index (fun i -> d_bytes (?@ i)) d  >>= fun stringlst ->
+  (* Global Subr INDEX: *)
+    d_index (fun i -> d_bytes (?@ i)) d  >>= fun subrlst ->
+      Ok((name, dictmap, stringlst, subrlst))  (* temporary *)
