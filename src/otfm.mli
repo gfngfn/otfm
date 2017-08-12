@@ -198,7 +198,14 @@ type error =
   | `Invalid_cp_range of int * int
   | `Invalid_postscript_name of string
   | `Unexpected_eoi of error_ctx
-  | `Invalid_cff  (* added by gfn *)
+(* added by gfn: *)
+  | `Invalid_cff_not_a_quad
+  | `Invalid_cff_not_an_integer
+  | `Invalid_cff_not_an_element
+  | `Invalid_cff_not_an_offsize
+  | `Invalid_cff_not_a_singleton
+  | `Invalid_cff_inconsistent_length
+  | `Invalid_cff_invalid_first_offset
 ]
 (** The type for decoding errors.
 
@@ -531,4 +538,4 @@ type cff_top_dict =
 
 val cff_info : decoder -> (cff_info, error) result
 
-val cff_top_dict : cff_info -> (cff_top_dict, error) result
+val cff_top_dict : cff_info -> (cff_top_dict option, error) result

@@ -35,7 +35,9 @@ let main () =
   let d = Otfm.decoder (`String(src)) in
   let () = print_endline "finish initializing decoder" in
   Otfm.cff_info d >>= fun cffi ->
-  Otfm.cff_top_dict cffi >>= fun topdict ->
+  Otfm.cff_top_dict cffi >>= function
+    | None          -> begin print_endline "none.\n"; Ok() end
+    | Some(topdict) ->
   let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
   Printf.printf "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
   Ok()

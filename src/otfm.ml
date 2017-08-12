@@ -140,7 +140,14 @@ type error =
   | `Invalid_cp_range of int * int
   | `Invalid_postscript_name of string
   | `Unexpected_eoi of error_ctx
-  | `Invalid_cff  (* added by gfn *)
+(* added by gfn: *)
+  | `Invalid_cff_not_a_quad
+  | `Invalid_cff_not_an_integer
+  | `Invalid_cff_not_an_element
+  | `Invalid_cff_not_an_offsize
+  | `Invalid_cff_not_a_singleton
+  | `Invalid_cff_inconsistent_length
+  | `Invalid_cff_invalid_first_offset
 ]
 
 let pp_ctx ppf = function
@@ -177,8 +184,21 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ PostScript@ name (%S)@]" n
 | `Unexpected_eoi ctx ->
     pp ppf "@[Unexpected@ end@ of@ input@ in %a@]" pp_ctx ctx
-| `Invalid_cff ->
-    pp ppf "@[Invalid@ CFF@ table@]"  (* added by gfn *)
+(* added by gfn: *)
+| `Invalid_cff_not_a_quad ->
+    pp ppf "@[Invalid@ CFF@ table;@ not@ a@ quad@]"
+| `Invalid_cff_not_an_integer ->
+    pp ppf "@[Invalid@ CFF@ table;@ not@ an@ integer@]"
+| `Invalid_cff_not_a_singleton ->
+    pp ppf "@[Invalid@ CFF@ table;@ not@ a@ singleton@]"
+| `Invalid_cff_not_an_element ->
+    pp ppf "@[Invalid@ CFF@ table;@ not@ an@ element@]"
+| `Invalid_cff_not_an_offsize ->
+    pp ppf "@[Invalid@ CFF@ table;@ not@ an@ offsize@]"
+| `Invalid_cff_inconsistent_length ->
+    pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
+| `Invalid_cff_invalid_first_offset ->
+    pp ppf "@[Invalid@ CFF@ table;@ invalid@ first@ offset@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
@@ -1126,7 +1146,7 @@ module DictMap = Map.Make
       | (LongKey(i1), LongKey(i2))   -> Pervasives.compare i1 i2
   end)
 
-type cff_info = string * (cff_value list) DictMap.t
+type cff_info = (string option * (cff_value list) DictMap.t) option
 
 type cff_top_dict =
   {
@@ -1149,8 +1169,8 @@ let return v = Ok(v)
 let is_in_range a b x = (a <= x && x <= b)
 
 
-let confirm b =
-  if not b then Error(`Invalid_cff) else Ok()
+let confirm b e =
+  if not b then Error(e) else Ok()
 
 let d_offsize d =
   d_uint8 d >>= fun i ->
@@ -1159,7 +1179,7 @@ let d_offsize d =
     | 2 -> Ok(OffSize2)
     | 3 -> Ok(OffSize3)
     | 4 -> Ok(OffSize4)
-    | _ -> Error(`Invalid_cff)
+    | _ -> Error(`Invalid_cff_not_an_offsize)
 
 let d_offset ofsz d =
   match ofsz with
@@ -1169,16 +1189,16 @@ let d_offset ofsz d =
   | OffSize4 -> d_uint32 d
 
 let d_offset_singleton ofsz dl d =
-  d_offset ofsz d          >>= fun offset1 ->
-  confirm (offset1 = ~@ 1) >>= fun () ->
-  d_offset ofsz d          >>= fun offset2 ->
+  d_offset ofsz d                                            >>= fun offset1 ->
+  confirm (offset1 = ~@ 1) `Invalid_cff_invalid_first_offset >>= fun () ->
+  d_offset ofsz d                                            >>= fun offset2 ->
   dl (offset2 -@ offset1) d
 
 let d_index_singleton dl d =
-  d_uint8 d                       >>= fun count ->
-  confirm (count = 1)             >>= fun () ->
-  d_offsize d                     >>= fun offSize ->
-  d_offset_singleton offSize dl d >>= fun v ->
+  d_uint8 d                                        >>= fun count ->
+  confirm (count = 1) `Invalid_cff_not_a_singleton >>= fun () ->
+  d_offsize d                                      >>= fun offSize ->
+  d_offset_singleton offSize dl d                  >>= fun v ->
   return v
 
 let d_offset_list ofsz count d =
@@ -1187,8 +1207,8 @@ let d_offset_list ofsz count d =
     d_offset ofsz d >>= fun offset ->
     aux offset ((offset -@ offsetprev) :: acc) (i + 1)
   in
-  d_offset ofsz d          >>= fun offset1 ->
-  confirm (offset1 = ~@ 1) >>= fun () ->
+  d_offset ofsz d                                            >>= fun offset1 ->
+  confirm (offset1 = ~@ 1) `Invalid_cff_invalid_first_offset >>= fun () ->
   aux (~@ 1) [] 0
 
 let d_index dl d =
@@ -1233,7 +1253,7 @@ let d_dict_element d =
         d_uint8 d >>= fun k1 ->
         return (2, Key(LongKey(k1)))
     | _ ->
-        err `Invalid_cff
+        err `Invalid_cff_not_an_element
 
 let d_dict_keyval d =
   let rec aux stepsum vacc =
@@ -1247,7 +1267,7 @@ let d_dict_keyval d =
 let d_dict len d =
   let rec loop_keyval mapacc len d =
     if len = 0 then return mapacc else
-    if len < 0 then err `Invalid_cff else
+    if len < 0 then err `Invalid_cff_inconsistent_length else
       d_dict_keyval d >>= fun (step, vlst, k) ->
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
@@ -1263,43 +1283,54 @@ let cff_info d =
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
   (* Name INDEX (should contain only one element): *)
-    d_index_singleton (fun i -> d_bytes (?@ i)) d >>= fun name ->
+    d_index (fun i -> d_bytes (?@ i)) d >>= fun namelst ->
+    begin
+      match namelst with
+      | []          -> return None
+      | _ :: _ :: _ -> err `Invalid_cff_not_a_singleton
+      | n :: []     -> return (Some(n))
+    end >>= fun name ->
   (* Top DICT INDEX (should contain only one DICT): *)
-    d_index_singleton (fun i -> d_dict (?@ i)) d  >>= fun dictmap ->
+    d_index (fun i -> d_dict (?@ i)) d  >>= function
+      | []            -> err `Invalid_cff_not_a_singleton
+      | _ :: _ :: _   -> err `Invalid_cff_not_a_singleton
+      | dictmap :: [] ->
   (* String INDEX: *)
     d_index (fun i -> d_bytes (?@ i)) d  >>= fun stringlst ->
   (* Global Subr INDEX: *)
     d_index (fun i -> d_bytes (?@ i)) d  >>= fun subrlst ->
-    return (name, dictmap)
+    return (Some((name, dictmap)))
 
-let cff_top_dict (_, dictmap) =
-  let get_integer key dflt =
-    try
-      let dictvlst = DictMap.find key dictmap in
-        match dictvlst with
-        | Integer(i) :: [] -> return i
-        | _                -> err `Invalid_cff
-    with
-    | Not_found -> return dflt
-  in
-  let get_boolean key dflt =
-    get_integer key (if dflt then 0 else 1) >>= fun i -> return (i <> 0)
-  in
-  let get_iquad key dflt =
-    try
-      let dictvlst = dictmap |> DictMap.find key in
-        match dictvlst with
-        | Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: [] -> return (i1, i2, i3, i4)
-        | _                                                              -> err `Invalid_cff
-    with
-    | Not_found -> return dflt
-  in
-    get_boolean (LongKey(1)) false       >>= fun is_fixed_pitch ->
-    get_integer (LongKey(2)) 0           >>= fun italic_angle ->
-    get_integer (LongKey(3)) (-100)      >>= fun underline_position ->
-    get_integer (LongKey(4)) 50          >>= fun underline_thickness ->
-    get_integer (LongKey(5)) 0           >>= fun paint_type ->
-    get_integer (LongKey(6)) 2           >>= fun charstring_type ->
-    get_iquad (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-    get_integer (LongKey(8)) 0           >>= fun stroke_width ->
-    return { is_fixed_pitch; italic_angle; underline_position; underline_thickness; paint_type; charstring_type; font_bbox; stroke_width; }
+let cff_top_dict = function
+  | None               -> Ok(None)
+  | Some((_, dictmap)) ->
+      let get_integer key dflt =
+        try
+          let dictvlst = DictMap.find key dictmap in
+            match dictvlst with
+            | Integer(i) :: [] -> return i
+            | _                -> err `Invalid_cff_not_an_integer
+        with
+        | Not_found -> return dflt
+      in
+      let get_boolean key dflt =
+        get_integer key (if dflt then 0 else 1) >>= fun i -> return (i <> 0)
+      in
+      let get_iquad key dflt =
+        try
+          let dictvlst = dictmap |> DictMap.find key in
+            match dictvlst with
+            | Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: [] -> return (i1, i2, i3, i4)
+            | _                                                              -> err `Invalid_cff_not_a_quad
+        with
+        | Not_found -> return dflt
+      in
+        get_boolean (LongKey(1)) false       >>= fun is_fixed_pitch ->
+        get_integer (LongKey(2)) 0           >>= fun italic_angle ->
+        get_integer (LongKey(3)) (-100)      >>= fun underline_position ->
+        get_integer (LongKey(4)) 50          >>= fun underline_thickness ->
+        get_integer (LongKey(5)) 0           >>= fun paint_type ->
+        get_integer (LongKey(6)) 2           >>= fun charstring_type ->
+        get_iquad (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+        get_integer (LongKey(8)) 0           >>= fun stroke_width ->
+        return (Some{ is_fixed_pitch; italic_angle; underline_position; underline_thickness; paint_type; charstring_type; font_bbox; stroke_width; })
