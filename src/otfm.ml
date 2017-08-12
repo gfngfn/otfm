@@ -190,7 +190,8 @@ type src = [ `String of string ]
    but rather pass them as arguments to decoding functions. *)
 
 type decoder =
-  { mutable i : string;                                       (* input data. *)
+  {
+    mutable i : string;                                       (* input data. *)
     mutable i_pos : int;                          (* input current position. *)
     mutable i_max : int;                          (* input maximal position. *)
     mutable t_pos : int;                  (* current decoded table position. *)
@@ -201,7 +202,8 @@ type decoder =
     mutable loca_pos : int;                    (* for `TTF fonts, lazy init. *)
     mutable loca_format : int;                 (* for `TTF fonts, lazy init. *)
     mutable glyf_pos : int;                    (* for `TTF fonts, lazy init. *)
-    mutable buf : Buffer.t; }                            (* internal buffer. *)
+    mutable buf : Buffer.t;                              (* internal buffer. *)
+  }
 
 let decoder_src d = `String(d.i)
 let decoder src =
@@ -1109,11 +1111,13 @@ let loca d gid =
   ---------------------------------------------------------------------------*)
 
 type offsize = OffSize1 | OffSize2 | OffSize3 | OffSize4
-type keytype = ShortKey of int | LongKey of int
+type cff_key = ShortKey of int | LongKey of int
+type cff_value = Integer of int | Real of float
+type dict_element = Value of cff_value | Key of cff_key
 
 module DictMap = Map.Make
   (struct
-    type t = keytype
+    type t = cff_key
     let compare kt1 kt2 =
       match (kt1, kt2) with
       | (ShortKey(i1), ShortKey(i2)) -> Pervasives.compare i1 i2
@@ -1121,6 +1125,22 @@ module DictMap = Map.Make
       | (LongKey(_), ShortKey(_))    -> 1
       | (LongKey(i1), LongKey(i2))   -> Pervasives.compare i1 i2
   end)
+
+type cff_info = string * (cff_value list) DictMap.t
+
+type cff_top_dict =
+  {
+    is_fixed_pitch : bool;
+    italic_angle : int;
+    underline_position : int;
+    underline_thickness : int;
+    paint_type : int;
+    charstring_type : int;
+    (* font_matrix : float * float * float * float; *)
+    font_bbox : int * int * int * int;
+    stroke_width : int;
+  }
+
 
 let (~@) = Int32.of_int
 let (?@) = Int32.to_int
@@ -1183,52 +1203,57 @@ let d_index dl d =
   d_offset_list offSize count d >>= fun lenlst ->
   loop_data [] lenlst
 
-let d_dict_value d =
+let d_dict_element d =
   d_uint8 d >>= function
     | b0  when b0 |> is_in_range 32 246 ->
-        return (1, b0 - 139)
+        return (1, Value(Integer(b0 - 139)))
     | b0  when b0 |> is_in_range 247 250 ->
         d_uint8 d >>= fun b1 ->
-        return (2, (b0 - 247) * 256 + b1 + 108)
+        return (2, Value(Integer((b0 - 247) * 256 + b1 + 108)))
     | b0  when b0 |> is_in_range 251 254 ->
         d_uint8 d >>= fun b1 ->
-        return (2, -(b0 - 251) * 256 - b1 - 108)
+        return (2, Value(Integer(-(b0 - 251) * 256 - b1 - 108)))
     | 28 ->
         d_uint8 d >>= fun b1 ->
         d_uint8 d >>= fun b2 ->
-        return (3, (b1 lsl 8) lor b2)
+        return (3, Value(Integer((b1 lsl 8) lor b2)))
     | 29 ->
         d_uint8 d >>= fun b1 ->
         d_uint8 d >>= fun b2 ->
         d_uint8 d >>= fun b3 ->
         d_uint8 d >>= fun b4 ->
-        return (5, (b1 lsl 24) lor (b2 lsl 16) lor (b3 lsl 8) lor b4)
-    | 30 -> failwith "a real number operand; remains to be implemented."
-    | _ -> err `Invalid_cff
-
-let d_dict_key d =
-  d_uint8 d >>= function
+        return (5, Value(Integer((b1 lsl 24) lor (b2 lsl 16) lor (b3 lsl 8) lor b4)))
+    | 30 ->
+        failwith "a real number operand; remains to be implemented."
     | k0  when k0 |> is_in_range 0 11 ->
-        return (1, ShortKey(k0))
+        return (1, Key(ShortKey(k0)))
     | k0  when k0 |> is_in_range 13 21 ->
-        return (1, ShortKey(k0))
+        return (1, Key(ShortKey(k0)))
     | 12 ->
         d_uint8 d >>= fun k1 ->
-        return (2, LongKey(k1))
+        return (2, Key(LongKey(k1)))
     | _ ->
         err `Invalid_cff
+
+let d_dict_keyval d =
+  let rec aux stepsum vacc =
+    d_dict_element d >>= fun (step, elem) ->
+      match elem with
+      | Value(v) -> aux (stepsum + step) (v :: vacc)
+      | Key(k)   -> return (stepsum + step, List.rev vacc, k)
+  in
+    aux 0 []
 
 let d_dict len d =
   let rec loop_keyval mapacc len d =
     if len = 0 then return mapacc else
     if len < 0 then err `Invalid_cff else
-      d_dict_value d >>= fun (stepv, v) ->
-      d_dict_key d   >>= fun (stepk, k) ->
-      loop_keyval (mapacc |> DictMap.add k v) (len - stepv - stepk) d
+      d_dict_keyval d >>= fun (step, vlst, k) ->
+      loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
     loop_keyval DictMap.empty len d
 
-let init_cff d =
+let cff_info d =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   (* Header: *)
@@ -1245,4 +1270,36 @@ let init_cff d =
     d_index (fun i -> d_bytes (?@ i)) d  >>= fun stringlst ->
   (* Global Subr INDEX: *)
     d_index (fun i -> d_bytes (?@ i)) d  >>= fun subrlst ->
-      Ok((name, dictmap, stringlst, subrlst))  (* temporary *)
+    return (name, dictmap)
+
+let cff_top_dict (_, dictmap) =
+  let get_integer key dflt =
+    try
+      let dictvlst = DictMap.find key dictmap in
+        match dictvlst with
+        | Integer(i) :: [] -> return i
+        | _                -> err `Invalid_cff
+    with
+    | Not_found -> return dflt
+  in
+  let get_boolean key dflt =
+    get_integer key (if dflt then 0 else 1) >>= fun i -> return (i <> 0)
+  in
+  let get_iquad key dflt =
+    try
+      let dictvlst = dictmap |> DictMap.find key in
+        match dictvlst with
+        | Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: [] -> return (i1, i2, i3, i4)
+        | _                                                              -> err `Invalid_cff
+    with
+    | Not_found -> return dflt
+  in
+    get_boolean (LongKey(1)) false       >>= fun is_fixed_pitch ->
+    get_integer (LongKey(2)) 0           >>= fun italic_angle ->
+    get_integer (LongKey(3)) (-100)      >>= fun underline_position ->
+    get_integer (LongKey(4)) 50          >>= fun underline_thickness ->
+    get_integer (LongKey(5)) 0           >>= fun paint_type ->
+    get_integer (LongKey(6)) 2           >>= fun charstring_type ->
+    get_iquad (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+    get_integer (LongKey(8)) 0           >>= fun stroke_width ->
+    return { is_fixed_pitch; italic_angle; underline_position; underline_thickness; paint_type; charstring_type; font_bbox; stroke_width; }

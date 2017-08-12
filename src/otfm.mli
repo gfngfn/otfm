@@ -513,3 +513,22 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
+
+type cff_info
+
+type cff_top_dict =
+  {
+    is_fixed_pitch : bool;
+    italic_angle : int;
+    underline_position : int;
+    underline_thickness : int;
+    paint_type : int;
+    charstring_type : int;
+    (* font_matrix : float * float * float * float; *)
+    font_bbox : int * int * int * int;
+    stroke_width : int;
+  }
+
+val cff_info : decoder -> (cff_info, error) result
+
+val cff_top_dict : cff_info -> (cff_top_dict, error) result
