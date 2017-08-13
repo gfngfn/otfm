@@ -144,7 +144,7 @@ type error =
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
-  | `Invalid_cff_not_an_offsize
+  | `Invalid_cff_not_an_offsize of int
   | `Invalid_cff_not_a_singleton
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
@@ -193,8 +193,8 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ not@ a@ singleton@]"
 | `Invalid_cff_not_an_element ->
     pp ppf "@[Invalid@ CFF@ table;@ not@ an@ element@]"
-| `Invalid_cff_not_an_offsize ->
-    pp ppf "@[Invalid@ CFF@ table;@ not@ an@ offsize@]"
+| `Invalid_cff_not_an_offsize(n) ->
+    pp ppf "@[Invalid@ CFF@ table;@ not@ an@ offsize@ %d@]" n
 | `Invalid_cff_inconsistent_length ->
     pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
 | `Invalid_cff_invalid_first_offset ->
@@ -1179,7 +1179,7 @@ let d_offsize d =
     | 2 -> Ok(OffSize2)
     | 3 -> Ok(OffSize3)
     | 4 -> Ok(OffSize4)
-    | _ -> Error(`Invalid_cff_not_an_offsize)
+    | n -> Error(`Invalid_cff_not_an_offsize(n))
 
 let d_offset ofsz d =
   match ofsz with
@@ -1219,6 +1219,8 @@ let d_index dl d =
         loop_data (v :: acc) tail
   in
   d_uint8 d                     >>= fun count ->
+  Printf.printf "count: %d\n" count ;  (* for debug *)
+  if count = 0 then return [] else
   d_offsize d                   >>= fun offSize ->
   d_offset_list offSize count d >>= fun lenlst ->
   loop_data [] lenlst
@@ -1255,9 +1257,16 @@ let d_dict_element d =
     | _ ->
         err `Invalid_cff_not_an_element
 
+let pp_element ppf = function
+  | Value(Integer(i)) -> Format.fprintf ppf "Integer(%d)" i
+  | Value(Real(r))    -> Format.fprintf ppf "Real(_)"
+  | Key(LongKey(x))   -> Format.fprintf ppf "LongKey(%d)" x
+  | Key(ShortKey(x))  -> Format.fprintf ppf "ShortKey(%d)" x
+
 let d_dict_keyval d =
   let rec aux stepsum vacc =
     d_dict_element d >>= fun (step, elem) ->
+      Format.eprintf "element: %d, %a\n" step pp_element elem ;  (* for debug *)
       match elem with
       | Value(v) -> aux (stepsum + step) (v :: vacc)
       | Key(k)   -> return (stepsum + step, List.rev vacc, k)
@@ -1266,23 +1275,27 @@ let d_dict_keyval d =
 
 let d_dict len d =
   let rec loop_keyval mapacc len d =
-    if len = 0 then return mapacc else
-    if len < 0 then err `Invalid_cff_inconsistent_length else
+    if len = -1 (* doubtful*) then return mapacc else
+    if len < -1 (* doubtful*) then err `Invalid_cff_inconsistent_length else
       d_dict_keyval d >>= fun (step, vlst, k) ->
+      Printf.printf "step: %d\n" step ;  (*for debug *)
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
+    Printf.printf "length: %d\n" len ;  (* for debug *)
     loop_keyval DictMap.empty len d
 
 let cff_info d =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   (* Header: *)
+    Printf.printf "Header\n" ;  (* for debug *)
     d_uint8 d              >>= fun major ->
     d_uint8 d              >>= fun minor ->
     d_uint8 d              >>= fun hdrSize ->
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
   (* Name INDEX (should contain only one element): *)
+    Printf.printf "Name INDEX\n" ;  (* for debug *)
     d_index (fun i -> d_bytes (?@ i)) d >>= fun namelst ->
     begin
       match namelst with
@@ -1291,14 +1304,19 @@ let cff_info d =
       | n :: []     -> return (Some(n))
     end >>= fun name ->
   (* Top DICT INDEX (should contain only one DICT): *)
+    Printf.printf "Top DICT INDEX\n" ;  (* for debug *)
     d_index (fun i -> d_dict (?@ i)) d  >>= function
       | []            -> err `Invalid_cff_not_a_singleton
       | _ :: _ :: _   -> err `Invalid_cff_not_a_singleton
       | dictmap :: [] ->
+(*
   (* String INDEX: *)
+    Printf.printf "String INDEX\n" ;  (* for debug *)
     d_index (fun i -> d_bytes (?@ i)) d  >>= fun stringlst ->
   (* Global Subr INDEX: *)
+    Printf.printf "Global Subr INDEX\n" ;  (* for debug *)
     d_index (fun i -> d_bytes (?@ i)) d  >>= fun subrlst ->
+*)
     return (Some((name, dictmap)))
 
 let cff_top_dict = function
@@ -1314,7 +1332,7 @@ let cff_top_dict = function
         | Not_found -> return dflt
       in
       let get_boolean key dflt =
-        get_integer key (if dflt then 0 else 1) >>= fun i -> return (i <> 0)
+        get_integer key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
       in
       let get_iquad key dflt =
         try
@@ -1333,4 +1351,13 @@ let cff_top_dict = function
         get_integer (LongKey(6)) 2           >>= fun charstring_type ->
         get_iquad (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
         get_integer (LongKey(8)) 0           >>= fun stroke_width ->
-        return (Some{ is_fixed_pitch; italic_angle; underline_position; underline_thickness; paint_type; charstring_type; font_bbox; stroke_width; })
+        return (Some{
+          is_fixed_pitch;
+          italic_angle;
+          underline_position;
+          underline_thickness;
+          paint_type;
+          charstring_type;
+          font_bbox;
+          stroke_width;
+        })

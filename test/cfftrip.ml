@@ -38,9 +38,16 @@ let main () =
   Otfm.cff_top_dict cffi >>= function
     | None          -> begin print_endline "none.\n"; Ok() end
     | Some(topdict) ->
-  let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
-  Printf.printf "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
-  Ok()
+        let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
+        Printf.printf "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
+        Printf.printf "IsFixedPitch: %B\n" topdict.Otfm.is_fixed_pitch;
+        Printf.printf "ItalicAngle: %d\n" topdict.Otfm.italic_angle;
+        Printf.printf "UnderlinePosition: %d\n" topdict.Otfm.underline_position;
+        Printf.printf "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
+        Printf.printf "PaintType: %d\n" topdict.Otfm.paint_type;
+        Printf.printf "CharstringType: %d\n" topdict.Otfm.charstring_type;
+        Printf.printf "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
+        Ok()
 
 let () =
   match main () with

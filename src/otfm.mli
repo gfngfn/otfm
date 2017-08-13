@@ -202,7 +202,7 @@ type error =
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
-  | `Invalid_cff_not_an_offsize
+  | `Invalid_cff_not_an_offsize of int
   | `Invalid_cff_not_a_singleton
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
