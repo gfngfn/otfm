@@ -1159,6 +1159,56 @@ let d_from_list df n d =
     aux 0
 
 
+let d_list df d =
+  let rec aux acc i =
+    if i <= 0 then Ok(List.rev acc) else
+    df d >>= fun data ->
+    aux (data :: acc) (i - 1)
+  in
+    d_uint16 d >>= fun count ->
+    aux [] count
+
+
+let d_list_for_each_index df indexlst d =
+  let rec aux imax acc i =
+    if i >= imax then Ok()  (* temporary *) else
+    df d >>= fun data ->
+    if List.mem i indexlst then
+      aux imax (data :: acc) (i + 1)
+    else
+      aux imax acc (i + 1)
+  in
+    d_uint16 d >>= fun count ->
+    aux count [] 0
+
+
+type lookup_type = [ `Single | `Multiple | `Alternate | `Ligature ]
+
+
+let gsub_lookup_type = function
+  | 1 -> `Single
+  | 2 -> `Multiple
+  | 3 -> `Alternate
+  | 4 -> `Ligature
+  | _ -> assert false
+    (* temporary *)
+
+
+let lookup offset d =
+  d_uint16 d >>= fun lookupType_raw ->
+  let lookupType = gsub_lookup_type lookupType_raw in
+  d_uint16 d >>= fun lookupFlag ->
+  let rightToLeft      = 0 < lookupFlag land 1 in
+  let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
+  let ignoreLigatures  = 0 < lookupFlag land 4 in
+  let ignoreMarks      = 0 < lookupFlag land 8 in
+  Ok() (* remains *)
+  
+
+let lookup_every_pos offsetlst d =
+  Ok() (* remains *)
+
+
 let gsub d scriptTag langSysTag_opt =
   init_decoder d >>=
   seek_table Tag.gsub d >>= function
@@ -1167,10 +1217,11 @@ let gsub d scriptTag langSysTag_opt =
         let offset_GSUB = cur_pos d in
         d_uint16 d >>= fun version ->
         if version <> 0x00010000 then err_version d (Int32.of_int version) else
-        d_uint16 d >>= fun offset_ScriptList ->
-        d_uint16 d >>= fun offset_FeatureList ->
-        d_uint16 d >>= fun offset_LookupList ->
-        seek_pos (offset_GSUB + offset_ScriptList) d >>= fun () ->
+        d_uint16 d >>= fun reloffset_ScriptList ->
+        d_uint16 d >>= fun reloffset_FeatureList ->
+        d_uint16 d >>= fun reloffset_LookupList ->
+        let offset_ScriptList = offset_GSUB + reloffset_ScriptList in
+        seek_pos offset_ScriptList d >>= fun () ->
         seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
         if not found then Ok()  (* temporary *) else
           (* -- now the position is set to the beginning of the required Script table -- *)
@@ -1195,11 +1246,24 @@ let gsub d scriptTag langSysTag_opt =
         d_uint16 d >>= fun reqFeatureIndex ->
         if reqFeatureIndex = 0xFFFF then Ok()  (* temporary; when no feature is the default one *) else
           (* -- now we are going to see FeatureList table -- *)
+        let offset_FeatureList = offset_GSUB + reloffset_FeatureList in
         seek_pos offset_FeatureList d >>= fun () ->
         d_from_list (fun d ->
           d_bytes 4 d >>= fun _ ->
           d_uint16 d)
-          reqFeatureIndex d >>= fun offset_Feature_table ->
+          reqFeatureIndex d >>= fun reloffset_Feature_table ->
+        let offset_Feature_table = offset_FeatureList + reloffset_Feature_table in
+        seek_pos offset_Feature_table d >>= fun () ->
+          (* -- now the position is set to the beginning of the required Feature table -- *)
+        d_uint16 d >>= fun reloffset_FeatureParams ->
+        d_list d_uint16 d >>= fun lookuplst ->
+          (* -- now we are going to see LookupList table -- *)
+        let offset_LookupList = offset_GSUB + reloffset_LookupList in
+        seek_pos offset_LookupList d >>= fun () ->
+        d_list_for_each_index (fun d ->
+          d_uint16 d >>= fun reloffset ->
+          Ok(offset_LookupList + reloffset)) lookuplst d >>= fun offsetlst ->
+        lookup_every_pos offsetlst d >>= fun _ ->
         Ok()
 
 
