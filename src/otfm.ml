@@ -257,7 +257,7 @@ let seek_table tag d () =
     let (_, pos, len) = List.find (fun (t, _, _) -> tag = t) d.tables in
       if pos > d.i_max then err (`Invalid_offset(`Table(tag), pos)) else
         begin
-          set_ctx d (`Table tag) ;
+          set_ctx d (`Table(tag)) ;
           d.t_pos <- pos ;
           d.i_pos <- pos ;
           Ok(Some(len))
@@ -1129,6 +1129,81 @@ let loca d gid =
    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
+
+(* -- GSUB table -- *)
+
+let seek_pos_from_list origin scriptTag d =
+  let rec aux i =
+    if i <= 0 then Ok(false) else
+    begin
+      d_bytes 4 d >>= fun tag ->
+      d_uint16 d  >>= fun offset ->
+        if String.equal tag scriptTag then
+          seek_pos (origin + offset) d >>= fun () ->
+          Ok(true)
+        else
+          aux (i - 1)
+    end
+  in
+  d_uint16 d >>= fun scriptCount ->
+  aux scriptCount >>= fun found ->
+  Ok(found)
+
+
+let d_from_list df n d =
+  let rec aux i =
+    df d >>= fun data ->
+    if i >= n then Ok(data) else
+    aux (i + 1)
+  in
+    aux 0
+
+
+let gsub d scriptTag langSysTag_opt =
+  init_decoder d >>=
+  seek_table Tag.gsub d >>= function
+    | None    -> Ok(())  (* temporary *)
+    | Some(_) ->
+        let offset_GSUB = cur_pos d in
+        d_uint16 d >>= fun version ->
+        if version <> 0x00010000 then err_version d (Int32.of_int version) else
+        d_uint16 d >>= fun offset_ScriptList ->
+        d_uint16 d >>= fun offset_FeatureList ->
+        d_uint16 d >>= fun offset_LookupList ->
+        seek_pos (offset_GSUB + offset_ScriptList) d >>= fun () ->
+        seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
+        if not found then Ok()  (* temporary *) else
+          (* -- now the position is set to the beginning of the required Script table -- *)
+        let offset_Script_table = cur_pos d in
+        d_uint16 d >>= fun offset_DefaultLangSys ->
+        begin
+          match langSysTag_opt with
+          | None ->
+              begin
+                seek_pos (offset_Script_table + offset_DefaultLangSys) d >>= fun () ->
+                Ok(())
+              end
+          | Some(langSysTag) ->
+              begin
+                seek_pos_from_list offset_Script_table langSysTag d >>= fun found ->
+                if found then Ok()  (* temporary *) else Ok(())
+              end
+        end >>= fun () ->
+          (* -- now the position is set to the beginning of the required LangSys table *)
+        d_uint16 d >>= fun offset_LookupOrder ->
+        if offset_LookupOrder <> 0 then Ok()  (* temporary *) else
+        d_uint16 d >>= fun reqFeatureIndex ->
+        if reqFeatureIndex = 0xFFFF then Ok()  (* temporary; when no feature is the default one *) else
+          (* -- now we are going to see FeatureList table -- *)
+        seek_pos offset_FeatureList d >>= fun () ->
+        d_from_list (fun d ->
+          d_bytes 4 d >>= fun _ ->
+          d_uint16 d)
+          reqFeatureIndex d >>= fun offset_Feature_table ->
+        Ok()
+
+
+(* -- CFF_ table -- *)
 
 type offsize = OffSize1 | OffSize2 | OffSize3 | OffSize4
 type cff_key = ShortKey of int | LongKey of int
