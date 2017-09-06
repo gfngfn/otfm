@@ -1,9 +1,9 @@
+(* -*- coding: utf-8 -*- *)
 (*---------------------------------------------------------------------------
    Copyright (c) 2013 Daniel C. Bünzli. All rights reserved.
    Distributed under the ISC license, see terms at the end of the file.
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
-(* -*- coding: utf-8 -*- *)
 
 open Result
 
@@ -1161,6 +1161,9 @@ let d_from_list df n d =
     if i >= n then Ok(data) else
     aux (i + 1)
   in
+    d_uint16 d >>= fun count ->
+    print_for_debug ("count = " ^ (string_of_int count)) ;
+    if n >= count then err (`Unexpected_eoi(`Table(Tag.gsub)))  (* temporary *) else
     aux 0
 
 
@@ -1236,12 +1239,13 @@ let gsub d scriptTag langSysTag_opt =
           (* -- now the position is set to the beginning of the required Script table -- *)
         let offset_Script_table = cur_pos d in
         print_for_debug ("offset_Script_table = " ^ (string_of_int offset_Script_table)) ;  (* for debug *)
-        d_uint16 d >>= fun offset_DefaultLangSys ->
+        d_uint16 d >>= fun reloffset_DefaultLangSys ->
+        let offset_DefaultLangSys = offset_Script_table + reloffset_DefaultLangSys in
         begin
           match langSysTag_opt with
           | None ->
               begin
-                seek_pos (offset_Script_table + offset_DefaultLangSys) d >>= fun () ->
+                seek_pos offset_DefaultLangSys d >>= fun () ->
                 Ok(())
               end
           | Some(langSysTag) ->
@@ -1256,20 +1260,25 @@ let gsub d scriptTag langSysTag_opt =
           (* -- now the position is set to the beginning of the required LangSys table *)
         d_uint16 d >>= fun offset_LookupOrder ->
         if offset_LookupOrder <> 0 then Ok()  (* temporary *) else
-        d_uint16 d >>= fun reqFeatureIndex ->
-        if reqFeatureIndex = 0xFFFF then
-          let () = print_for_debug "no feature is specified as default." in
-          Ok()  (* temporary; when no feature is specified as default *)
+        d_uint16 d >>= fun reqFeatureIndex_raw ->
+        let reqFeatureIndex =  (* for debug *)
+        if reqFeatureIndex_raw = 0xFFFF then
+          let () = print_for_debug "no feature is specified as default." in  (* for debug *)
+          0  (* temporary; when no feature is specified as default *)
         else
+          reqFeatureIndex_raw
+        in
           (* -- now we are going to see FeatureList table -- *)
         let offset_FeatureList = offset_GSUB + reloffset_FeatureList in
         print_for_debug ("offset_FeatureList = " ^ (string_of_int offset_FeatureList)) ;
         seek_pos offset_FeatureList d >>= fun () ->
         d_from_list (fun d ->
-          d_bytes 4 d >>= fun _ ->
+          d_bytes 4 d >>= fun tag ->
+          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *)
           d_uint16 d)
           reqFeatureIndex d >>= fun reloffset_Feature_table ->
         let offset_Feature_table = offset_FeatureList + reloffset_Feature_table in
+        print_for_debug ("offset_Feature_table = " ^ (string_of_int offset_Feature_table)) ;  (* for debug *)
         seek_pos offset_Feature_table d >>= fun () ->
           (* -- now the position is set to the beginning of the required Feature table -- *)
         d_uint16 d >>= fun reloffset_FeatureParams ->
