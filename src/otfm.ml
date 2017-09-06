@@ -1247,16 +1247,23 @@ let gsub d scriptTag langSysTag_opt =
           | Some(langSysTag) ->
               begin
                 seek_pos_from_list offset_Script_table langSysTag d >>= fun found ->
-                if found then Ok()  (* temporary *) else Ok(())
+                if not found then
+                  let () = print_for_debug ("! required script tag '" ^ langSysTag ^ "' not found.") in (* for debug *)
+                  Ok()  (* temporary *)
+                else Ok(())
               end
         end >>= fun () ->
           (* -- now the position is set to the beginning of the required LangSys table *)
         d_uint16 d >>= fun offset_LookupOrder ->
         if offset_LookupOrder <> 0 then Ok()  (* temporary *) else
         d_uint16 d >>= fun reqFeatureIndex ->
-        if reqFeatureIndex = 0xFFFF then Ok()  (* temporary; when no feature is the default one *) else
+        if reqFeatureIndex = 0xFFFF then
+          let () = print_for_debug "no feature is specified as default." in
+          Ok()  (* temporary; when no feature is specified as default *)
+        else
           (* -- now we are going to see FeatureList table -- *)
         let offset_FeatureList = offset_GSUB + reloffset_FeatureList in
+        print_for_debug ("offset_FeatureList = " ^ (string_of_int offset_FeatureList)) ;
         seek_pos offset_FeatureList d >>= fun () ->
         d_from_list (fun d ->
           d_bytes 4 d >>= fun _ ->
