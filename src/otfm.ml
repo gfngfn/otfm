@@ -1155,16 +1155,18 @@ let seek_pos_from_list origin scriptTag d =
   Ok(found)
 
 
-let d_from_list df n d =
-  let rec aux i =
+let d_list_filtered df indexlst d =
+  let rec aux acc imax i =
+    if i >= imax then Ok(List.rev acc) else
     df d >>= fun data ->
-    if i >= n then Ok(data) else
-    aux (i + 1)
+    if List.mem i indexlst then
+      aux (data :: acc) imax (i + 1)
+    else
+      aux acc imax (i + 1)
   in
     d_uint16 d >>= fun count ->
     print_for_debug ("count = " ^ (string_of_int count)) ;
-    if n >= count then err (`Unexpected_eoi(`Table(Tag.gsub)))  (* temporary *) else
-    aux 0
+    aux [] count 0
 
 
 let d_list df d =
@@ -1179,7 +1181,7 @@ let d_list df d =
 
 let d_list_for_each_index df indexlst d =
   let rec aux imax acc i =
-    if i >= imax then Ok()  (* temporary *) else
+    if i >= imax then Ok(List.rev acc) else
     df d >>= fun data ->
     if List.mem i indexlst then
       aux imax (data :: acc) (i + 1)
@@ -1203,7 +1205,9 @@ let gsub_lookup_type = function
 
 
 let lookup offset d =
+  seek_pos offset d >>= fun () ->
   d_uint16 d >>= fun lookupType_raw ->
+  print_for_debug ("# lookupType_raw = " ^ (string_of_int lookupType_raw)) ;
   let lookupType = gsub_lookup_type lookupType_raw in
   d_uint16 d >>= fun lookupFlag ->
   let rightToLeft      = 0 < lookupFlag land 1 in
@@ -1213,8 +1217,13 @@ let lookup offset d =
   Ok() (* remains *)
   
 
-let lookup_every_pos offsetlst d =
-  Ok() (* remains *)
+let rec lookup_every_pos offsetlst d =
+  match offsetlst with
+  | []             -> Ok()
+  | offset :: tail ->
+      let () = print_for_debug ("| offset = " ^ (string_of_int offset)) in  (* fr debug *)
+      lookup offset d >>= fun () ->
+      lookup_every_pos tail d
 
 
 let gsub d scriptTag langSysTag_opt =
@@ -1252,7 +1261,7 @@ let gsub d scriptTag langSysTag_opt =
               begin
                 seek_pos_from_list offset_Script_table langSysTag d >>= fun found ->
                 if not found then
-                  let () = print_for_debug ("! required script tag '" ^ langSysTag ^ "' not found.") in (* for debug *)
+                  let () = print_for_debug ("! required langSys tag '" ^ langSysTag ^ "' not found.") in (* for debug *)
                   Ok()  (* temporary *)
                 else Ok(())
               end
@@ -1260,31 +1269,35 @@ let gsub d scriptTag langSysTag_opt =
           (* -- now the position is set to the beginning of the required LangSys table *)
         d_uint16 d >>= fun offset_LookupOrder ->
         if offset_LookupOrder <> 0 then Ok()  (* temporary *) else
-        d_uint16 d >>= fun reqFeatureIndex_raw ->
-        let reqFeatureIndex =  (* for debug *)
-        if reqFeatureIndex_raw = 0xFFFF then
-          let () = print_for_debug "no feature is specified as default." in  (* for debug *)
-          0  (* temporary; when no feature is specified as default *)
-        else
-          reqFeatureIndex_raw
+        d_uint16 d >>= fun reqFeatureIndex ->
+        let () =  (* for debug *)
+          if reqFeatureIndex = 0xFFFF then
+            print_for_debug "no feature is specified as default."  (* for debug *)
+          else
+            ()
         in
+        d_list d_uint16 d >>= fun featrindexlst ->
           (* -- now we are going to see FeatureList table -- *)
         let offset_FeatureList = offset_GSUB + reloffset_FeatureList in
-        print_for_debug ("offset_FeatureList = " ^ (string_of_int offset_FeatureList)) ;
+        print_for_debug ("offset_FeatureList = " ^ (string_of_int offset_FeatureList)) ;  (* for debug *)
         seek_pos offset_FeatureList d >>= fun () ->
-        d_from_list (fun d ->
+        print_for_debug "---- FeatureList table ----" ;  (* for debug *)
+        d_list_filtered (fun d ->
           d_bytes 4 d >>= fun tag ->
-          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *)
-          d_uint16 d)
-          reqFeatureIndex d >>= fun reloffset_Feature_table ->
-        let offset_Feature_table = offset_FeatureList + reloffset_Feature_table in
+          (*          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *) *)
+          d_uint16 d >>= fun reloffset -> Ok((tag, offset_FeatureList + reloffset)))
+          featrindexlst d >>= fun pairlst ->
+        let offset_Feature_table = List.assoc "liga" pairlst in  (* -- temporary; looking for a specific feature -- *)
         print_for_debug ("offset_Feature_table = " ^ (string_of_int offset_Feature_table)) ;  (* for debug *)
         seek_pos offset_Feature_table d >>= fun () ->
           (* -- now the position is set to the beginning of the required Feature table -- *)
+        print_for_debug "---- Feature table ----" ;  (* for debug *)
         d_uint16 d >>= fun reloffset_FeatureParams ->
+        let offset_FeatureParams = offset_Feature_table + reloffset_FeatureParams in
         d_list d_uint16 d >>= fun lookuplst ->
           (* -- now we are going to see LookupList table -- *)
         let offset_LookupList = offset_GSUB + reloffset_LookupList in
+        print_for_debug ("offset_LookupList = " ^ (string_of_int offset_LookupList)) ;
         seek_pos offset_LookupList d >>= fun () ->
         d_list_for_each_index (fun d ->
           d_uint16 d >>= fun reloffset ->
