@@ -1132,12 +1132,16 @@ let loca d gid =
 
 (* -- GSUB table -- *)
 
+let print_for_debug = print_endline
+
+
 let seek_pos_from_list origin scriptTag d =
   let rec aux i =
     if i <= 0 then Ok(false) else
     begin
       d_bytes 4 d >>= fun tag ->
       d_uint16 d  >>= fun offset ->
+        print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *)
         if String.equal tag scriptTag then
           seek_pos (origin + offset) d >>= fun () ->
           Ok(true)
@@ -1146,6 +1150,7 @@ let seek_pos_from_list origin scriptTag d =
     end
   in
   d_uint16 d >>= fun scriptCount ->
+  print_endline ("scriptCount = " ^ (string_of_int scriptCount)) ;
   aux scriptCount >>= fun found ->
   Ok(found)
 
@@ -1212,20 +1217,25 @@ let lookup_every_pos offsetlst d =
 let gsub d scriptTag langSysTag_opt =
   init_decoder d >>=
   seek_table Tag.gsub d >>= function
-    | None    -> Ok(())  (* temporary *)
+    | None    -> Error(`Missing_required_table Tag.gsub)
     | Some(_) ->
         let offset_GSUB = cur_pos d in
-        d_uint16 d >>= fun version ->
-        if version <> 0x00010000 then err_version d (Int32.of_int version) else
+        d_uint32 d >>= fun version ->
+        if version <> 0x00010000l then err_version d version else
         d_uint16 d >>= fun reloffset_ScriptList ->
         d_uint16 d >>= fun reloffset_FeatureList ->
         d_uint16 d >>= fun reloffset_LookupList ->
         let offset_ScriptList = offset_GSUB + reloffset_ScriptList in
+        print_for_debug ("offset_ScriptList = " ^ (string_of_int offset_ScriptList)) ;  (* for debug *)
         seek_pos offset_ScriptList d >>= fun () ->
         seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
-        if not found then Ok()  (* temporary *) else
+        if not found then
+          let () = print_for_debug ("! required script tag '" ^ scriptTag ^ "' not found.") in (* for debug *)
+          Ok()  (* temporary *)
+        else
           (* -- now the position is set to the beginning of the required Script table -- *)
         let offset_Script_table = cur_pos d in
+        print_for_debug ("offset_Script_table = " ^ (string_of_int offset_Script_table)) ;  (* for debug *)
         d_uint16 d >>= fun offset_DefaultLangSys ->
         begin
           match langSysTag_opt with

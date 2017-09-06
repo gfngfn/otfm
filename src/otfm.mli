@@ -521,6 +521,8 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
 
+val gsub : decoder -> string -> string option -> (unit, error) result
+
 type cff_info
 
 type cff_top_dict =
