@@ -1192,17 +1192,9 @@ let d_list df d =
   d_repeat count df d
 
 
-let d_list_for_each_index df indexlst d =
-  let rec aux imax acc i =
-    if i >= imax then Ok(List.rev acc) else
-    df d >>= fun data ->
-    if List.mem i indexlst then
-      aux imax (data :: acc) (i + 1)
-    else
-      aux imax acc (i + 1)
-  in
-    d_uint16 d >>= fun count ->
-    aux count [] 0
+let d_offset_list (offset_origin : int) d : (int list) ok =
+  d_list d_uint16 d >>= fun reloffsetlst ->
+  Ok(reloffsetlst |> List.map (fun reloffset -> offset_origin + reloffset))
 
 
 let d_range_record d =
@@ -1217,33 +1209,24 @@ let d_range_record d =
 
 
 let d_coverage d : (glyph_id list) ok =
-(*
-  let provide_coverage_index gidlst =
-    let (_, lst) =
-      gidlst |> List.fold_left (fun (i, acc) gid ->
-        (i + 1, (i, gid) :: acc)
-      ) (0, [])
-    in
-      List.rev lst
-  in
-*)
-    (* -- the position is set to the beginning of a Coverage table [page 139] -- *)
+    (* -- the position is supposed to be set
+          to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
   print_for_debug_int "coverageFormat" coverageFormat ;  (* for debug *)
   let res =  (* for debug *)
     match coverageFormat with
-    | 1 -> d_list d_uint16 d >>= fun gidlst -> Ok(gidlst)
+    | 1 -> d_list d_uint16 d
     | 2 -> d_list d_range_record d >>= fun rnglst -> Ok(List.concat rnglst)
     | _ -> err_version d (Int32.of_int coverageFormat)
   in print_for_debug "end Coverage table" ; res  (* for debug *)
 
 
-let d_every_pos df offsetlst d : ('a list) ok =
+let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
   let rec aux acc offsetlst =
   match offsetlst with
   | []             -> Ok(List.rev acc) (* temporary *)
   | offset :: tail ->
-      let () = print_for_debug ("| offset = " ^ (string_of_int offset)) in  (* for debug *)
+(*      let () = print_for_debug ("| offset = " ^ (string_of_int offset)) in  (* for debug *) *)
       seek_pos offset d >>= fun () ->
       df d >>= fun data -> (* temporary *)
       aux (data :: acc) tail
@@ -1251,25 +1234,25 @@ let d_every_pos df offsetlst d : ('a list) ok =
     aux [] offsetlst
 
 
-let d_offset_list offset_origin d =
-  d_list d_uint16 d >>= fun reloffsetlst ->
-  Ok(reloffsetlst |> List.map (fun reloffset -> offset_origin + reloffset))
-
-
-let d_with_coverage (type a) offset_Substitution_table (df : decoder -> a ok) d : ((glyph_id * a) list) ok =
-    (* -- the position is set just before a Coverage field and a subsequent offset list
+let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> a ok) d : ((glyph_id * a) list) ok =
+    (* -- the position is supposed to be set
+          just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
   d_uint16 d >>= fun reloffset_Coverage ->
   let offset_Coverage = offset_Substitution_table + reloffset_Coverage in
-  print_for_debug_int "offset_Coverage" offset_Coverage ;
+  print_for_debug_int "offset_Coverage" offset_Coverage ;  (* for debug *)
   seek_pos offset_Coverage d >>= fun () ->
     (* -- the position is set to the beginning of a Coverage table -- *)
   d_coverage d >>= fun coverage ->
-  d_offset_list offset_Substitution_table d >>= fun offsetlst_LigatureSet ->
   print_for_debug_int "size of Coverage" (List.length coverage) ;  (* for debug *)
+  List.iter (print_for_debug_int "  *   elem") coverage ;  (* for debug *)
+
+  seek_pos (offset_Substitution_table + 4) d >>= fun () ->
+    (* -- the position is set just before LigSetCount field [page 254] -- *)
+  d_offset_list offset_Substitution_table d >>= fun offsetlst_LigatureSet ->
   print_for_debug_int "number of LigatureSet" (List.length offsetlst_LigatureSet) ;  (* for debug *)
-  d_every_pos df offsetlst_LigatureSet d >>= fun lst ->
-  try Ok(List.combine coverage lst) with
+  seek_every_pos offsetlst_LigatureSet df d >>= fun datalst ->
+  try Ok(List.combine coverage datalst) with
   | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
 
 
@@ -1289,13 +1272,14 @@ let d_ligature_set_table d : ((glyph_id list * glyph_id) list) ok =
   let offset_LigatureSet_table = cur_pos d in
   print_for_debug_int "offset_LigatureSet_table" offset_LigatureSet_table ;
   d_offset_list offset_LigatureSet_table d >>= fun offsetlst_Ligature_table ->
-  d_every_pos d_ligature_table offsetlst_Ligature_table d
+  seek_every_pos offsetlst_Ligature_table d_ligature_table d
 
 
 let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id) list) list) ok =
     (* -- the position is supposed to be set
           to the beginning of Ligature SubstFormat1 subtable [page 254] -- *)
   let offset_Substitution_table = cur_pos d in
+  print_for_debug_int "offset_Substitution_table" offset_Substitution_table ;
     (* doubtful; what does "beginning of Substitution table" in the specification document mean? *)
   d_uint16 d >>= fun substFormat ->
   print_for_debug_int "substFormat" substFormat ;
@@ -1304,7 +1288,8 @@ let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id)
 
 
 let lookup d =
-    (* -- the position is set to the beginning of a Lookup table [page 137] -- *)
+    (* -- the position is supposed to be set
+          to the beginning of a Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
   d_uint16 d >>= fun lookupType ->
   print_for_debug ("# lookupType = " ^ (string_of_int lookupType)) ;
@@ -1318,14 +1303,16 @@ let lookup d =
 *)
   match lookupType with
   | 1  (* -- single substitution -- *) ->
-      failwith "single substitution; remains to be supported."
+      failwith "single substitution; remains to be supported."  (* temporary *)
   | 2  (* -- multiple substitution -- *) ->
-      failwith "multiple substitution; remains to be supported."
+      failwith "multiple substitution; remains to be supported."  (* temporary *)
   | 3  (* -- alternate substitution -- *) ->
-      failwith "alternate substitution; remains to be supported."
+      failwith "alternate substitution; remains to be supported."  (* temporary *)
   | 4  (* -- ligature substitution -- *) ->
+      let () = print_for_debug "lookupType 4" in  (* for debug *)
       d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
-      d_every_pos d_ligature_substitution_subtable offsetlst_SubTable d >>= fun _ ->
+      let () = print_for_debug_int "number of subtables" (List.length offsetlst_SubTable) in  (* for debug *)
+      seek_every_pos offsetlst_SubTable d_ligature_substitution_subtable d >>= fun _ ->
       Ok()  (* temporary *)
   | _ ->
       failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
@@ -1334,7 +1321,7 @@ let lookup d =
 let gsub d scriptTag langSysTag_opt =
   init_decoder d >>=
   seek_table Tag.gsub d >>= function
-    | None    -> Error(`Missing_required_table Tag.gsub)
+    | None    -> Error(`Missing_required_table(Tag.gsub))
     | Some(_) ->
         let offset_GSUB = cur_pos d in
         d_uint32 d >>= fun version ->
@@ -1389,7 +1376,7 @@ let gsub d scriptTag langSysTag_opt =
         print_for_debug "---- FeatureList table ----" ;  (* for debug *)
         d_list_filtered (fun d ->
           d_bytes 4 d >>= fun tag ->
-          (*          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *) *)
+(*          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *) *)
           d_uint16 d >>= fun reloffset -> Ok((tag, offset_FeatureList + reloffset)))
           featrindexlst d >>= fun pairlst ->
         let offset_Feature_table = List.assoc "liga" pairlst in  (* -- temporary; looking for a specific feature -- *)
@@ -1402,12 +1389,12 @@ let gsub d scriptTag langSysTag_opt =
         d_list d_uint16 d >>= fun lookuplst ->
           (* -- now we are going to see LookupList table -- *)
         let offset_LookupList = offset_GSUB + reloffset_LookupList in
-        print_for_debug_int "offset_LookupList" offset_LookupList ;
+        print_for_debug_int "offset_LookupList" offset_LookupList ;  (* for debug *)
         seek_pos offset_LookupList d >>= fun () ->
-        d_list_for_each_index (fun d ->
+        d_list_filtered (fun d ->
           d_uint16 d >>= fun reloffset ->
           Ok(offset_LookupList + reloffset)) lookuplst d >>= fun offsetlst ->
-        d_every_pos lookup offsetlst d >>= fun _ ->
+        seek_every_pos offsetlst lookup d >>= fun _ ->
         Ok()
 
 
