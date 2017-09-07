@@ -1140,6 +1140,9 @@ let print_for_debug = print_endline
 let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
 
 
+type 'a ok = ('a, error) result
+
+
 let seek_pos_from_list origin scriptTag d =
   let rec aux i =
     if i <= 0 then Ok(false) else
@@ -1185,17 +1188,8 @@ let d_repeat n df d =
 
 let d_list df d =
   d_uint16 d >>= fun count ->
-  print_for_debug_int "d_list count" count ;
+  print_for_debug_int "(d_list) count" count ;
   d_repeat count df d
-(*
-  let rec aux acc i =
-    if i <= 0 then Ok(List.rev acc) else
-    df d >>= fun data ->
-    aux (data :: acc) (i - 1)
-  in
-    d_uint16 d >>= fun count ->
-    aux [] count
-*)
 
 
 let d_list_for_each_index df indexlst d =
@@ -1222,7 +1216,7 @@ let d_range_record d =
   Ok(range [] start_gid end_gid)
 
 
-let d_coverage d : (glyph_id list, error) result =
+let d_coverage d : (glyph_id list) ok =
 (*
   let provide_coverage_index gidlst =
     let (_, lst) =
@@ -1243,12 +1237,13 @@ let d_coverage d : (glyph_id list, error) result =
     | _ -> err_version d (Int32.of_int coverageFormat)
   in print_for_debug "end Coverage table" ; res  (* for debug *)
 
-let d_every_pos df offsetlst d : ('a list, error) result =
+
+let d_every_pos df offsetlst d : ('a list) ok =
   let rec aux acc offsetlst =
   match offsetlst with
   | []             -> Ok(List.rev acc) (* temporary *)
   | offset :: tail ->
-(*      let () = print_for_debug ("| offset = " ^ (string_of_int offset)) in  (* for debug *) *)
+      let () = print_for_debug ("| offset = " ^ (string_of_int offset)) in  (* for debug *)
       seek_pos offset d >>= fun () ->
       df d >>= fun data -> (* temporary *)
       aux (data :: acc) tail
@@ -1256,53 +1251,56 @@ let d_every_pos df offsetlst d : ('a list, error) result =
     aux [] offsetlst
 
 
-let d_with_coverage offset_Substitution df d : ((glyph_id * 'a) list, error) result =
+let d_offset_list offset_origin d =
+  d_list d_uint16 d >>= fun reloffsetlst ->
+  Ok(reloffsetlst |> List.map (fun reloffset -> offset_origin + reloffset))
+
+
+let d_with_coverage (type a) offset_Substitution_table (df : decoder -> a ok) d : ((glyph_id * a) list) ok =
     (* -- the position is set just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
   d_uint16 d >>= fun reloffset_Coverage ->
-  let offset_Coverage = offset_Substitution + reloffset_Coverage in
+  let offset_Coverage = offset_Substitution_table + reloffset_Coverage in
   print_for_debug_int "offset_Coverage" offset_Coverage ;
   seek_pos offset_Coverage d >>= fun () ->
+    (* -- the position is set to the beginning of a Coverage table -- *)
   d_coverage d >>= fun coverage ->
-  d_list d_uint16 d >>= fun reloffsetlst_LigatureSet ->
-  let offsetlst_LigatureSet =
-    reloffsetlst_LigatureSet |> List.map (fun reloffset -> offset_Substitution + reloffset)
-  in
+  d_offset_list offset_Substitution_table d >>= fun offsetlst_LigatureSet ->
+  print_for_debug_int "size of Coverage" (List.length coverage) ;  (* for debug *)
+  print_for_debug_int "number of LigatureSet" (List.length offsetlst_LigatureSet) ;  (* for debug *)
   d_every_pos df offsetlst_LigatureSet d >>= fun lst ->
   try Ok(List.combine coverage lst) with
   | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
 
 
-let d_ligature_set_table d : ((glyph_id * glyph_id list) list, error) result =
+let d_ligature_table d : (glyph_id list * glyph_id) ok =
+    (* -- the position is supposed to be set
+          to the beginning of a Ligature table [page 255] -- *)
+  d_uint16 d >>= fun ligGlyph ->
+  d_uint16 d >>= fun compCount ->
+  print_for_debug (Printf.sprintf "    [ligGlyph = %d ----> compCount = %d]" ligGlyph compCount) ;
+  d_repeat (compCount - 1) d_uint16 d >>= fun component ->
+  Ok((component, ligGlyph))
+  
+
+let d_ligature_set_table d : ((glyph_id list * glyph_id) list) ok =
+    (* -- the position is supposed to be set
+          to the beginning of a LigatureSet table [page 254] -- *)
   let offset_LigatureSet_table = cur_pos d in
-  d_list d_uint16 d >>= fun reloffset_Ligature_table ->
-  let offset_Ligature_table =
-    reloffset_Ligature_table |> List.map (fun reloffset -> offset_LigatureSet_table + reloffset)
-  in
-  d_every_pos (fun d ->
-      d_uint16 d >>= fun ligGlyph ->
-      d_uint16 d >>= fun compCount ->
-      d_repeat (compCount - 1) d_uint16 d >>= fun component ->
-      Ok((ligGlyph, component))
-    )
-    offset_Ligature_table d
+  print_for_debug_int "offset_LigatureSet_table" offset_LigatureSet_table ;
+  d_offset_list offset_LigatureSet_table d >>= fun offsetlst_Ligature_table ->
+  d_every_pos d_ligature_table offsetlst_Ligature_table d
 
 
-let d_subtable_lig d =
-    (* -- the position is set to the beginning of Ligature substitution subtable [page 254] -- *)
+let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id) list) list) ok =
+    (* -- the position is supposed to be set
+          to the beginning of Ligature SubstFormat1 subtable [page 254] -- *)
   let offset_Substitution_table = cur_pos d in
+    (* doubtful; what does "beginning of Substitution table" in the specification document mean? *)
   d_uint16 d >>= fun substFormat ->
   print_for_debug_int "substFormat" substFormat ;
   if substFormat <> 1 then err_version d (Int32.of_int substFormat) else
-  d_with_coverage offset_Substitution_table (fun d ->
-    d_list d_uint16 d >>= fun reloffsetlst_LigatureSet ->
-    let offsetlst_LigatureSet =
-      reloffsetlst_LigatureSet |> List.map (fun reloffset -> offset_Substitution_table + reloffset)
-    in
-    d_every_pos d_ligature_set_table offsetlst_LigatureSet d
-    )
-    d >>= fun gidfst_ligset_assoc ->
-  Ok()
+  d_with_coverage offset_Substitution_table d_ligature_set_table d
 
 
 let lookup d =
@@ -1326,13 +1324,8 @@ let lookup d =
   | 3  (* -- alternate substitution -- *) ->
       failwith "alternate substitution; remains to be supported."
   | 4  (* -- ligature substitution -- *) ->
-      d_list d_uint16 d >>= fun reloffsetlst_SubTable ->
-      let offsetlst_SubTable =
-        reloffsetlst_SubTable |> List.map (fun reloffset -> offset_Lookup_table + reloffset)
-      in
-      d_every_pos (fun d ->
-          d_subtable_lig d
-        ) offsetlst_SubTable d >>= fun _ ->
+      d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
+      d_every_pos d_ligature_substitution_subtable offsetlst_SubTable d >>= fun _ ->
       Ok()  (* temporary *)
   | _ ->
       failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
