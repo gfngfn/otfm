@@ -199,6 +199,7 @@ type error =
   | `Invalid_postscript_name of string
   | `Unexpected_eoi of error_ctx
 (* added by gfn: *)
+  | `Inconsistent_length_of_coverage of error_ctx
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
