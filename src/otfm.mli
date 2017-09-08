@@ -523,9 +523,7 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
 
-type gsub_subtable
-
-val gsub : decoder -> string -> string option -> ((gsub_subtable list) option, error) result
+val gsub : decoder -> string -> string option -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a option, error) result
 
 type cff_info
 

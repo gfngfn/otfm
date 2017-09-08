@@ -1151,7 +1151,7 @@ let loca d gid =
 
 (* -- GSUB table -- *)
 
-let print_for_debug = print_endline
+let print_for_debug msg = () (* print_endline msg *)
 
 let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
 
@@ -1339,9 +1339,18 @@ let lookup d =
       return (LigatureSubtable(List.concat gidfst_ligset_assoc))  (* temporary *)
   | _ ->
       failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
-  
 
-let gsub d scriptTag langSysTag_opt : ((gsub_subtable list) option) ok =
+
+let rec fold_subtable_list (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
+  let iter = fold_subtable_list f_lig in
+    match subtablelst with
+    | [] -> init
+    | LigatureSubtable(gidfst_ligset_assoc) :: tail ->
+        let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
+          iter initnew tail
+
+
+let gsub d scriptTag langSysTag_opt f_lig init : ('a option) ok =
   init_decoder d >>=
   seek_table Tag.gsub d >>= function
     | None    -> Error(`Missing_required_table(Tag.gsub))
@@ -1411,8 +1420,9 @@ let gsub d scriptTag langSysTag_opt : ((gsub_subtable list) option) ok =
         print_for_debug_int "offset_LookupList" offset_LookupList ;  (* for debug *)
         seek_pos offset_LookupList d >>= fun () ->
         d_list_filtered (d_offset offset_LookupList) lookuplst d >>= fun offsetlst ->
-        seek_every_pos offsetlst lookup d >>= fun subtables ->
-        return (Some(subtables))
+        seek_every_pos offsetlst lookup d >>= fun subtablelst ->
+        let res = fold_subtable_list f_lig init subtablelst in
+        return (Some(res))
 
 
 (* -- CFF_ table -- *)
