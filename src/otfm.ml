@@ -1210,6 +1210,10 @@ let d_offset_list (offset_origin : int) d : (int list) ok =
   return (reloffsetlst |> List.map (fun reloffset -> offset_origin + reloffset))
 
 
+let d_offset (offset_origin : int) d : int ok =
+  d_uint16 d >>= fun reloffset ->
+  return (offset_origin + reloffset)
+
 let d_range_record d =
   let rec range acc i j =
     if i > j then List.rev acc else
@@ -1251,8 +1255,7 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
     (* -- the position is supposed to be set
           just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
-  d_uint16 d >>= fun reloffset_Coverage ->
-  let offset_Coverage = offset_Substitution_table + reloffset_Coverage in
+  d_offset offset_Substitution_table d >>= fun offset_Coverage ->
   print_for_debug_int "offset_Coverage" offset_Coverage ;  (* for debug *)
   seek_pos offset_Coverage d >>= fun () ->
     (* -- the position is set to the beginning of a Coverage table -- *)
@@ -1340,10 +1343,9 @@ let gsub d scriptTag langSysTag_opt =
         let offset_GSUB = cur_pos d in
         d_uint32 d >>= fun version ->
         if version <> 0x00010000l then err_version d version else
-        d_uint16 d >>= fun reloffset_ScriptList ->
-        d_uint16 d >>= fun reloffset_FeatureList ->
-        d_uint16 d >>= fun reloffset_LookupList ->
-        let offset_ScriptList = offset_GSUB + reloffset_ScriptList in
+        d_offset offset_GSUB d >>= fun offset_ScriptList ->
+        d_offset offset_GSUB d >>= fun offset_FeatureList ->
+        d_offset offset_GSUB d >>= fun offset_LookupList ->
         print_for_debug_int "offset_ScriptList" offset_ScriptList ;  (* for debug *)
         seek_pos offset_ScriptList d >>= fun () ->
         seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
@@ -1354,8 +1356,7 @@ let gsub d scriptTag langSysTag_opt =
           (* -- now the position is set to the beginning of the required Script table -- *)
         let offset_Script_table = cur_pos d in
         print_for_debug_int "offset_Script_table" offset_Script_table ;  (* for debug *)
-        d_uint16 d >>= fun reloffset_DefaultLangSys ->
-        let offset_DefaultLangSys = offset_Script_table + reloffset_DefaultLangSys in
+        d_offset offset_Script_table d >>= fun offset_DefaultLangSys ->
         begin
           match langSysTag_opt with
           | None ->
@@ -1385,30 +1386,25 @@ let gsub d scriptTag langSysTag_opt =
         in
         d_list d_uint16 d >>= fun featrindexlst ->
           (* -- now we are going to see FeatureList table -- *)
-        let offset_FeatureList = offset_GSUB + reloffset_FeatureList in
         print_for_debug_int "offset_FeatureList" offset_FeatureList ;  (* for debug *)
         seek_pos offset_FeatureList d >>= fun () ->
         print_for_debug "---- FeatureList table ----" ;  (* for debug *)
         d_list_filtered (fun d ->
           d_bytes 4 d >>= fun tag ->
 (*          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *) *)
-          d_uint16 d >>= fun reloffset -> return (tag, offset_FeatureList + reloffset))
+          d_offset offset_FeatureList d >>= fun offset -> return (tag, offset))
           featrindexlst d >>= fun pairlst ->
         let offset_Feature_table = List.assoc "liga" pairlst in  (* -- temporary; looking for a specific feature -- *)
         print_for_debug_int "offset_Feature_table" offset_Feature_table ;  (* for debug *)
         seek_pos offset_Feature_table d >>= fun () ->
           (* -- now the position is set to the beginning of the required Feature table -- *)
         print_for_debug "---- Feature table ----" ;  (* for debug *)
-        d_uint16 d >>= fun reloffset_FeatureParams ->
-        let offset_FeatureParams = offset_Feature_table + reloffset_FeatureParams in
+        d_offset offset_Feature_table d >>= fun offset_FeatureParams ->
         d_list d_uint16 d >>= fun lookuplst ->
           (* -- now we are going to see LookupList table -- *)
-        let offset_LookupList = offset_GSUB + reloffset_LookupList in
         print_for_debug_int "offset_LookupList" offset_LookupList ;  (* for debug *)
         seek_pos offset_LookupList d >>= fun () ->
-        d_list_filtered (fun d ->
-          d_uint16 d >>= fun reloffset ->
-          return (offset_LookupList + reloffset)) lookuplst d >>= fun offsetlst ->
+        d_list_filtered (d_offset offset_LookupList) lookuplst d >>= fun offsetlst ->
         seek_every_pos offsetlst lookup d >>= fun _ ->
         Ok()
 
