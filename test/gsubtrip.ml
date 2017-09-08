@@ -33,7 +33,7 @@ let main () =
   in
   let d = Otfm.decoder (`String(src)) in
   let () = print_endline "finish initializing decoder" in
-  Otfm.gsub d "latn" None >>= fun () ->
+  Otfm.gsub d "latn" None >>= fun subtables ->
   Ok()
 
 let () =

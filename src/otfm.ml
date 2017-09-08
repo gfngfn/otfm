@@ -142,6 +142,7 @@ type error =
   | `Unexpected_eoi of error_ctx
 (* added by gfn: *)
   | `Inconsistent_length_of_coverage of error_ctx
+  | `Invalid_lookup_order of int
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
@@ -188,6 +189,8 @@ let pp_error ppf = function
 (* added by gfn: *)
 | `Inconsistent_length_of_coverage ctx ->
     pp ppf "@[Inconsistent@ length@ of@ coverage@ in %a@]" pp_ctx ctx
+| `Invalid_lookup_order lo ->
+    pp ppf "@[Invalid@ lookup@ order@ (%d)@]" lo
 | `Invalid_cff_not_a_quad ->
     pp ppf "@[Invalid@ CFF@ table;@ not@ a@ quad@]"
 | `Invalid_cff_not_an_integer ->
@@ -1155,6 +1158,9 @@ let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int 
 
 type 'a ok = ('a, error) result
 
+type gsub_subtable =
+  | LigatureSubtable of (glyph_id * (glyph_id list * glyph_id) list) list
+
 
 let seek_pos_from_list origin scriptTag d =
   let rec aux i =
@@ -1311,7 +1317,7 @@ let lookup d =
   d_uint16 d >>= fun lookupType ->
   print_for_debug ("# lookupType = " ^ (string_of_int lookupType)) ;  (* for debug *)
   d_uint16 d >>= fun lookupFlag ->
-  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag)) ;
+  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag)) ;  (* for debug *)
 (*
   let rightToLeft      = 0 < lookupFlag land 1 in
   let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
@@ -1330,12 +1336,12 @@ let lookup d =
       d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
       let () = print_for_debug_int "number of subtables" (List.length offsetlst_SubTable) in  (* for debug *)
       seek_every_pos offsetlst_SubTable d_ligature_substitution_subtable d >>= fun gidfst_ligset_assoc ->
-      return ()  (* temporary *)
+      return (LigatureSubtable(List.concat gidfst_ligset_assoc))  (* temporary *)
   | _ ->
       failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
   
 
-let gsub d scriptTag langSysTag_opt =
+let gsub d scriptTag langSysTag_opt : ((gsub_subtable list) option) ok =
   init_decoder d >>=
   seek_table Tag.gsub d >>= function
     | None    -> Error(`Missing_required_table(Tag.gsub))
@@ -1351,7 +1357,7 @@ let gsub d scriptTag langSysTag_opt =
         seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
         if not found then
           let () = print_for_debug ("! required script tag '" ^ scriptTag ^ "' not found.") in  (* for debug *)
-          return ()  (* temporary *)
+          return None
         else
           (* -- now the position is set to the beginning of the required Script table -- *)
         let offset_Script_table = cur_pos d in
@@ -1376,7 +1382,7 @@ let gsub d scriptTag langSysTag_opt =
         end >>= fun () ->
           (* -- now the position is set to the beginning of the required LangSys table *)
         d_uint16 d >>= fun offset_LookupOrder ->
-        if offset_LookupOrder <> 0 then Ok()  (* temporary *) else
+        if offset_LookupOrder <> 0 then err (`Invalid_lookup_order(offset_LookupOrder))  (* temporary *) else
         d_uint16 d >>= fun reqFeatureIndex ->
         let () =  (* for debug *)
           if reqFeatureIndex = 0xFFFF then
@@ -1405,8 +1411,8 @@ let gsub d scriptTag langSysTag_opt =
         print_for_debug_int "offset_LookupList" offset_LookupList ;  (* for debug *)
         seek_pos offset_LookupList d >>= fun () ->
         d_list_filtered (d_offset offset_LookupList) lookuplst d >>= fun offsetlst ->
-        seek_every_pos offsetlst lookup d >>= fun _ ->
-        Ok()
+        seek_every_pos offsetlst lookup d >>= fun subtables ->
+        return (Some(subtables))
 
 
 (* -- CFF_ table -- *)

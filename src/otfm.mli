@@ -200,6 +200,7 @@ type error =
   | `Unexpected_eoi of error_ctx
 (* added by gfn: *)
   | `Inconsistent_length_of_coverage of error_ctx
+  | `Invalid_lookup_order of int
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
@@ -522,7 +523,9 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
 
-val gsub : decoder -> string -> string option -> (unit, error) result
+type gsub_subtable
+
+val gsub : decoder -> string -> string option -> ((gsub_subtable list) option, error) result
 
 type cff_info
 
