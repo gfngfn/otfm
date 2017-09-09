@@ -199,6 +199,9 @@ type error =
   | `Invalid_postscript_name of string
   | `Unexpected_eoi of error_ctx
 (* added by gfn: *)
+  | `Missing_required_script_tag of string
+  | `Missing_required_langsys_tag of string
+  | `Missing_required_feature_tag of string
   | `Inconsistent_length_of_coverage of error_ctx
   | `Invalid_lookup_order of int
   | `Invalid_cff_not_a_quad
@@ -523,7 +526,7 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
 
-val gsub : decoder -> string -> string option -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a option, error) result
+val gsub : decoder -> string -> string option -> string -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a option, error) result
 
 type cff_info
 

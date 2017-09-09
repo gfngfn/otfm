@@ -142,6 +142,9 @@ type error =
   | `Unexpected_eoi of error_ctx
 (* added by gfn: *)
   | `Inconsistent_length_of_coverage of error_ctx
+  | `Missing_required_script_tag of string
+  | `Missing_required_langsys_tag of string
+  | `Missing_required_feature_tag of string
   | `Invalid_lookup_order of int
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
@@ -189,6 +192,12 @@ let pp_error ppf = function
 (* added by gfn: *)
 | `Inconsistent_length_of_coverage ctx ->
     pp ppf "@[Inconsistent@ length@ of@ coverage@ in %a@]" pp_ctx ctx
+| `Missing_required_script_tag tag ->
+    pp ppf "@[Missing@ required@ Script@ tag@ (%S)" tag
+| `Missing_required_langsys_tag tag ->
+    pp ppf "@[Missing@ required@ LangSys@ tag@ (%S)@]" tag
+| `Missing_required_feature_tag tag ->
+    pp ppf "@[Missing@ required@ Feature@ tag@ (%S)@]" tag
 | `Invalid_lookup_order lo ->
     pp ppf "@[Invalid@ lookup@ order@ (%d)@]" lo
 | `Invalid_cff_not_a_quad ->
@@ -246,7 +255,8 @@ let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
 let return x                 = Ok(x)
 let err e                    = Error(e)
 let err_eoi d                = Error(`Unexpected_eoi(d.ctx))
-let err_version d v          = Error(`Unknown_version(d.ctx, v))
+let e_version d v            = `Unknown_version(d.ctx, v)
+let err_version d v          = Error(e_version d v)
 let err_loca_format d v      = Error(`Unknown_loca_format(d.ctx, v))
 let err_composite_format d v = Error(`Unknown_composite_format(d.ctx, v))
 let err_fatal d e            = begin d.state <- `Fatal(e) ; Error(e) end
@@ -1162,6 +1172,10 @@ type gsub_subtable =
   | LigatureSubtable of (glyph_id * (glyph_id list * glyph_id) list) list
 
 
+let confirm b e =
+  if not b then err e else return ()
+
+
 let seek_pos_from_list origin scriptTag d =
   let rec aux i =
     if i <= 0 then return false else
@@ -1247,11 +1261,11 @@ let d_coverage d : (glyph_id list) ok =
 let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
   let rec aux acc offsetlst =
   match offsetlst with
-  | []             -> return (List.rev acc) (* temporary *)
+  | []             -> return (List.rev acc)
   | offset :: tail ->
 (*      let () = print_for_debug ("| offset = " ^ (string_of_int offset)) in  (* for debug *) *)
       seek_pos offset d >>= fun () ->
-      df d >>= fun data -> (* temporary *)
+      df d >>= fun data ->
       aux (data :: acc) tail
   in
     aux [] offsetlst
@@ -1306,7 +1320,7 @@ let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id)
   print_for_debug_int "offset_Substitution_table" offset_Substitution_table ;  (* for debug *)
   d_uint16 d >>= fun substFormat ->
   print_for_debug_int "substFormat" substFormat ;  (* for debug *)
-  if substFormat <> 1 then err_version d (Int32.of_int substFormat) else
+  confirm (substFormat = 1) (e_version d (Int32.of_int substFormat)) >>= fun () ->
   d_with_coverage offset_Substitution_table d_ligature_set_table d
 
 
@@ -1350,48 +1364,37 @@ let rec fold_subtable_list (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id) 
           iter initnew tail
 
 
-let gsub d scriptTag langSysTag_opt f_lig init : ('a option) ok =
+let gsub d scriptTag langSysTag_opt featureTag f_lig init : ('a option) ok =
   init_decoder d >>=
   seek_table Tag.gsub d >>= function
     | None    -> Error(`Missing_required_table(Tag.gsub))
     | Some(_) ->
         let offset_GSUB = cur_pos d in
         d_uint32 d >>= fun version ->
-        if version <> 0x00010000l then err_version d version else
+        confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
         d_offset offset_GSUB d >>= fun offset_ScriptList ->
         d_offset offset_GSUB d >>= fun offset_FeatureList ->
         d_offset offset_GSUB d >>= fun offset_LookupList ->
         print_for_debug_int "offset_ScriptList" offset_ScriptList ;  (* for debug *)
         seek_pos offset_ScriptList d >>= fun () ->
         seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
-        if not found then
-          let () = print_for_debug ("! required script tag '" ^ scriptTag ^ "' not found.") in  (* for debug *)
-          return None
-        else
+        confirm found (`Missing_required_script_tag(scriptTag)) >>= fun () ->
           (* -- now the position is set to the beginning of the required Script table -- *)
         let offset_Script_table = cur_pos d in
         print_for_debug_int "offset_Script_table" offset_Script_table ;  (* for debug *)
         d_offset offset_Script_table d >>= fun offset_DefaultLangSys ->
         begin
           match langSysTag_opt with
-          | None ->
-              begin
-                seek_pos offset_DefaultLangSys d >>= fun () ->
-                return ()
-              end
+          | None -> seek_pos offset_DefaultLangSys d
           | Some(langSysTag) ->
               begin
                 seek_pos_from_list offset_Script_table langSysTag d >>= fun found ->
-                if not found then
-                  let () = print_for_debug ("! required langSys tag '" ^ langSysTag ^ "' not found.") in  (* for debug *)
-                  Ok()  (* temporary *)
-                else
-                  return ()
+                confirm found (`Missing_required_langsys_tag(langSysTag))
               end
         end >>= fun () ->
           (* -- now the position is set to the beginning of the required LangSys table *)
         d_uint16 d >>= fun offset_LookupOrder ->
-        if offset_LookupOrder <> 0 then err (`Invalid_lookup_order(offset_LookupOrder))  (* temporary *) else
+        confirm (offset_LookupOrder = 0) (`Invalid_lookup_order(offset_LookupOrder)) >>= fun () ->
         d_uint16 d >>= fun reqFeatureIndex ->
         let () =  (* for debug *)
           if reqFeatureIndex = 0xFFFF then
@@ -1409,7 +1412,10 @@ let gsub d scriptTag langSysTag_opt f_lig init : ('a option) ok =
 (*          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *) *)
           d_offset offset_FeatureList d >>= fun offset -> return (tag, offset))
           featrindexlst d >>= fun pairlst ->
-        let offset_Feature_table = List.assoc "liga" pairlst in  (* -- temporary; looking for a specific feature -- *)
+        begin
+          try return (List.assoc featureTag pairlst) with
+          | Not_found -> err (`Missing_required_feature_tag(featureTag))
+        end >>= fun offset_Feature_table ->
         print_for_debug_int "offset_Feature_table" offset_Feature_table ;  (* for debug *)
         seek_pos offset_Feature_table d >>= fun () ->
           (* -- now the position is set to the beginning of the required Feature table -- *)
@@ -1464,9 +1470,6 @@ let (?@) = Int32.to_int
 let (-@) = Int32.sub
 let is_in_range a b x = (a <= x && x <= b)
 
-
-let confirm b e =
-  if not b then err e else return ()
 
 let d_offsize d =
   d_uint8 d >>= fun i ->

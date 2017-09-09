@@ -37,7 +37,7 @@ let main () =
   let f_lig lst (gidfst, liginfolst) =
     (gidfst, liginfolst) :: lst
   in
-  Otfm.gsub d "latn" None f_lig [] >>= fun lstopt ->
+  Otfm.gsub d "latn" None "liga" f_lig [] >>= fun lstopt ->
   return lstopt
 
 let () =
