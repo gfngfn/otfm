@@ -528,6 +528,19 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
 
 val gsub : decoder -> string -> string option -> string -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a, error) result
 
+type value_record = {
+  x_placement  : int option;
+  y_placement  : int option;
+  x_advance    : int option;
+  y_advance    : int option;
+  x_pla_device : int option;
+  y_pla_device : int option;
+  x_adv_device : int option;
+  y_adv_device : int option;
+}
+
+val gpos : decoder -> string -> string option -> string -> ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) -> 'a -> ('a, error) result
+
 type cff_info
 
 type cff_top_dict =

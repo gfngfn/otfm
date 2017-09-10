@@ -24,9 +24,11 @@ let string_of_file inf =
   | Sys_error e -> (Error (`Msg e))
 
 
+let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
+let return v = Ok(v)
+
+
 let main () =
-  let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e in
-  let return v = Ok(v) in
   let filename = try Sys.argv.(1) with Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end in
   let src =
     match string_of_file filename with
@@ -38,18 +40,26 @@ let main () =
   let f_lig lst (gidfst, liginfolst) =
     (gidfst, liginfolst) :: lst
   in
-  Otfm.gsub d "latn" None "liga" f_lig []
+  let f_pair lst (gidfst, pairinfolst) =
+    (gidfst, pairinfolst) :: lst
+  in
+  Otfm.gsub d "latn" None "liga" f_lig [] >>= fun gsubres ->
+  Otfm.gpos d "latn" None "palt" f_pair [] >>= fun gposres ->
+  return (gsubres, gposres)
 
 
 let () =
   match main () with
-  | Error(e)                -> Format.eprintf "@[%a@]@." Otfm.pp_error e
-  | Ok(gidfst_ligset_assoc) ->
-      gidfst_ligset_assoc |> List.iter (fun (gidfst, ligset) ->
-        print_string ((string_of_int gidfst) ^ " -> [");
-        ligset |> List.iter (fun (gidtail, gidlig) ->
-          gidtail |> List.iter (fun gid -> print_string (" " ^ (string_of_int gid)));
-          print_string (" ----> " ^ (string_of_int gidlig) ^ "; ");
+  | Error(e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
+  | Ok(gidfst_ligset_assoc, gidfst_pairposlst_assoc) ->
+      begin
+        print_endline "GSUB:";
+        gidfst_ligset_assoc |> List.iter (fun (gidfst, ligset) ->
+          print_string ((string_of_int gidfst) ^ " -> [");
+          ligset |> List.iter (fun (gidtail, gidlig) ->
+            gidtail |> List.iter (fun gid -> print_string (" " ^ (string_of_int gid)));
+            print_string (" ----> " ^ (string_of_int gidlig) ^ "; ");
+          );
+          print_endline "]";
         );
-        print_endline "]";
-      )
+      end

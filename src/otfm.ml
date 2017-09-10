@@ -1161,7 +1161,7 @@ let loca d gid =
 
 (* -- GSUB table -- *)
 
-let print_for_debug msg = () (* print_endline msg *)
+let print_for_debug msg = print_endline msg
 
 let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
 
@@ -1355,7 +1355,7 @@ let advanced_table_scheme lookup fold_subtables d scriptTag langSysTag_opt featu
         print_for_debug "---- FeatureList table ----" ;  (* for debug *)
         d_list_filtered (fun d ->
           d_bytes 4 d >>= fun tag ->
-(*          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *) *)
+          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *)
           d_offset offset_FeatureList d >>= fun offset -> return (tag, offset))
           featrindexlst d >>= fun pairlst ->
         begin
@@ -1375,15 +1375,6 @@ let advanced_table_scheme lookup fold_subtables d scriptTag langSysTag_opt featu
         seek_every_pos offsetlst lookup d >>= fun subtablelst ->
         let res = fold_subtables subtablelst in
         return res
-
-
-let rec fold_subtables_gsub (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
-  let iter = fold_subtables_gsub f_lig in
-  match subtablelst with
-  | []                                            -> init
-  | LigatureSubtable(gidfst_ligset_assoc) :: tail ->
-      let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
-        iter initnew tail
 
 
 let d_ligature_table d : (glyph_id list * glyph_id) ok =
@@ -1416,7 +1407,7 @@ let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id)
   d_with_coverage offset_Substitution_table d_ligature_set_table d
 
 
-let lookup_gsub d =
+let lookup_gsub d : gsub_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of a Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
@@ -1447,6 +1438,16 @@ let lookup_gsub d =
       failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
 
 
+let rec fold_subtables_gsub (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
+  let iter = fold_subtables_gsub f_lig in
+    match subtablelst with
+    | [] -> init
+
+    | LigatureSubtable(gidfst_ligset_assoc) :: tail ->
+        let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
+          iter initnew tail
+
+
 let gsub d scriptTag langSysTag_opt featureTag f_lig init =
   advanced_table_scheme lookup_gsub (fold_subtables_gsub f_lig init) d scriptTag langSysTag_opt featureTag
 
@@ -1473,12 +1474,12 @@ type value_record = {
 }
 
 
-let d_value_format d =
+let d_value_format d : value_format ok =
   d_uint16 d >>= fun raw ->
   Ok(ValueFormat(raw))
 
 
-let d_value_record (ValueFormat(valfmt)) d =
+let d_value_record (ValueFormat(valfmt)) d : value_record ok =
   d_if (0 < valfmt land   1) d_uint16 d >>= fun xPlacement_opt ->
   d_if (0 < valfmt land   2) d_uint16 d >>= fun yPlacement_opt ->
   d_if (0 < valfmt land   4) d_uint16 d >>= fun xAdvance_opt ->
@@ -1498,25 +1499,48 @@ let d_value_record (ValueFormat(valfmt)) d =
     y_adv_device = yAdvDevice_opt;
   }
 
-(*
-let d_pair_adjustment_subtable d =
+
+let d_pair_value_record valfmt1 valfmt2 d : (glyph_id * value_record * value_record) ok =
+  d_uint16 d >>= fun secondGlyph ->
+  d_value_record valfmt1 d >>= fun value1 ->
+  d_value_record valfmt2 d >>= fun value2 ->
+  return (secondGlyph, value1, value2)
+
+let d_pair_set valfmt1 valfmt2 d : ((glyph_id * value_record * value_record) list) ok =
+  d_list (d_pair_value_record valfmt1 valfmt2) d
+
+
+let d_pair_adjustment_subtable d : ((glyph_id * (glyph_id * value_record * value_record) list) list) ok =
     (* -- the position is supposed to be set
           to the beginning of a PairPos subtable [page 194] -- *)
   let offset_PairPos = cur_pos d in
   d_uint16 d >>= fun posFormat ->
   confirm (posFormat = 1) (e_version d (Int32.of_int posFormat)) >>= fun () ->
-  d_offset offset_PairPos d >>= fun offset_Coverage ->
-  Ok()
+  d_coverage offset_PairPos d >>= fun coverage ->
+  d_value_format d >>= fun valueFormat1 ->
+  d_value_format d >>= fun valueFormat2 ->
+  d_list (d_offset offset_PairPos) d >>= fun offsetlst_PairSet ->
+  seek_every_pos offsetlst_PairSet (d_pair_set valueFormat1 valueFormat2) d >>= fun pairsetlst ->
+  try
+    return (List.combine coverage pairsetlst)
+  with
+  | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
 
 
-let lookup_gpos_exact offsetlst_SubTable lookupType d =
+type gpos_subtable =
+  | PairPosAdjustment of (glyph_id * (glyph_id * value_record * value_record) list) list
+  | ExtensionPos      of gpos_subtable list
+  (* temporary; must contain more kinds of adjustment subtables *)
+
+
+let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
   match lookupType with
   | 1  (* -- Single adjustment -- *) ->
       failwith "Single adjustment; remains to be supported."  (* temporary *)
   | 2  (* -- Pair adjustment -- *) ->
       let () = print_for_debug_int "number of subtables" (List.length offsetlst_SubTable) in  (* for debug *)
-      seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d >>= fun _ ->
-      return ()  (* temporary *)
+      seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d >>= fun gidfst_pairposlst_assoc ->
+      return (PairPosAdjustment(List.concat gidfst_pairposlst_assoc))
   | 3  (* -- Cursive attachment -- *) ->
       failwith "Cursive attachment; remains to be supported."  (* temporary *)
   | 4  (* -- MarkToBase attachment -- *) ->
@@ -1539,7 +1563,7 @@ let d_extension_position d =
   lookup_gpos_exact [offset] extensionLookupType d
 
 
-let lookup_gpos d =
+let lookup_gpos d : gpos_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
@@ -1555,9 +1579,29 @@ let lookup_gpos d =
 *)
   d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
   match lookupType with
-  | 9 -> seek_every_pos offsetlst_SubTable d_extension_position d
+  | 9 ->
+      seek_every_pos offsetlst_SubTable d_extension_position d >>= fun subtablelst ->
+      return (ExtensionPos(subtablelst))
   | _ -> lookup_gpos_exact offsetlst_SubTable lookupType d
-*)
+
+
+let rec fold_subtables_gpos (f_pair : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
+  let iter = fold_subtables_gpos f_pair in
+    match subtablelst with
+    | [] -> init
+
+    | PairPosAdjustment(gidfst_pairposlst_assoc) :: tail ->
+        let initnew = List.fold_left f_pair init gidfst_pairposlst_assoc in
+          iter initnew tail
+
+    | ExtensionPos(subtablelstsub) :: tail ->
+        let initnew = iter init subtablelstsub in
+          iter initnew tail
+
+
+let gpos d scriptTag langSysTag_opt featureTag f_pair init =
+  advanced_table_scheme lookup_gpos (fold_subtables_gpos f_pair init) d scriptTag langSysTag_opt featureTag
+
 
 (* -- CFF_ table -- *)
 
