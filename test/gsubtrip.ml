@@ -44,7 +44,7 @@ let main () =
     (gidfst, pairinfolst) :: lst
   in
   Otfm.gsub d "latn" None "liga" f_lig [] >>= fun gsubres ->
-  Otfm.gpos d "latn" None "palt" f_pair [] >>= fun gposres ->
+  Otfm.gpos d "latn" None "kern" f_pair [] >>= fun gposres ->
   return (gsubres, gposres)
 
 

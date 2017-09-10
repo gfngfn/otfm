@@ -1183,7 +1183,7 @@ let seek_pos_from_list origin scriptTag d =
     begin
       d_bytes 4 d >>= fun tag ->
       d_uint16 d  >>= fun offset ->
-        print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *)
+(*        print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *) *)
         if String.equal tag scriptTag then
           seek_pos (origin + offset) d >>= fun () ->
           return true
@@ -1310,17 +1310,17 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
   | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
 
 
-let advanced_table_scheme lookup fold_subtables d scriptTag langSysTag_opt featureTag : 'a ok =
+let advanced_table_scheme tag_Gxxx lookup fold_subtables d scriptTag langSysTag_opt featureTag : 'a ok =
   init_decoder d >>=
-  seek_table Tag.gsub d >>= function
-    | None    -> Error(`Missing_required_table(Tag.gsub))
+  seek_table tag_Gxxx d >>= function
+    | None    -> Error(`Missing_required_table(tag_Gxxx))
     | Some(_) ->
-        let offset_GSUB = cur_pos d in
+        let offset_Gxxx = cur_pos d in
         d_uint32 d >>= fun version ->
         confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
-        d_offset offset_GSUB d >>= fun offset_ScriptList ->
-        d_offset offset_GSUB d >>= fun offset_FeatureList ->
-        d_offset offset_GSUB d >>= fun offset_LookupList ->
+        d_offset offset_Gxxx d >>= fun offset_ScriptList ->
+        d_offset offset_Gxxx d >>= fun offset_FeatureList ->
+        d_offset offset_Gxxx d >>= fun offset_LookupList ->
         print_for_debug_int "offset_ScriptList" offset_ScriptList ;  (* for debug *)
         seek_pos offset_ScriptList d >>= fun () ->
         seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
@@ -1355,7 +1355,9 @@ let advanced_table_scheme lookup fold_subtables d scriptTag langSysTag_opt featu
         print_for_debug "---- FeatureList table ----" ;  (* for debug *)
         d_list_filtered (fun d ->
           d_bytes 4 d >>= fun tag ->
+(*
           print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *)
+*)
           d_offset offset_FeatureList d >>= fun offset -> return (tag, offset))
           featrindexlst d >>= fun pairlst ->
         begin
@@ -1449,7 +1451,7 @@ let rec fold_subtables_gsub (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id)
 
 
 let gsub d scriptTag langSysTag_opt featureTag f_lig init =
-  advanced_table_scheme lookup_gsub (fold_subtables_gsub f_lig init) d scriptTag langSysTag_opt featureTag
+  advanced_table_scheme Tag.gsub lookup_gsub (fold_subtables_gsub f_lig init) d scriptTag langSysTag_opt featureTag
 
 
 let d_if cond df d =
@@ -1600,7 +1602,7 @@ let rec fold_subtables_gpos (f_pair : 'a -> glyph_id * (glyph_id * value_record 
 
 
 let gpos d scriptTag langSysTag_opt featureTag f_pair init =
-  advanced_table_scheme lookup_gpos (fold_subtables_gpos f_pair init) d scriptTag langSysTag_opt featureTag
+  advanced_table_scheme Tag.gpos lookup_gpos (fold_subtables_gpos f_pair init) d scriptTag langSysTag_opt featureTag
 
 
 (* -- CFF_ table -- *)
