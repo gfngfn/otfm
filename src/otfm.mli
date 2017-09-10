@@ -526,7 +526,7 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
 
-val gsub : decoder -> string -> string option -> string -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a option, error) result
+val gsub : decoder -> string -> string option -> string -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a, error) result
 
 type cff_info
 

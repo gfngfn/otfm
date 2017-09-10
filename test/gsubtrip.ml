@@ -23,6 +23,7 @@ let string_of_file inf =
   with
   | Sys_error e -> (Error (`Msg e))
 
+
 let main () =
   let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e in
   let return v = Ok(v) in
@@ -37,14 +38,13 @@ let main () =
   let f_lig lst (gidfst, liginfolst) =
     (gidfst, liginfolst) :: lst
   in
-  Otfm.gsub d "latn" None "liga" f_lig [] >>= fun lstopt ->
-  return lstopt
+  Otfm.gsub d "latn" None "liga" f_lig []
+
 
 let () =
   match main () with
-  | Error(e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
-  | Ok(None) -> print_endline "none."
-  | Ok(Some(gidfst_ligset_assoc))  ->
+  | Error(e)                -> Format.eprintf "@[%a@]@." Otfm.pp_error e
+  | Ok(gidfst_ligset_assoc) ->
       gidfst_ligset_assoc |> List.iter (fun (gidfst, ligset) ->
         print_string ((string_of_int gidfst) ^ " -> [");
         ligset |> List.iter (fun (gidtail, gidlig) ->

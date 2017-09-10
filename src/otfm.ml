@@ -1170,6 +1170,7 @@ type 'a ok = ('a, error) result
 
 type gsub_subtable =
   | LigatureSubtable of (glyph_id * (glyph_id list * glyph_id) list) list
+  (* temporary; should contain more lookup type *)
 
 
 let confirm b e =
@@ -1324,47 +1325,7 @@ let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id)
   d_with_coverage offset_Substitution_table d_ligature_set_table d
 
 
-let lookup d =
-    (* -- the position is supposed to be set
-          to the beginning of a Lookup table [page 137] -- *)
-  let offset_Lookup_table = cur_pos d in
-  d_uint16 d >>= fun lookupType ->
-  print_for_debug ("# lookupType = " ^ (string_of_int lookupType)) ;  (* for debug *)
-  d_uint16 d >>= fun lookupFlag ->
-  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag)) ;  (* for debug *)
-(*
-  let rightToLeft      = 0 < lookupFlag land 1 in
-  let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
-  let ignoreLigatures  = 0 < lookupFlag land 4 in
-  let ignoreMarks      = 0 < lookupFlag land 8 in
-*)
-  match lookupType with
-  | 1  (* -- single substitution -- *) ->
-      failwith "single substitution; remains to be supported."  (* temporary *)
-  | 2  (* -- multiple substitution -- *) ->
-      failwith "multiple substitution; remains to be supported."  (* temporary *)
-  | 3  (* -- alternate substitution -- *) ->
-      failwith "alternate substitution; remains to be supported."  (* temporary *)
-  | 4  (* -- ligature substitution -- *) ->
-      let () = print_for_debug "lookupType 4" in  (* for debug *)
-      d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
-      let () = print_for_debug_int "number of subtables" (List.length offsetlst_SubTable) in  (* for debug *)
-      seek_every_pos offsetlst_SubTable d_ligature_substitution_subtable d >>= fun gidfst_ligset_assoc ->
-      return (LigatureSubtable(List.concat gidfst_ligset_assoc))  (* temporary *)
-  | _ ->
-      failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
-
-
-let rec fold_subtable_list (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
-  let iter = fold_subtable_list f_lig in
-    match subtablelst with
-    | [] -> init
-    | LigatureSubtable(gidfst_ligset_assoc) :: tail ->
-        let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
-          iter initnew tail
-
-
-let gsub d scriptTag langSysTag_opt featureTag f_lig init : ('a option) ok =
+let advanced_table_scheme lookup fold_subtables d scriptTag langSysTag_opt featureTag : 'a ok =
   init_decoder d >>=
   seek_table Tag.gsub d >>= function
     | None    -> Error(`Missing_required_table(Tag.gsub))
@@ -1427,8 +1388,52 @@ let gsub d scriptTag langSysTag_opt featureTag f_lig init : ('a option) ok =
         seek_pos offset_LookupList d >>= fun () ->
         d_list_filtered (d_offset offset_LookupList) lookuplst d >>= fun offsetlst ->
         seek_every_pos offsetlst lookup d >>= fun subtablelst ->
-        let res = fold_subtable_list f_lig init subtablelst in
-        return (Some(res))
+        let res = fold_subtables subtablelst in
+        return res
+
+
+let rec fold_subtables_gsub (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
+  let iter = fold_subtables_gsub f_lig in
+  match subtablelst with
+  | []                                            -> init
+  | LigatureSubtable(gidfst_ligset_assoc) :: tail ->
+      let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
+        iter initnew tail
+
+
+let lookup_gsub d =
+    (* -- the position is supposed to be set
+          to the beginning of a Lookup table [page 137] -- *)
+  let offset_Lookup_table = cur_pos d in
+  d_uint16 d >>= fun lookupType ->
+  print_for_debug ("# lookupType = " ^ (string_of_int lookupType)) ;  (* for debug *)
+  d_uint16 d >>= fun lookupFlag ->
+  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag)) ;  (* for debug *)
+(*
+  let rightToLeft      = 0 < lookupFlag land 1 in
+  let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
+  let ignoreLigatures  = 0 < lookupFlag land 4 in
+  let ignoreMarks      = 0 < lookupFlag land 8 in
+*)
+  match lookupType with
+  | 1  (* -- single substitution -- *) ->
+      failwith "single substitution; remains to be supported."  (* temporary *)
+  | 2  (* -- multiple substitution -- *) ->
+      failwith "multiple substitution; remains to be supported."  (* temporary *)
+  | 3  (* -- alternate substitution -- *) ->
+      failwith "alternate substitution; remains to be supported."  (* temporary *)
+  | 4  (* -- ligature substitution -- *) ->
+      let () = print_for_debug "lookupType 4" in  (* for debug *)
+      d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
+      let () = print_for_debug_int "number of subtables" (List.length offsetlst_SubTable) in  (* for debug *)
+      seek_every_pos offsetlst_SubTable d_ligature_substitution_subtable d >>= fun gidfst_ligset_assoc ->
+      return (LigatureSubtable(List.concat gidfst_ligset_assoc))  (* temporary *)
+  | _ ->
+      failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
+
+
+let gsub d scriptTag langSysTag_opt featureTag f_lig init =
+  advanced_table_scheme lookup_gsub (fold_subtables_gsub f_lig init) d scriptTag langSysTag_opt featureTag
 
 
 (* -- CFF_ table -- *)
