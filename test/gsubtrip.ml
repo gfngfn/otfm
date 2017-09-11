@@ -40,11 +40,14 @@ let main () =
   let f_lig lst (gidfst, liginfolst) =
     (gidfst, liginfolst) :: lst
   in
-  let f_pair lst (gidfst, pairinfolst) =
+  let f_pair1 lst (gidfst, pairinfolst) =
     (gidfst, pairinfolst) :: lst
   in
+  let f_pair2 lst _ =  (* temporary *)
+    lst
+  in
   Otfm.gsub d "latn" None "liga" f_lig [] >>= fun gsubres ->
-  Otfm.gpos d "latn" None "kern" f_pair [] >>= fun gposres ->
+  Otfm.gpos d "latn" None "kern" f_pair1 f_pair2 [] >>= fun gposres ->
   return (gsubres, gposres)
 
 

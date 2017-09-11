@@ -199,11 +199,13 @@ type error =
   | `Invalid_postscript_name of string
   | `Unexpected_eoi of error_ctx
 (* added by gfn: *)
+  | `Inconsistent_length_of_coverage of error_ctx
+  | `Inconsistent_length_of_class
   | `Missing_required_script_tag of string
   | `Missing_required_langsys_tag of string
   | `Missing_required_feature_tag of string
-  | `Inconsistent_length_of_coverage of error_ctx
   | `Invalid_lookup_order of int
+  | `Invalid_extension_position
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
@@ -539,7 +541,16 @@ type value_record = {
   y_adv_device : int option;
 }
 
-val gpos : decoder -> string -> string option -> string -> ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) -> 'a -> ('a, error) result
+type class_value = int
+
+type class_definition =
+  | GlyphToClass      of glyph_id * class_value
+  | GlyphRangeToClass of glyph_id * glyph_id * class_value
+
+val gpos : decoder -> string -> string option -> string ->
+  ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) ->
+  ('a -> class_definition * (class_definition * value_record * value_record) list -> 'a) ->
+  'a -> ('a, error) result
 
 type cff_info
 

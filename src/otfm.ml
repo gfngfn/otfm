@@ -142,10 +142,12 @@ type error =
   | `Unexpected_eoi of error_ctx
 (* added by gfn: *)
   | `Inconsistent_length_of_coverage of error_ctx
+  | `Inconsistent_length_of_class
   | `Missing_required_script_tag of string
   | `Missing_required_langsys_tag of string
   | `Missing_required_feature_tag of string
   | `Invalid_lookup_order of int
+  | `Invalid_extension_position
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
@@ -192,6 +194,8 @@ let pp_error ppf = function
 (* added by gfn: *)
 | `Inconsistent_length_of_coverage ctx ->
     pp ppf "@[Inconsistent@ length@ of@ coverage@ in %a@]" pp_ctx ctx
+| `Inconsistent_length_of_class ->
+    pp ppf "@[Inconsistent@ length@ of@ class@]"
 | `Missing_required_script_tag tag ->
     pp ppf "@[Missing@ required@ Script@ tag@ (%S)" tag
 | `Missing_required_langsys_tag tag ->
@@ -200,6 +204,8 @@ let pp_error ppf = function
     pp ppf "@[Missing@ required@ Feature@ tag@ (%S)@]" tag
 | `Invalid_lookup_order lo ->
     pp ppf "@[Invalid@ lookup@ order@ (%d)@]" lo
+| `Invalid_extension_position ->
+    pp ppf "@[Invalid@ extension@ position@]"
 | `Invalid_cff_not_a_quad ->
     pp ppf "@[Invalid@ CFF@ table;@ not@ a@ quad@]"
 | `Invalid_cff_not_an_integer ->
@@ -1501,6 +1507,21 @@ let d_value_record (ValueFormat(valfmt)) d : value_record ok =
     y_adv_device = yAdvDevice_opt;
   }
 
+type class_value = int
+
+type class_definition =
+  | GlyphToClass      of glyph_id * class_value
+  | GlyphRangeToClass of glyph_id * glyph_id * class_value
+
+type gpos_subtable =
+  | PairPosAdjustment1 of (glyph_id * (glyph_id * value_record * value_record) list) list
+  | PairPosAdjustment2 of (class_definition * (class_definition * value_record * value_record) list) list
+  | ExtensionPos      of gpos_subtable list
+  (* temporary; must contain more kinds of adjustment subtables *)
+
+
+let d_class = d_uint16
+
 
 let d_pair_value_record valfmt1 valfmt2 d : (glyph_id * value_record * value_record) ok =
   d_uint16 d >>= fun secondGlyph ->
@@ -1512,43 +1533,107 @@ let d_pair_set valfmt1 valfmt2 d : ((glyph_id * value_record * value_record) lis
   d_list (d_pair_value_record valfmt1 valfmt2) d
 
 
-let d_pair_adjustment_subtable d : ((glyph_id * (glyph_id * value_record * value_record) list) list) ok =
+let d_class_2_record valfmt1 valfmt2 d : (value_record * value_record) ok =
+  d_value_record valfmt1 d >>= fun valrcd1 ->
+  d_value_record valfmt2 d >>= fun valrcd2 ->
+  return (valrcd1, valrcd2)
+
+
+let d_class_1_record classDef2 class2Count valfmt1 valfmt2 d : ((class_definition * value_record * value_record) list) ok =
+  d_repeat class2Count (d_class_2_record valfmt1 valfmt2) d >>= fun pairlst ->
+  try return (List.combine classDef2 pairlst |> List.map (fun (x, (y, z)) -> (x, y, z))) with
+  | Invalid_argument(_) -> err `Inconsistent_length_of_class
+
+
+let d_class_definition_format_1 d : (class_definition list) ok =
+  let rec aux acc gidstt lst =
+    match lst with
+    | []          -> return (List.rev acc)
+    | cls :: tail -> aux (GlyphToClass(gidstt, cls) :: acc) (gidstt + 1) tail
+  in
+    d_uint16 d >>= fun startGlyph ->
+    d_list d_class d >>= fun classValueArray ->
+    aux [] startGlyph classValueArray
+
+
+let d_class_range_record d : class_definition ok =
+    d_uint16 d >>= fun start_gid ->
+    d_uint16 d >>= fun end_gid ->
+    d_class d >>= fun cls ->
+    return (GlyphRangeToClass(start_gid, end_gid, cls))
+
+
+let d_class_definition_format_2 d : (class_definition list) ok =
+  d_list d_class_range_record d >>= fun rangelst ->
+  return rangelst
+  
+
+let d_class_definition d : (class_definition list) ok =
+    (* -- the position is supposed to be set
+          to the  beginning of a ClassDef table [page 140] -- *)
+  d_uint16 d >>= fun classFormat ->
+  match classFormat with
+  | 1 -> d_class_definition_format_1 d
+  | 2 -> d_class_definition_format_2 d
+  | _ -> err_version d (Int32.of_int classFormat)
+
+
+let d_fetch offset_origin df d =
+  let pos_before = cur_pos d in
+  d_offset offset_origin d >>= fun offset ->
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 2) d >>= fun () ->
+  return res
+
+
+let d_pair_adjustment_subtable d : gpos_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of a PairPos subtable [page 194] -- *)
   let offset_PairPos = cur_pos d in
   d_uint16 d >>= fun posFormat ->
-  confirm (posFormat = 1) (e_version d (Int32.of_int posFormat)) >>= fun () ->
-  d_coverage offset_PairPos d >>= fun coverage ->
-  d_value_format d >>= fun valueFormat1 ->
-  d_value_format d >>= fun valueFormat2 ->
-  d_list (d_offset offset_PairPos) d >>= fun offsetlst_PairSet ->
-  seek_every_pos offsetlst_PairSet (d_pair_set valueFormat1 valueFormat2) d >>= fun pairsetlst ->
-  try
-    return (List.combine coverage pairsetlst)
-  with
-  | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
+  match posFormat with
+  | 1 ->
+      d_coverage offset_PairPos d >>= fun coverage ->
+      d_value_format d >>= fun valueFormat1 ->
+      d_value_format d >>= fun valueFormat2 ->
+      d_list (d_offset offset_PairPos) d >>= fun offsetlst_PairSet ->
+      seek_every_pos offsetlst_PairSet (d_pair_set valueFormat1 valueFormat2) d >>= fun pairsetlst ->
+      begin
+        try return (PairPosAdjustment1(List.combine coverage pairsetlst)) with
+        | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
+      end
+
+  | 2 ->
+      d_coverage offset_PairPos d >>= fun coverage ->
+      d_value_format d >>= fun valueFormat1 ->
+      d_value_format d >>= fun valueFormat2 ->
+      d_fetch offset_PairPos d_class_definition d >>= fun classDef1 ->
+      d_fetch offset_PairPos d_class_definition d >>= fun classDef2 ->
+      d_uint16 d >>= fun class1Count ->
+      d_uint16 d >>= fun class2Count ->
+      d_repeat class1Count (d_class_1_record classDef2 class2Count valueFormat1 valueFormat2) d >>= fun pairposlst ->
+      begin
+        try return (PairPosAdjustment2(List.combine classDef1 pairposlst)) with
+        | Invalid_argument(_) -> err `Inconsistent_length_of_class
+      end
+
+  | _ -> err_version d (Int32.of_int posFormat)
 
 
-type gpos_subtable =
-  | PairPosAdjustment of (glyph_id * (glyph_id * value_record * value_record) list) list
-  | ExtensionPos      of gpos_subtable list
-  (* temporary; must contain more kinds of adjustment subtables *)
-
-
-let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
+let lookup_gpos_exact offsetlst_SubTable lookupType d : (gpos_subtable list) ok =
   match lookupType with
   | 1  (* -- Single adjustment -- *) ->
       failwith "Single adjustment; remains to be supported."  (* temporary *)
   | 2  (* -- Pair adjustment -- *) ->
       let () = print_for_debug_int "number of subtables" (List.length offsetlst_SubTable) in  (* for debug *)
-      seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d >>= fun gidfst_pairposlst_assoc ->
-      return (PairPosAdjustment(List.concat gidfst_pairposlst_assoc))
+      seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d
   | 3  (* -- Cursive attachment -- *) ->
       failwith "Cursive attachment; remains to be supported."  (* temporary *)
   | 4  (* -- MarkToBase attachment -- *) ->
       failwith "MarkToBase attachment; remains to be supported."  (* temporary *)
   | 9  (* -- Extension positioning [page 213] -- *) ->
-      failwith "Extension positioning; remains to be supported."  (* temporary *)
+      err `Invalid_extension_position
   | _ ->
       failwith "lookupType other; remains to be supported (or font file broken)."  (* temporary *)
 
@@ -1582,18 +1667,24 @@ let lookup_gpos d : gpos_subtable ok =
   d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
   match lookupType with
   | 9 ->
-      seek_every_pos offsetlst_SubTable d_extension_position d >>= fun subtablelst ->
-      return (ExtensionPos(subtablelst))
-  | _ -> lookup_gpos_exact offsetlst_SubTable lookupType d
+      seek_every_pos offsetlst_SubTable d_extension_position d >>= fun subtablelstlst ->
+      return (ExtensionPos(List.concat subtablelstlst))
+  | _ ->
+      lookup_gpos_exact offsetlst_SubTable lookupType d >>= fun subtablelst ->
+      return (ExtensionPos(subtablelst))  (* ad-hoc fix *)
 
 
-let rec fold_subtables_gpos (f_pair : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
-  let iter = fold_subtables_gpos f_pair in
+let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : 'a -> class_definition * (class_definition * value_record * value_record) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
+  let iter = fold_subtables_gpos f_pair1 f_pair2 in
     match subtablelst with
     | [] -> init
 
-    | PairPosAdjustment(gidfst_pairposlst_assoc) :: tail ->
-        let initnew = List.fold_left f_pair init gidfst_pairposlst_assoc in
+    | PairPosAdjustment1(gidfst_pairposlst_assoc) :: tail ->
+        let initnew = List.fold_left f_pair1 init gidfst_pairposlst_assoc in
+          iter initnew tail
+
+    | PairPosAdjustment2(cls_pairposlst_assoc) :: tail ->
+        let initnew = List.fold_left f_pair2 init cls_pairposlst_assoc in
           iter initnew tail
 
     | ExtensionPos(subtablelstsub) :: tail ->
@@ -1601,8 +1692,8 @@ let rec fold_subtables_gpos (f_pair : 'a -> glyph_id * (glyph_id * value_record 
           iter initnew tail
 
 
-let gpos d scriptTag langSysTag_opt featureTag f_pair init =
-  advanced_table_scheme Tag.gpos lookup_gpos (fold_subtables_gpos f_pair init) d scriptTag langSysTag_opt featureTag
+let gpos d scriptTag langSysTag_opt featureTag f_pair1 f_pair2 init =
+  advanced_table_scheme Tag.gpos lookup_gpos (fold_subtables_gpos f_pair1 f_pair2 init) d scriptTag langSysTag_opt featureTag
 
 
 (* -- CFF_ table -- *)
