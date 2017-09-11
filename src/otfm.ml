@@ -1167,7 +1167,7 @@ let loca d gid =
 
 (* -- GSUB table -- *)
 
-let print_for_debug msg = print_endline msg
+let print_for_debug msg = () (* print_endline msg *)
 
 let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
 

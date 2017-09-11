@@ -28,6 +28,10 @@ let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
 let return v = Ok(v)
 
 
+type pair_position =
+  | Pair1 of Otfm.glyph_id * (Otfm.glyph_id * Otfm.value_record * Otfm.value_record) list
+  | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
+
 let main () =
   let filename = try Sys.argv.(1) with Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end in
   let src =
@@ -41,11 +45,15 @@ let main () =
     (gidfst, liginfolst) :: lst
   in
   let f_pair1 lst (gidfst, pairinfolst) =
-    (gidfst, pairinfolst) :: lst
+    Pair1(gidfst, pairinfolst) :: lst
   in
-  let f_pair2 (clsdeflst : Otfm.class_definition list) (clsdeflst : Otfm.class_definition list) lst _ =  (* temporary *)
-    lst
+(*
+  let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
+    Pair2(clsval, pairinfolst) :: lst
   in
+*)
+  let f_pair2 _ _ lst _ = lst in
+
   Otfm.gsub d "latn" None "liga" f_lig [] >>= fun gsubres ->
   Otfm.gpos d "latn" None "kern" f_pair1 f_pair2 [] >>= fun gposres ->
   return (gsubres, gposres)
@@ -54,15 +62,24 @@ let main () =
 let () =
   match main () with
   | Error(e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
-  | Ok(gidfst_ligset_assoc, gidfst_pairposlst_assoc) ->
+  | Ok(gidfst_ligset_assoc, clsfst_pairposlst_assoc) ->
       begin
         print_endline "GSUB:";
-        gidfst_ligset_assoc |> List.iter (fun (gidfst, ligset) ->
+        gidfst_ligset_assoc |> List.rev |> List.iter (fun (gidfst, ligset) ->
           print_string ((string_of_int gidfst) ^ " -> [");
           ligset |> List.iter (fun (gidtail, gidlig) ->
             gidtail |> List.iter (fun gid -> print_string (" " ^ (string_of_int gid)));
             print_string (" ----> " ^ (string_of_int gidlig) ^ "; ");
           );
           print_endline "]";
+        );
+        print_endline "GPOS:";
+        clsfst_pairposlst_assoc |> List.rev |> List.iter (function
+        | Pair1(gidfst, pairposset) ->
+            print_endline ("[1] " ^ (string_of_int gidfst) ^ " -> (length: " ^
+              (string_of_int (List.length pairposset)) ^ ")")
+        | Pair2(clsfst, pairposset) ->
+            print_endline ("[2] " ^ (string_of_int clsfst) ^ " -> (length: " ^
+              (string_of_int (List.length pairposset)) ^ ")")
         );
       end
