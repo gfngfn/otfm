@@ -1488,14 +1488,16 @@ let d_value_format d : value_format ok =
 
 
 let d_value_record (ValueFormat(valfmt)) d : value_record ok =
-  d_if (0 < valfmt land   1) d_uint16 d >>= fun xPlacement_opt ->
-  d_if (0 < valfmt land   2) d_uint16 d >>= fun yPlacement_opt ->
-  d_if (0 < valfmt land   4) d_uint16 d >>= fun xAdvance_opt ->
-  d_if (0 < valfmt land   8) d_uint16 d >>= fun yAdvance_opt ->
-  d_if (0 < valfmt land  16) d_uint16 d >>= fun xPlaDevice_opt ->
-  d_if (0 < valfmt land  32) d_uint16 d >>= fun yPlaDevice_opt ->
-  d_if (0 < valfmt land  64) d_uint16 d >>= fun xAdvDevice_opt ->
-  d_if (0 < valfmt land 128) d_uint16 d >>= fun yAdvDevice_opt ->
+    (* -- the position is supposed to be set
+          to the beginning of a ValueRecord table [page 213] -- *)
+  d_if (0 < valfmt land   1) d_int16 d >>= fun xPlacement_opt ->
+  d_if (0 < valfmt land   2) d_int16 d >>= fun yPlacement_opt ->
+  d_if (0 < valfmt land   4) d_int16 d >>= fun xAdvance_opt ->
+  d_if (0 < valfmt land   8) d_int16 d >>= fun yAdvance_opt ->
+  d_if (0 < valfmt land  16) d_int16 d >>= fun xPlaDevice_opt ->
+  d_if (0 < valfmt land  32) d_int16 d >>= fun yPlaDevice_opt ->
+  d_if (0 < valfmt land  64) d_int16 d >>= fun xAdvDevice_opt ->
+  d_if (0 < valfmt land 128) d_int16 d >>= fun yAdvDevice_opt ->
   return {
     x_placement  = xPlacement_opt;
     y_placement  = yPlacement_opt;
