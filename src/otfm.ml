@@ -1316,7 +1316,7 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
   | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
 
 
-let advanced_table_scheme tag_Gxxx lookup fold_subtables d scriptTag langSysTag_opt featureTag : 'a ok =
+let advanced_table_scheme tag_Gxxx lookup d scriptTag langSysTag_opt featureTag : 'a ok =
   init_decoder d >>=
   seek_table tag_Gxxx d >>= function
     | None    -> Error(`Missing_required_table(tag_Gxxx))
@@ -1380,9 +1380,7 @@ let advanced_table_scheme tag_Gxxx lookup fold_subtables d scriptTag langSysTag_
         print_for_debug_int "offset_LookupList" offset_LookupList ;  (* for debug *)
         seek_pos offset_LookupList d >>= fun () ->
         d_list_filtered (d_offset offset_LookupList) lookuplst d >>= fun offsetlst ->
-        seek_every_pos offsetlst lookup d >>= fun subtablelst ->
-        let res = fold_subtables subtablelst in
-        return res
+        seek_every_pos offsetlst lookup d
 
 
 let d_ligature_table d : (glyph_id list * glyph_id) ok =
@@ -1457,7 +1455,8 @@ let rec fold_subtables_gsub (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id)
 
 
 let gsub d scriptTag langSysTag_opt featureTag f_lig init =
-  advanced_table_scheme Tag.gsub lookup_gsub (fold_subtables_gsub f_lig init) d scriptTag langSysTag_opt featureTag
+  advanced_table_scheme Tag.gsub lookup_gsub d scriptTag langSysTag_opt featureTag
+    >>= fun subtables -> return (fold_subtables_gsub f_lig init subtables)
 
 
 let d_if cond df d =
@@ -1685,7 +1684,7 @@ let lookup_gpos d : gpos_subtable ok =
       return (ExtensionPos(subtablelst))  (* ad-hoc fix *)
 
 
-let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : class_definition list -> class_definition list -> 'a -> class_value * (class_value * value_record * value_record) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
+let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
   let iter = fold_subtables_gpos f_pair1 f_pair2 in
     match subtablelst with
     | [] -> init
@@ -1695,7 +1694,7 @@ let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record
           iter initnew tail
 
     | PairPosAdjustment2(clsdeflst1, clsdeflst2, cls_pairposlst_assoc) :: tail ->
-        let initnew = List.fold_left (f_pair2 clsdeflst1 clsdeflst2) init cls_pairposlst_assoc in
+        let initnew = f_pair2 clsdeflst1 clsdeflst2 init cls_pairposlst_assoc in
           iter initnew tail
 
     | ExtensionPos(subtablelstsub) :: tail ->
@@ -1704,7 +1703,8 @@ let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record
 
 
 let gpos d scriptTag langSysTag_opt featureTag f_pair1 f_pair2 init =
-  advanced_table_scheme Tag.gpos lookup_gpos (fold_subtables_gpos f_pair1 f_pair2 init) d scriptTag langSysTag_opt featureTag
+  advanced_table_scheme Tag.gpos lookup_gpos d scriptTag langSysTag_opt featureTag
+    >>= fun subtables -> return (fold_subtables_gpos f_pair1 f_pair2 init subtables)
 
 
 (* -- CFF_ table -- *)
