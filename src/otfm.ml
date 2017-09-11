@@ -1515,7 +1515,7 @@ type class_definition =
 
 type gpos_subtable =
   | PairPosAdjustment1 of (glyph_id * (glyph_id * value_record * value_record) list) list
-  | PairPosAdjustment2 of (class_definition * (class_definition * value_record * value_record) list) list
+  | PairPosAdjustment2 of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
   | ExtensionPos      of gpos_subtable list
   (* temporary; must contain more kinds of adjustment subtables *)
 
@@ -1539,9 +1539,18 @@ let d_class_2_record valfmt1 valfmt2 d : (value_record * value_record) ok =
   return (valrcd1, valrcd2)
 
 
-let d_class_1_record classDef2 class2Count valfmt1 valfmt2 d : ((class_definition * value_record * value_record) list) ok =
+let numbering lst =
+  let rec aux acc i lst =
+    match lst with
+    | []           -> List.rev acc
+    | head :: tail -> aux ((i, head) :: acc) (i + 1) tail
+  in
+    aux [] 0 lst
+
+
+let d_class_1_record class2Count valfmt1 valfmt2 d : ((class_value * value_record * value_record) list) ok =
   d_repeat class2Count (d_class_2_record valfmt1 valfmt2) d >>= fun pairlst ->
-  try return (List.combine classDef2 pairlst |> List.map (fun (x, (y, z)) -> (x, y, z))) with
+  try return (numbering pairlst |> List.map (fun (x, (y, z)) -> (x, y, z))) with
   | Invalid_argument(_) -> err `Inconsistent_length_of_class
 
 
@@ -1612,9 +1621,9 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
       d_fetch offset_PairPos d_class_definition d >>= fun classDef2 ->
       d_uint16 d >>= fun class1Count ->
       d_uint16 d >>= fun class2Count ->
-      d_repeat class1Count (d_class_1_record classDef2 class2Count valueFormat1 valueFormat2) d >>= fun pairposlst ->
+      d_repeat class1Count (d_class_1_record class2Count valueFormat1 valueFormat2) d >>= fun pairposlst ->
       begin
-        try return (PairPosAdjustment2(List.combine classDef1 pairposlst)) with
+        try return (PairPosAdjustment2(classDef1, classDef2, numbering pairposlst)) with
         | Invalid_argument(_) -> err `Inconsistent_length_of_class
       end
 
@@ -1674,7 +1683,7 @@ let lookup_gpos d : gpos_subtable ok =
       return (ExtensionPos(subtablelst))  (* ad-hoc fix *)
 
 
-let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : 'a -> class_definition * (class_definition * value_record * value_record) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
+let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : class_definition list -> class_definition list -> 'a -> class_value * (class_value * value_record * value_record) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
   let iter = fold_subtables_gpos f_pair1 f_pair2 in
     match subtablelst with
     | [] -> init
@@ -1683,8 +1692,8 @@ let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record
         let initnew = List.fold_left f_pair1 init gidfst_pairposlst_assoc in
           iter initnew tail
 
-    | PairPosAdjustment2(cls_pairposlst_assoc) :: tail ->
-        let initnew = List.fold_left f_pair2 init cls_pairposlst_assoc in
+    | PairPosAdjustment2(clsdeflst1, clsdeflst2, cls_pairposlst_assoc) :: tail ->
+        let initnew = List.fold_left (f_pair2 clsdeflst1 clsdeflst2) init cls_pairposlst_assoc in
           iter initnew tail
 
     | ExtensionPos(subtablelstsub) :: tail ->

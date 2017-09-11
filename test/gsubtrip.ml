@@ -43,7 +43,7 @@ let main () =
   let f_pair1 lst (gidfst, pairinfolst) =
     (gidfst, pairinfolst) :: lst
   in
-  let f_pair2 lst _ =  (* temporary *)
+  let f_pair2 (clsdeflst : Otfm.class_definition list) (clsdeflst : Otfm.class_definition list) lst _ =  (* temporary *)
     lst
   in
   Otfm.gsub d "latn" None "liga" f_lig [] >>= fun gsubres ->

@@ -549,7 +549,7 @@ type class_definition =
 
 val gpos : decoder -> string -> string option -> string ->
   ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) ->
-  ('a -> class_definition * (class_definition * value_record * value_record) list -> 'a) ->
+  (class_definition list -> class_definition list -> 'a -> class_value * (class_value * value_record * value_record) list -> 'a) ->
   'a -> ('a, error) result
 
 type cff_info
