@@ -244,7 +244,7 @@ val decoder_src : decoder -> src
     {{:http://www.microsoft.com/typography/otspec/default.htm}
     specification} for details. *)
 
-type flavour = [ `TTF | `CFF ]
+type flavour = [ `TTF_true | `TTF_OT | `CFF ]
 (** The type for OpenType flavours. *)
 
 val flavour : decoder -> (flavour, error) result

@@ -224,7 +224,7 @@ let pp_error ppf = function
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
 
-type flavour = [ `TTF | `CFF ]
+type flavour = [ `TTF_true | `TTF_OT | `CFF ]
 type src = [ `String of string ]
 
 (* TODO maybe it would be better not to maintain t_pos/i_pos,
@@ -238,7 +238,7 @@ type decoder =
     mutable t_pos : int;                  (* current decoded table position. *)
     mutable state : [ `Fatal of error | `Start | `Ready ]; (* decoder state. *)
     mutable ctx : error_ctx;                   (* the current error context. *)
-    mutable flavour : [ `TTF | `CFF ];                   (* decoded flavour. *)
+    mutable flavour : flavour;                           (* decoded flavour. *)
     mutable tables : (tag * int * int) list;       (* decoded table records. *)
     mutable loca_pos : int;                    (* for `TTF fonts, lazy init. *)
     mutable loca_format : int;                 (* for `TTF fonts, lazy init. *)
@@ -253,26 +253,27 @@ let decoder src =
     | `String(s) -> (s, 0, String.length s - 1)
   in
   { i; i_pos; i_max; t_pos = 0;
-    state = `Start; ctx = `Offset_table; flavour = `TTF; tables = [];
+    state = `Start; ctx = `Offset_table; flavour = `TTF_OT; tables = [];
     loca_pos = -1; loca_format = -1; glyf_pos = -1;
     buf = Buffer.create 253; }
 
 let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
 let return x                 = Ok(x)
 let err e                    = Error(e)
-let err_eoi d                = Error(`Unexpected_eoi(d.ctx))
+
+let err_eoi d                = err (`Unexpected_eoi(d.ctx))
 let e_version d v            = `Unknown_version(d.ctx, v)
-let err_version d v          = Error(e_version d v)
-let err_loca_format d v      = Error(`Unknown_loca_format(d.ctx, v))
-let err_composite_format d v = Error(`Unknown_composite_format(d.ctx, v))
-let err_fatal d e            = begin d.state <- `Fatal(e) ; Error(e) end
-let set_ctx d ctx            = begin d.ctx <- ctx ; end
+let err_version d v          = err (e_version d v)
+let err_loca_format d v      = err (`Unknown_loca_format(d.ctx, v))
+let err_composite_format d v = err (`Unknown_composite_format(d.ctx, v))
+let err_fatal d e            = begin d.state <- `Fatal(e); err e end
+let set_ctx d ctx            = begin d.ctx <- ctx; end
 
 let miss d count = d.i_max - d.i_pos + 1 < count
 let cur_pos d = d.i_pos
 let seek_pos pos d =
   if pos > d.i_max then err (`Invalid_offset(d.ctx, pos)) else
-    begin d.i_pos <- pos ; Ok() end
+    begin d.i_pos <- pos; return () end
 
 let seek_table_pos pos d = seek_pos (d.t_pos + pos) d
 let seek_table tag d () =
@@ -280,10 +281,10 @@ let seek_table tag d () =
     let (_, pos, len) = List.find (fun (t, _, _) -> tag = t) d.tables in
       if pos > d.i_max then err (`Invalid_offset(`Table(tag), pos)) else
         begin
-          set_ctx d (`Table(tag)) ;
-          d.t_pos <- pos ;
-          d.i_pos <- pos ;
-          Ok(Some(len))
+          set_ctx d (`Table(tag));
+          d.t_pos <- pos;
+          d.i_pos <- pos;
+          return (Some(len))
         end
   with
   | Not_found -> Ok(None)
@@ -295,16 +296,16 @@ let seek_required_table tag d () =
 
 let d_skip len d =
   if miss d len then err_eoi d else
-    begin d.i_pos <- d.i_pos + len ; Ok() end
+    begin d.i_pos <- d.i_pos + len; Ok() end
 
 let raw_byte d =
   let j = d.i_pos in
-    begin d.i_pos <- d.i_pos + 1 ; unsafe_byte d.i j end
+    begin d.i_pos <- d.i_pos + 1; unsafe_byte d.i j end
 
 let d_bytes len d =
   if miss d len then err_eoi d else
     let start = d.i_pos in
-      begin d.i_pos <- d.i_pos + len ; return (String.sub d.i start len) end
+      begin d.i_pos <- d.i_pos + len; return (String.sub d.i start len) end
 
 let d_uint8 d = if miss d 1 then err_eoi d else return (raw_byte d)
 let d_int8 d =
@@ -376,14 +377,14 @@ let d_f2dot14 d =
 let d_utf_16be len (* in bytes *) d =            (* returns an UTF-8 string. *)
   let rec add_utf_8 b i = function
     | `Malformed(_) -> add_utf_8 b i (`Uchar(Uutf.u_rep))
-    | `Uchar(u)     -> begin Uutf.Buffer.add_utf_8 b u ; b end
+    | `Uchar(u)     -> begin Uutf.Buffer.add_utf_8 b u; b end
   in
   d_bytes len d >>= fun s ->
-  Buffer.clear d.buf ;
+  Buffer.clear d.buf;
   return (Buffer.contents (Uutf.String.fold_utf_16be add_utf_8 d.buf s))
 
 let rec d_table_records d count =
-  if count = 0 then begin d.state <- `Ready ; Ok() end else
+  if count = 0 then begin d.state <- `Ready; return () end else
     d_uint32     d >>= fun tag ->
     d_skip 4     d >>= fun () ->
     d_uint32_int d >>= fun off ->
@@ -393,10 +394,11 @@ let rec d_table_records d count =
 
 let d_version d =
   d_uint32 d >>= function
-    | t when t = Tag.v_OTTO                      -> begin d.flavour <- `CFF ; return () end
-    | t when (t = Tag.v_true || t = 0x00010000l) -> begin d.flavour <- `TTF ; return () end
-    | t when t = Tag.v_ttcf                      -> Error(`Unsupported_TTC)
-    | t                                          -> Error(`Unknown_flavour(t))
+    | t  when t = Tag.v_OTTO  -> begin d.flavour <- `CFF     ; return () end
+    | t  when t = Tag.v_true  -> begin d.flavour <- `TTF_true; return () end
+    | t  when t = 0x00010000l -> begin d.flavour <- `TTF_OT  ; return () end
+    | t  when t = Tag.v_ttcf  -> Error(`Unsupported_TTC)
+    | t                       -> Error(`Unknown_flavour(t))
 
 let d_structure d =                   (* offset table and table directory. *)
   d_version      d >>= fun () ->                          (* offset table. *)
@@ -407,7 +409,7 @@ let d_structure d =                   (* offset table and table directory. *)
 
 let init_decoder d =
   match d.state with
-  | `Ready    -> begin d.ctx <- `Table_directory ; return () end
+  | `Ready    -> begin d.ctx <- `Table_directory; return () end
   | `Fatal(e) -> err e
   | `Start    ->
       match d_structure d with
@@ -1189,7 +1191,7 @@ let seek_pos_from_list origin scriptTag d =
     begin
       d_bytes 4 d >>= fun tag ->
       d_uint16 d  >>= fun offset ->
-(*        print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *) *)
+(*        print_for_debug ("| tag = '" ^ tag ^ "'");  (* for debug *) *)
         if String.equal tag scriptTag then
           seek_pos (origin + offset) d >>= fun () ->
           return true
@@ -1198,7 +1200,7 @@ let seek_pos_from_list origin scriptTag d =
     end
   in
   d_uint16 d >>= fun scriptCount ->
-  print_for_debug_int "scriptCount" scriptCount ;
+  print_for_debug_int "scriptCount" scriptCount;
   aux scriptCount >>= fun found ->
   return found
 
@@ -1213,7 +1215,7 @@ let d_list_filtered df indexlst d =
       aux acc imax (i + 1)
   in
     d_uint16 d >>= fun count ->
-    print_for_debug_int "count" count ;
+    print_for_debug_int "count" count;
     aux [] count 0
 
 
@@ -1228,7 +1230,7 @@ let d_repeat n df d =
 
 let d_list df d =
   d_uint16 d >>= fun count ->
-  print_for_debug_int "(d_list) count" count ;
+  print_for_debug_int "(d_list) count" count;
   d_repeat count df d
 
 
@@ -1256,13 +1258,13 @@ let d_coverage_main d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
-  print_for_debug_int "coverageFormat" coverageFormat ;  (* for debug *)
+  print_for_debug_int "coverageFormat" coverageFormat;  (* for debug *)
   let res =  (* for debug *)
     match coverageFormat with
     | 1 -> d_list d_uint16 d
     | 2 -> d_list d_range_record d >>= fun rnglst -> return (List.concat rnglst)
     | _ -> err_version d (Int32.of_int coverageFormat)
-  in print_for_debug "end Coverage table" ; res  (* for debug *)
+  in print_for_debug "end Coverage table"; res  (* for debug *)
 
 
 let d_coverage offset_origin d : (glyph_id list) ok =
@@ -1293,22 +1295,13 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
     (* -- the position is supposed to be set
           just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
-(*
-  d_offset offset_Substitution_table d >>= fun offset_Coverage ->
-  print_for_debug_int "offset_Coverage" offset_Coverage ;  (* for debug *)
-  seek_pos offset_Coverage d >>= fun () ->
-    (* -- the position is set to the beginning of a Coverage table -- *)
-  d_coverage d >>= fun coverage ->
-*)
   d_coverage offset_Substitution_table d >>= fun coverage ->
-  print_for_debug_int "size of Coverage" (List.length coverage) ;  (* for debug *)
-  List.iter (print_for_debug_int "  *   elem") coverage ;  (* for debug *)
-(*
-  seek_pos (offset_Substitution_table + 4) d >>= fun () ->
-*)
+  print_for_debug_int "size of Coverage" (List.length coverage);  (* for debug *)
+  List.iter (print_for_debug_int "  *   elem") coverage;  (* for debug *)
+
     (* -- the position is set just before LigSetCount field [page 254] -- *)
   d_offset_list offset_Substitution_table d >>= fun offsetlst_LigatureSet ->
-  print_for_debug_int "number of LigatureSet" (List.length offsetlst_LigatureSet) ;  (* for debug *)
+  print_for_debug_int "number of LigatureSet" (List.length offsetlst_LigatureSet);  (* for debug *)
   seek_every_pos offsetlst_LigatureSet df d >>= fun datalst ->
   try
     return (List.combine coverage datalst)
@@ -1327,13 +1320,13 @@ let advanced_table_scheme tag_Gxxx lookup d scriptTag langSysTag_opt featureTag 
         d_offset offset_Gxxx d >>= fun offset_ScriptList ->
         d_offset offset_Gxxx d >>= fun offset_FeatureList ->
         d_offset offset_Gxxx d >>= fun offset_LookupList ->
-        print_for_debug_int "offset_ScriptList" offset_ScriptList ;  (* for debug *)
+        print_for_debug_int "offset_ScriptList" offset_ScriptList;  (* for debug *)
         seek_pos offset_ScriptList d >>= fun () ->
         seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
         confirm found (`Missing_required_script_tag(scriptTag)) >>= fun () ->
           (* -- now the position is set to the beginning of the required Script table -- *)
         let offset_Script_table = cur_pos d in
-        print_for_debug_int "offset_Script_table" offset_Script_table ;  (* for debug *)
+        print_for_debug_int "offset_Script_table" offset_Script_table;  (* for debug *)
         d_offset offset_Script_table d >>= fun offset_DefaultLangSys ->
         begin
           match langSysTag_opt with
@@ -1356,13 +1349,13 @@ let advanced_table_scheme tag_Gxxx lookup d scriptTag langSysTag_opt featureTag 
         in
         d_list d_uint16 d >>= fun featrindexlst ->
           (* -- now we are going to see FeatureList table -- *)
-        print_for_debug_int "offset_FeatureList" offset_FeatureList ;  (* for debug *)
+        print_for_debug_int "offset_FeatureList" offset_FeatureList;  (* for debug *)
         seek_pos offset_FeatureList d >>= fun () ->
-        print_for_debug "---- FeatureList table ----" ;  (* for debug *)
+        print_for_debug "---- FeatureList table ----";  (* for debug *)
         d_list_filtered (fun d ->
           d_bytes 4 d >>= fun tag ->
 (*
-          print_for_debug ("| tag = '" ^ tag ^ "'") ;  (* for debug *)
+          print_for_debug ("| tag = '" ^ tag ^ "'");  (* for debug *)
 *)
           d_offset offset_FeatureList d >>= fun offset -> return (tag, offset))
           featrindexlst d >>= fun pairlst ->
@@ -1370,14 +1363,14 @@ let advanced_table_scheme tag_Gxxx lookup d scriptTag langSysTag_opt featureTag 
           try return (List.assoc featureTag pairlst) with
           | Not_found -> err (`Missing_required_feature_tag(featureTag))
         end >>= fun offset_Feature_table ->
-        print_for_debug_int "offset_Feature_table" offset_Feature_table ;  (* for debug *)
+        print_for_debug_int "offset_Feature_table" offset_Feature_table;  (* for debug *)
         seek_pos offset_Feature_table d >>= fun () ->
           (* -- now the position is set to the beginning of the required Feature table -- *)
-        print_for_debug "---- Feature table ----" ;  (* for debug *)
+        print_for_debug "---- Feature table ----";  (* for debug *)
         d_offset offset_Feature_table d >>= fun offset_FeatureParams ->
         d_list d_uint16 d >>= fun lookuplst ->
           (* -- now we are going to see LookupList table -- *)
-        print_for_debug_int "offset_LookupList" offset_LookupList ;  (* for debug *)
+        print_for_debug_int "offset_LookupList" offset_LookupList;  (* for debug *)
         seek_pos offset_LookupList d >>= fun () ->
         d_list_filtered (d_offset offset_LookupList) lookuplst d >>= fun offsetlst ->
         seek_every_pos offsetlst lookup d
@@ -1388,7 +1381,7 @@ let d_ligature_table d : (glyph_id list * glyph_id) ok =
           to the beginning of a Ligature table [page 255] -- *)
   d_uint16 d >>= fun ligGlyph ->
   d_uint16 d >>= fun compCount ->
-  print_for_debug (Printf.sprintf "    [ligGlyph = %d ----> compCount = %d]" ligGlyph compCount) ;
+  print_for_debug (Printf.sprintf "    [ligGlyph = %d ----> compCount = %d]" ligGlyph compCount);
   d_repeat (compCount - 1) d_uint16 d >>= fun component ->
   return (component, ligGlyph)
 
@@ -1397,7 +1390,7 @@ let d_ligature_set_table d : ((glyph_id list * glyph_id) list) ok =
     (* -- the position is supposed to be set
           to the beginning of a LigatureSet table [page 254] -- *)
   let offset_LigatureSet_table = cur_pos d in
-  print_for_debug_int "offset_LigatureSet_table" offset_LigatureSet_table ;
+  print_for_debug_int "offset_LigatureSet_table" offset_LigatureSet_table;
   d_offset_list offset_LigatureSet_table d >>= fun offsetlst_Ligature_table ->
   seek_every_pos offsetlst_Ligature_table d_ligature_table d
 
@@ -1406,9 +1399,9 @@ let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id)
     (* -- the position is supposed to be set
           to the beginning of Ligature SubstFormat1 subtable [page 254] -- *)
   let offset_Substitution_table = cur_pos d in
-  print_for_debug_int "offset_Substitution_table" offset_Substitution_table ;  (* for debug *)
+  print_for_debug_int "offset_Substitution_table" offset_Substitution_table;  (* for debug *)
   d_uint16 d >>= fun substFormat ->
-  print_for_debug_int "substFormat" substFormat ;  (* for debug *)
+  print_for_debug_int "substFormat" substFormat;  (* for debug *)
   confirm (substFormat = 1) (e_version d (Int32.of_int substFormat)) >>= fun () ->
   d_with_coverage offset_Substitution_table d_ligature_set_table d
 
@@ -1418,9 +1411,9 @@ let lookup_gsub d : gsub_subtable ok =
           to the beginning of a Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
   d_uint16 d >>= fun lookupType ->
-  print_for_debug ("# lookupType = " ^ (string_of_int lookupType)) ;  (* for debug *)
+  print_for_debug ("# lookupType = " ^ (string_of_int lookupType));  (* for debug *)
   d_uint16 d >>= fun lookupFlag ->
-  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag)) ;  (* for debug *)
+  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag));  (* for debug *)
 (*
   let rightToLeft      = 0 < lookupFlag land 1 in
   let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
@@ -1665,9 +1658,9 @@ let lookup_gpos d : gpos_subtable ok =
           to the beginning of Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
   d_uint16 d >>= fun lookupType ->
-  print_for_debug ("# lookupType = " ^ (string_of_int lookupType)) ;  (* for debug *)
+  print_for_debug ("# lookupType = " ^ (string_of_int lookupType));  (* for debug *)
   d_uint16 d >>= fun lookupFlag ->
-  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag)) ;  (* for debug *)
+  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag));  (* for debug *)
 (*
   let rightToLeft      = 0 < lookupFlag land 1 in
   let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
@@ -1794,7 +1787,7 @@ let d_index dl d =
         loop_data (v :: acc) tail
   in
   d_uint8 d                     >>= fun count ->
-  Printf.printf "count: %d\n" count ;  (* for debug *)
+  Printf.printf "count: %d\n" count;  (* for debug *)
   if count = 0 then return [] else
   d_offsize d                   >>= fun offSize ->
   d_cff_offset_list offSize count d >>= fun lenlst ->
@@ -1841,7 +1834,7 @@ let pp_element ppf = function
 let d_dict_keyval d =
   let rec aux stepsum vacc =
     d_dict_element d >>= fun (step, elem) ->
-      Format.eprintf "element: %d, %a\n" step pp_element elem ;  (* for debug *)
+      Format.eprintf "element: %d, %a\n" step pp_element elem;  (* for debug *)
       match elem with
       | Value(v) -> aux (stepsum + step) (v :: vacc)
       | Key(k)   -> return (stepsum + step, List.rev vacc, k)
@@ -1853,24 +1846,24 @@ let d_dict len d =
     if len = -1 (* doubtful*) then return mapacc else
     if len < -1 (* doubtful*) then err `Invalid_cff_inconsistent_length else
       d_dict_keyval d >>= fun (step, vlst, k) ->
-      Printf.printf "step: %d\n" step ;  (*for debug *)
+      Printf.printf "step: %d\n" step;  (*for debug *)
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
-    Printf.printf "length: %d\n" len ;  (* for debug *)
+    Printf.printf "length: %d\n" len;  (* for debug *)
     loop_keyval DictMap.empty len d
 
 let cff_info d =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   (* Header: *)
-    Printf.printf "Header\n" ;  (* for debug *)
+    Printf.printf "Header\n";  (* for debug *)
     d_uint8 d              >>= fun major ->
     d_uint8 d              >>= fun minor ->
     d_uint8 d              >>= fun hdrSize ->
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
   (* Name INDEX (should contain only one element): *)
-    Printf.printf "Name INDEX\n" ;  (* for debug *)
+    Printf.printf "Name INDEX\n";  (* for debug *)
     d_index (fun i -> d_bytes (?@ i)) d >>= fun namelst ->
     begin
       match namelst with
@@ -1879,17 +1872,17 @@ let cff_info d =
       | n :: []     -> return (Some(n))
     end >>= fun name ->
   (* Top DICT INDEX (should contain only one DICT): *)
-    Printf.printf "Top DICT INDEX\n" ;  (* for debug *)
+    Printf.printf "Top DICT INDEX\n";  (* for debug *)
     d_index (fun i -> d_dict (?@ i)) d  >>= function
       | []            -> err `Invalid_cff_not_a_singleton
       | _ :: _ :: _   -> err `Invalid_cff_not_a_singleton
       | dictmap :: [] ->
 (*
   (* String INDEX: *)
-    Printf.printf "String INDEX\n" ;  (* for debug *)
+    Printf.printf "String INDEX\n";  (* for debug *)
     d_index (fun i -> d_bytes (?@ i)) d  >>= fun stringlst ->
   (* Global Subr INDEX: *)
-    Printf.printf "Global Subr INDEX\n" ;  (* for debug *)
+    Printf.printf "Global Subr INDEX\n";  (* for debug *)
     d_index (fun i -> d_bytes (?@ i)) d  >>= fun subrlst ->
 *)
     return (Some((name, dictmap)))
