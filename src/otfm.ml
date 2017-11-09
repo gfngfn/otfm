@@ -1243,6 +1243,15 @@ let d_offset (offset_origin : int) d : int ok =
   d_uint16 d >>= fun reloffset ->
   return (offset_origin + reloffset)
 
+
+let d_offset_opt (offset_origin : int) d : (int option) ok =
+  d_uint16 d >>= fun reloffset ->
+  if reloffset = 0 then
+    return None
+  else
+    return (Some(offset_origin + reloffset))
+
+
 let d_range_record d =
   let rec range acc i j =
     if i > j then List.rev acc else
@@ -1698,6 +1707,15 @@ let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record
 let gpos d scriptTag langSysTag_opt featureTag f_pair1 f_pair2 init =
   advanced_table_scheme Tag.gpos lookup_gpos d scriptTag langSysTag_opt featureTag
     >>= fun subtables -> return (fold_subtables_gpos f_pair1 f_pair2 init subtables)
+
+
+let base d =
+  let offset_BASE = cur_pos d in
+  d_uint32 d >>= fun version ->
+  confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
+  d_offset_opt offset_BASE d >>= fun offsetopt_HorizAxis ->
+  d_offset_opt offset_BASE d >>= fun offsetopt_VertAxis ->
+  return ()
 
 
 (* -- CFF_ table -- *)
