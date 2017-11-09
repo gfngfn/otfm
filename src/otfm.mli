@@ -183,7 +183,8 @@ type error_ctx =
   [ `Table of tag | `Offset_table | `Table_directory ]
 (** The type for error contexts. *)
 
-type error = [
+type error =
+[
   | `Unknown_flavour of tag
   | `Unsupported_TTC
   | `Unsupported_cmaps of (int * int * int) list
@@ -196,7 +197,23 @@ type error = [
   | `Invalid_cp of int
   | `Invalid_cp_range of int * int
   | `Invalid_postscript_name of string
-  | `Unexpected_eoi of error_ctx ]
+  | `Unexpected_eoi of error_ctx
+(* added by gfn: *)
+  | `Inconsistent_length_of_coverage of error_ctx
+  | `Inconsistent_length_of_class
+  | `Missing_required_script_tag of string
+  | `Missing_required_langsys_tag of string
+  | `Missing_required_feature_tag of string
+  | `Invalid_lookup_order of int
+  | `Invalid_extension_position
+  | `Invalid_cff_not_a_quad
+  | `Invalid_cff_not_an_integer
+  | `Invalid_cff_not_an_element
+  | `Invalid_cff_not_an_offsize of int
+  | `Invalid_cff_not_a_singleton
+  | `Invalid_cff_inconsistent_length
+  | `Invalid_cff_invalid_first_offset
+]
 (** The type for decoding errors.
 
     {b Note.} In case of [`Invalid_poscript_name] a string of {e bytes} is
@@ -227,7 +244,7 @@ val decoder_src : decoder -> src
     {{:http://www.microsoft.com/typography/otspec/default.htm}
     specification} for details. *)
 
-type flavour = [ `TTF | `CFF ]
+type flavour = [ `TTF_true | `TTF_OT | `CFF ]
 (** The type for OpenType flavours. *)
 
 val flavour : decoder -> (flavour, error) result
@@ -510,3 +527,46 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
+
+val gsub : decoder -> string -> string option -> string -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a, error) result
+
+type value_record = {
+  x_placement  : int option;
+  y_placement  : int option;
+  x_advance    : int option;
+  y_advance    : int option;
+  x_pla_device : int option;
+  y_pla_device : int option;
+  x_adv_device : int option;
+  y_adv_device : int option;
+}
+
+type class_value = int
+
+type class_definition =
+  | GlyphToClass      of glyph_id * class_value
+  | GlyphRangeToClass of glyph_id * glyph_id * class_value
+
+val gpos : decoder -> string -> string option -> string ->
+  ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) ->
+  (class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) ->
+  'a -> ('a, error) result
+
+type cff_info
+
+type cff_top_dict =
+  {
+    is_fixed_pitch : bool;
+    italic_angle : int;
+    underline_position : int;
+    underline_thickness : int;
+    paint_type : int;
+    charstring_type : int;
+    (* font_matrix : float * float * float * float; *)
+    font_bbox : int * int * int * int;
+    stroke_width : int;
+  }
+
+val cff_info : decoder -> (cff_info, error) result
+
+val cff_top_dict : cff_info -> (cff_top_dict option, error) result
