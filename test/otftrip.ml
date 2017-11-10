@@ -274,7 +274,13 @@ let pp_file ppf inf =
         ttc |> List.fold_left (fun res ttcelem ->
           res >>= fun i ->
           Otfm.decoder_of_ttc_element ttcelem >>= fun d ->
-          pp ppf "@,@[<v1>(@[<1>(ttc-element %d)@]" i;
+          let name =
+            match Otfm.postscript_name d with
+            | Error(_)       -> "<error>"
+            | Ok(None)       -> "<none>"
+            | Ok(Some(name)) -> name
+          in
+          pp ppf "@,@[<v1>(@[<1>(ttc-element %d \"%s\")@]" i name;
           pp_single_font ppf inf d >>= fun () ->
           pp ppf ")@]";
           Ok(i + 1)

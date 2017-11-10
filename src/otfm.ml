@@ -519,9 +519,18 @@ let decoder src =
 
 let decoder_of_ttc_element ttcelem =
   let (offset, d) = ttcelem in
-  seek_pos offset d >>= fun () ->
-  d_version true d >>= fun _ ->
-  return d
+  let delem =
+    { i = d.i;  i_pos = d.i_pos;  i_max = d.i_max;  t_pos = d.t_pos;
+      state = Start;
+      ctx = `Offset_table;
+      flavour = d.flavour;
+      tables = d.tables;
+      loca_pos = d.loca_pos;  loca_format = d.loca_format;  glyf_pos = d.glyf_pos;
+      buf = Buffer.create 253; }
+  in
+  seek_pos offset delem >>= fun () ->
+  d_version true delem >>= fun _ ->
+  return delem
 
 let init_decoder d =
   match d.state with
