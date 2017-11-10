@@ -5,6 +5,12 @@
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
 
+
+let print_for_debug msg = () (* print_endline msg *) (* for debug *)
+
+let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
+
+
 open Result
 
 (* Error strings *)
@@ -128,7 +134,9 @@ type error_ctx = [ `Table of tag | `Offset_table | `Table_directory ]
 type error =
 [
   | `Unknown_flavour of tag
+(*
   | `Unsupported_TTC
+*)
   | `Unsupported_cmaps of (int * int * int) list
   | `Unsupported_glyf_matching_points
   | `Missing_required_table of tag
@@ -155,6 +163,7 @@ type error =
   | `Invalid_cff_not_a_singleton
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Layered_ttc
 ]
 
 let pp_ctx ppf = function
@@ -167,8 +176,10 @@ let pp_error ppf = function
     pp ppf "@[Unknown@ OpenType@ flavour (%a)@]" Tag.pp tag
 | `Missing_required_table tag ->
     pp ppf "@[Missing@ required@ table (%a)@]" Tag.pp tag
+(*
 | `Unsupported_TTC ->
     pp ppf "@[True@ Type@ collections (TTC)@ are@ not@ supported@]"
+*)
 | `Unsupported_cmaps maps ->
     let pp_sep ppf () = pp ppf ",@ " in
     let pp_map ppf (pid, eid, fmt) = pp ppf "(%d,%d,%d)" pid eid fmt in
@@ -220,15 +231,22 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
 | `Invalid_cff_invalid_first_offset ->
     pp ppf "@[Invalid@ CFF@ table;@ invalid@ first@ offset@]"
+| `Layered_ttc ->
+    pp ppf "@[Layered@ TTC@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
 
-type flavour = [ `TTF_true | `TTF_OT | `CFF ]
+type flavour = TTF_true | TTF_OT | CFF
 type src = [ `String of string ]
 
 (* TODO maybe it would be better not to maintain t_pos/i_pos,
    but rather pass them as arguments to decoding functions. *)
+
+type decoder_state =
+  | Fatal of error
+  | Start
+  | Ready
 
 type decoder =
   {
@@ -236,7 +254,7 @@ type decoder =
     mutable i_pos : int;                          (* input current position. *)
     mutable i_max : int;                          (* input maximal position. *)
     mutable t_pos : int;                  (* current decoded table position. *)
-    mutable state : [ `Fatal of error | `Start | `Ready ]; (* decoder state. *)
+    mutable state : decoder_state;                         (* decoder state. *)
     mutable ctx : error_ctx;                   (* the current error context. *)
     mutable flavour : flavour;                           (* decoded flavour. *)
     mutable tables : (tag * int * int) list;       (* decoded table records. *)
@@ -246,16 +264,13 @@ type decoder =
     mutable buf : Buffer.t;                              (* internal buffer. *)
   }
 
+type ttc_element = int * decoder
+
+type decoder_scheme =
+  | SingleDecoder      of decoder
+  | TrueTypeCollection of ttc_element list
+
 let decoder_src d = `String(d.i)
-let decoder src =
-  let (i, i_pos, i_max) =
-    match src with
-    | `String(s) -> (s, 0, String.length s - 1)
-  in
-  { i; i_pos; i_max; t_pos = 0;
-    state = `Start; ctx = `Offset_table; flavour = `TTF_OT; tables = [];
-    loca_pos = -1; loca_format = -1; glyf_pos = -1;
-    buf = Buffer.create 253; }
 
 let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
 let return x                 = Ok(x)
@@ -266,7 +281,7 @@ let e_version d v            = `Unknown_version(d.ctx, v)
 let err_version d v          = err (e_version d v)
 let err_loca_format d v      = err (`Unknown_loca_format(d.ctx, v))
 let err_composite_format d v = err (`Unknown_composite_format(d.ctx, v))
-let err_fatal d e            = begin d.state <- `Fatal(e); err e end
+let err_fatal d e            = begin d.state <- Fatal(e); err e end
 let set_ctx d ctx            = begin d.ctx <- ctx; end
 
 let miss d count = d.i_max - d.i_pos + 1 < count
@@ -383,8 +398,68 @@ let d_utf_16be len (* in bytes *) d =            (* returns an UTF-8 string. *)
   Buffer.clear d.buf;
   return (Buffer.contents (Uutf.String.fold_utf_16be add_utf_8 d.buf s))
 
+
+type 'a ok = ('a, error) result
+
+
+let confirm b e =
+  if not b then err e else return ()
+
+
+let d_repeat n df d =
+  let rec aux acc i =
+    if i <= 0 then return (List.rev acc) else
+    df d >>= fun data ->
+    aux (data :: acc) (i - 1)
+  in
+  aux [] n
+
+
+let d_list df d =
+  d_uint16 d >>= fun count ->
+  print_for_debug_int "(d_list) count" count;
+  d_repeat count df d
+
+
+let d_list_filtered df indexlst d =
+  let rec aux acc imax i =
+    if i >= imax then return (List.rev acc) else
+    df d >>= fun data ->
+    if List.mem i indexlst then
+      aux (data :: acc) imax (i + 1)
+    else
+      aux acc imax (i + 1)
+  in
+    d_uint16 d >>= fun count ->
+    print_for_debug_int "count" count;
+    aux [] count 0
+
+
+let d_offset_list (offset_origin : int) d : (int list) ok =
+  d_list d_uint16 d >>= fun reloffsetlst ->
+  return (reloffsetlst |> List.map (fun reloffset -> offset_origin + reloffset))
+
+
+let d_offset (offset_origin : int) d : int ok =
+  d_uint16 d >>= fun reloffset ->
+  return (offset_origin + reloffset)
+
+
+let d_long_offset_list d : (int list) ok =
+  d_uint32_int d >>= fun count ->
+  d_repeat count d_uint32_int d
+
+
+let d_offset_opt (offset_origin : int) d : (int option) ok =
+  d_uint16 d >>= fun reloffset ->
+  if reloffset = 0 then
+    return None
+  else
+    return (Some(offset_origin + reloffset))
+
+
 let rec d_table_records d count =
-  if count = 0 then begin d.state <- `Ready; return () end else
+  if count = 0 then begin d.state <- Ready; return () end else
     d_uint32     d >>= fun tag ->
     d_skip 4     d >>= fun () ->
     d_uint32_int d >>= fun off ->
@@ -392,29 +467,70 @@ let rec d_table_records d count =
     d.tables <- (tag, off, len) :: d.tables;
     d_table_records d (count - 1)
 
-let d_version d =
+
+let d_version is_cff_element d =
   d_uint32 d >>= function
-    | t  when t = Tag.v_OTTO  -> begin d.flavour <- `CFF     ; return () end
-    | t  when t = Tag.v_true  -> begin d.flavour <- `TTF_true; return () end
-    | t  when t = 0x00010000l -> begin d.flavour <- `TTF_OT  ; return () end
-    | t  when t = Tag.v_ttcf  -> Error(`Unsupported_TTC)
-    | t                       -> Error(`Unknown_flavour(t))
+    | t  when t = Tag.v_OTTO  -> begin d.flavour <- CFF     ; return true end
+    | t  when t = Tag.v_true  -> begin d.flavour <- TTF_true; return true end
+    | t  when t = 0x00010000l -> begin d.flavour <- TTF_OT  ; return true end
+    | t  when t = Tag.v_ttcf  -> if is_cff_element then err `Layered_ttc else return false
+    | t                       -> err (`Unknown_flavour(t))
+
 
 let d_structure d =                   (* offset table and table directory. *)
+(*
   d_version      d >>= fun () ->                          (* offset table. *)
+*)
   d_uint16       d >>= fun count ->                          (* numTables. *)
   d_skip (3 * 2) d >>= fun () ->
   set_ctx d `Table_directory;                          (* table directory. *)
   d_table_records d count
 
+
+let d_ttc_header d : (ttc_element list) ok =
+  d_uint32 d >>= fun version_ttc ->
+  print_for_debug (Printf.sprintf "version_ttc = %08x" (Int32.to_int version_ttc));  (* for debug *)
+  confirm (version_ttc = 0x00010000l || version_ttc = 0x00020000l) (e_version d version_ttc) >>= fun () ->
+  d_long_offset_list d >>= fun offsetlst ->
+  return (offsetlst |> List.map (fun offset -> (offset, d)))
+
+
+let decoder src =
+  let (i, i_pos, i_max) =
+    match src with
+    | `String(s) -> (s, 0, String.length s - 1)
+  in
+    let d =
+      { i; i_pos; i_max; t_pos = 0;
+        state = Start;
+        ctx = `Offset_table;
+        flavour = TTF_OT;    (* dummy initial value *)
+        tables = [];         (* dummy initial value *)
+        loca_pos = -1; loca_format = -1; glyf_pos = -1;
+        buf = Buffer.create 253; }
+    in
+  d_version false d >>= fun is_single ->
+  if is_single then
+    return (SingleDecoder(d))
+  else
+    d_ttc_header d >>= fun ttc ->
+    return (TrueTypeCollection(ttc))
+
+
+let decoder_of_ttc_element ttcelem =
+  let (offset, d) = ttcelem in
+  seek_pos offset d >>= fun () ->
+  d_version true d >>= fun _ ->
+  return d
+
 let init_decoder d =
   match d.state with
-  | `Ready    -> begin d.ctx <- `Table_directory; return () end
-  | `Fatal(e) -> err e
-  | `Start    ->
+  | Ready    -> begin d.ctx <- `Table_directory; return () end
+  | Fatal(e) -> err e
+  | Start    ->
       match d_structure d with
-      | Ok() as ok -> ok
-      | Error(e)   -> err_fatal d e
+      | Ok(()) as ok -> ok
+      | Error(e)     -> err_fatal d e
 
 let flavour d =
     init_decoder d >>= fun () -> return (d.flavour)
@@ -1169,20 +1285,9 @@ let loca d gid =
 
 (* -- GSUB table -- *)
 
-let print_for_debug msg = () (* print_endline msg *)
-
-let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
-
-
-type 'a ok = ('a, error) result
-
 type gsub_subtable =
   | LigatureSubtable of (glyph_id * (glyph_id list * glyph_id) list) list
   (* temporary; should contain more lookup type *)
-
-
-let confirm b e =
-  if not b then err e else return ()
 
 
 let seek_pos_from_list origin scriptTag d =
@@ -1203,53 +1308,6 @@ let seek_pos_from_list origin scriptTag d =
   print_for_debug_int "scriptCount" scriptCount;
   aux scriptCount >>= fun found ->
   return found
-
-
-let d_list_filtered df indexlst d =
-  let rec aux acc imax i =
-    if i >= imax then return (List.rev acc) else
-    df d >>= fun data ->
-    if List.mem i indexlst then
-      aux (data :: acc) imax (i + 1)
-    else
-      aux acc imax (i + 1)
-  in
-    d_uint16 d >>= fun count ->
-    print_for_debug_int "count" count;
-    aux [] count 0
-
-
-let d_repeat n df d =
-  let rec aux acc i =
-    if i <= 0 then return (List.rev acc) else
-    df d >>= fun data ->
-    aux (data :: acc) (i - 1)
-  in
-  aux [] n
-
-
-let d_list df d =
-  d_uint16 d >>= fun count ->
-  print_for_debug_int "(d_list) count" count;
-  d_repeat count df d
-
-
-let d_offset_list (offset_origin : int) d : (int list) ok =
-  d_list d_uint16 d >>= fun reloffsetlst ->
-  return (reloffsetlst |> List.map (fun reloffset -> offset_origin + reloffset))
-
-
-let d_offset (offset_origin : int) d : int ok =
-  d_uint16 d >>= fun reloffset ->
-  return (offset_origin + reloffset)
-
-
-let d_offset_opt (offset_origin : int) d : (int option) ok =
-  d_uint16 d >>= fun reloffset ->
-  if reloffset = 0 then
-    return None
-  else
-    return (Some(offset_origin + reloffset))
 
 
 let d_range_record d =
