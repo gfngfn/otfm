@@ -242,8 +242,8 @@ let pp_single_font ppf inf d =
       Otfm.flavour d >>= fun f ->
       let fs =
         match f with
-        | Otfm.TTF_OT   -> "TTF (OpenType)"
-        | Otfm.TTF_true -> "TTF (TrueType)"
+        | Otfm.TTF_OT   -> "TTF-OpenType"
+        | Otfm.TTF_true -> "TTF-TrueType"
         | Otfm.CFF      -> "CFF"
       in
       pp ppf "@,@[<1>(flavor %s)@]" fs;
@@ -271,10 +271,14 @@ let pp_file ppf inf =
     | Otfm.TrueTypeCollection(ttc) ->
         pp ppf "@[<v1>(@[<1>(file %S)@]" inf;
         pp ppf "@,@[<1>(TRUETYPE-COLLECTION %d)@]" (List.length ttc);
-        ttc |> List.fold_left (fun _ ttcelem ->
+        ttc |> List.fold_left (fun res ttcelem ->
+          res >>= fun i ->
           Otfm.decoder_of_ttc_element ttcelem >>= fun d ->
-            pp_single_font ppf inf d
-          ) (Ok ()) >>= fun () ->
+          pp ppf "@,@[<v1>(@[<1>(ttc-element %d)@]" i;
+          pp_single_font ppf inf d >>= fun () ->
+          pp ppf ")@]";
+          Ok(i + 1)
+        ) (Ok(0)) >>= fun _ ->
         pp ppf ")@]@.";
         Ok ()
     | Otfm.SingleDecoder(d) ->
