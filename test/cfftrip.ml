@@ -32,22 +32,31 @@ let main () =
     | Ok(src)       -> src
     | Error(`Msg e) -> begin print_endline e; exit 1 end
   in
-  let d = Otfm.decoder (`String(src)) in
-  let () = print_endline "finish initializing decoder" in
-  Otfm.cff_info d >>= fun cffi ->
-  Otfm.cff_top_dict cffi >>= function
-    | None          -> begin print_endline "none.\n"; Ok() end
-    | Some(topdict) ->
-        let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
-        Printf.printf "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
-        Printf.printf "IsFixedPitch: %B\n" topdict.Otfm.is_fixed_pitch;
-        Printf.printf "ItalicAngle: %d\n" topdict.Otfm.italic_angle;
-        Printf.printf "UnderlinePosition: %d\n" topdict.Otfm.underline_position;
-        Printf.printf "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
-        Printf.printf "PaintType: %d\n" topdict.Otfm.paint_type;
-        Printf.printf "CharstringType: %d\n" topdict.Otfm.charstring_type;
-        Printf.printf "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
+  Otfm.decoder (`String(src)) >>= function
+  | Otfm.SingleDecoder(d) ->
+      begin
+      print_endline "finish initializing decoder";
+      Otfm.cff_info d >>= fun cffi ->
+      Otfm.cff_top_dict cffi >>= function
+        | None          -> begin print_endline "none.\n"; Ok() end
+        | Some(topdict) ->
+            let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
+            Printf.printf "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
+            Printf.printf "IsFixedPitch: %B\n" topdict.Otfm.is_fixed_pitch;
+            Printf.printf "ItalicAngle: %d\n" topdict.Otfm.italic_angle;
+            Printf.printf "UnderlinePosition: %d\n" topdict.Otfm.underline_position;
+            Printf.printf "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
+            Printf.printf "PaintType: %d\n" topdict.Otfm.paint_type;
+            Printf.printf "CharstringType: %d\n" topdict.Otfm.charstring_type;
+            Printf.printf "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
+            Ok()
+      end
+
+  | Otfm.TrueTypeCollection(_) ->
+      begin
+        print_endline "TrueType Collection";
         Ok()
+      end
 
 let () =
   match main () with
