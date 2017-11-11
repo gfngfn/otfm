@@ -234,61 +234,105 @@ let pp_tables ppf inf ts d =
 
 (* Commands *)
 
-let pp_file ppf inf = match string_of_file inf with
-| Error _ as e -> e
-| Ok s ->
+let pp_single_font ppf inf d =
     let ( >>= ) x f = match x with
     | Ok v -> f v
     | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
     in
-    let d = Otfm.decoder (`String s) in
-    Otfm.flavour d >>= fun f ->
-    pp ppf "@[<v1>(@[<1>(file %S)@]" inf;
-    let fs = match f with `TTF -> "TTF" | `CFF -> "CFF" in
-    pp ppf "@,@[<1>(flavor %s)@]" fs;
-    Otfm.postscript_name d >>= fun name ->
-    let oname = match name with None -> "<none>" | Some n -> n in
-    pp ppf "@,@[<1>(postscript-name %s)@]" oname;
-    Otfm.glyph_count d >>= fun glyph_count ->
-    pp ppf "@,@[<1>(glyph-count %d)@]" glyph_count;
-    Otfm.table_list d >>= fun ts ->
-    pp ppf "@,@[<1>(tables ";
-    List.iter (fun t -> pp ppf "@ %a" Otfm.Tag.pp t) ts;
-    pp ppf ")@]";
-    pp_tables ppf inf ts d >>= fun () ->
-    pp ppf ")@]@.";
-    Ok ()
+      Otfm.flavour d >>= fun f ->
+      let fs =
+        match f with
+        | Otfm.TTF_OT   -> "TTF-OpenType"
+        | Otfm.TTF_true -> "TTF-TrueType"
+        | Otfm.CFF      -> "CFF"
+      in
+      pp ppf "@,@[<1>(flavor %s)@]" fs;
+      Otfm.postscript_name d >>= fun name ->
+      let oname = match name with None -> "<none>" | Some n -> n in
+      pp ppf "@,@[<1>(postscript-name %s)@]" oname;
+      Otfm.glyph_count d >>= fun glyph_count ->
+      pp ppf "@,@[<1>(glyph-count %d)@]" glyph_count;
+      Otfm.table_list d >>= fun ts ->
+      pp ppf "@,@[<1>(tables ";
+      List.iter (fun t -> pp ppf "@ %a" Otfm.Tag.pp t) ts;
+      pp ppf ")@]";
+      pp_tables ppf inf ts d
+
+
+let pp_file ppf inf =
+  match string_of_file inf with
+  | Error _ as e -> e
+  | Ok s ->
+    let ( >>= ) x f = match x with
+    | Ok v -> f v
+    | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
+    in
+    Otfm.decoder (`String s) >>= function
+    | Otfm.TrueTypeCollection(ttc) ->
+        pp ppf "@[<v1>(@[<1>(file %S)@]" inf;
+        pp ppf "@,@[<1>(TRUETYPE-COLLECTION %d)@]" (List.length ttc);
+        ttc |> List.fold_left (fun res ttcelem ->
+          res >>= fun i ->
+          Otfm.decoder_of_ttc_element ttcelem >>= fun d ->
+          let name =
+            match Otfm.postscript_name d with
+            | Error(_)       -> "<error>"
+            | Ok(None)       -> "<none>"
+            | Ok(Some(name)) -> name
+          in
+          pp ppf "@,@[<v1>(@[<1>(ttc-element %d \"%s\")@]" i name;
+          pp_single_font ppf inf d >>= fun () ->
+          pp ppf ")@]";
+          Ok(i + 1)
+        ) (Ok(0)) >>= fun _ ->
+        pp ppf ")@]@.";
+        Ok ()
+    | Otfm.SingleDecoder(d) ->
+        pp ppf "@[<v1>(@[<1>(file %S)@]" inf;
+        pp ppf "@,@[<1>(SINGLE-FONT)@]";
+        pp_single_font ppf inf d >>= fun () ->
+        pp ppf ")@]@.";
+        Ok ()
 
 let dec_file inf = match string_of_file inf with
 | Error _ as e -> e
 | Ok s ->
     let err = ref false in
     let ( >>= ) x f = match x with
-    | Ok _ -> f ()
+    | Ok _    -> f ()
     | Error e -> log_err inf e; err := true; f ()
     in
     let kern_nop () _ = `Fold, () in
     let nop4 _ _ _ _ = () in
-    let d = Otfm.decoder (`String s) in
-    Otfm.flavour d      >>= fun () ->
-    Otfm.table_list d   >>= fun () ->
-    Otfm.cmap d nop4 () >>= fun () ->
-    Otfm.head d         >>= fun () ->
-    Otfm.hhea d         >>= fun () ->
-    Otfm.hmtx d nop4 () >>= fun () ->
-    Otfm.name d nop4 () >>= fun () ->
-    Otfm.os2  d         >>= fun () ->
-    Otfm.kern d kern_nop nop4 () >>= fun () ->
-    if !err then (Error `Reported) else Ok ()
+    match Otfm.decoder (`String s) with
+    | Error e -> log_err inf e; err := true; Error (`Msg("dec_file"))
+    | Ok(Otfm.TrueTypeCollection(_)) ->
+        Ok ()
+    | Ok(Otfm.SingleDecoder(d)) ->
+        Otfm.flavour d      >>= fun () ->
+        Otfm.table_list d   >>= fun () ->
+        Otfm.cmap d nop4 () >>= fun () ->
+        Otfm.head d         >>= fun () ->
+        Otfm.hhea d         >>= fun () ->
+        Otfm.hmtx d nop4 () >>= fun () ->
+        Otfm.name d nop4 () >>= fun () ->
+        Otfm.os2  d         >>= fun () ->
+        Otfm.kern d kern_nop nop4 () >>= fun () ->
+        if !err then (Error `Reported) else Ok ()
 
 let ps_file inf = match string_of_file inf with
 | Error _ as e -> e
 | Ok s ->
-    let d = Otfm.decoder (`String s) in
-    match Otfm.postscript_name d with
-    | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
-    | Ok None -> Printf.printf "%s: <none>\n" inf; Ok ()
-    | Ok (Some n) -> Printf.printf "%s: %s\n" inf n; Ok ()
+    match Otfm.decoder (`String s) with
+    | Ok(Otfm.SingleDecoder(d)) ->
+        begin
+          match Otfm.postscript_name d with
+          | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
+          | Ok None -> Printf.printf "%s: <none>\n" inf; Ok ()
+          | Ok (Some n) -> Printf.printf "%s: %s\n" inf n; Ok ()
+        end
+
+    | _ -> Printf.printf "error, or TTC file\n"; Ok ()
 
 (* otftrip *)
 

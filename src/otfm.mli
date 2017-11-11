@@ -186,7 +186,9 @@ type error_ctx =
 type error =
 [
   | `Unknown_flavour of tag
+(*
   | `Unsupported_TTC
+*)
   | `Unsupported_cmaps of (int * int * int) list
   | `Unsupported_glyf_matching_points
   | `Missing_required_table of tag
@@ -213,6 +215,7 @@ type error =
   | `Invalid_cff_not_a_singleton
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Layered_ttc
 ]
 (** The type for decoding errors.
 
@@ -226,9 +229,19 @@ type src = [ `String of string ]
 (** The type for input sources. *)
 
 type decoder
-(** The type for OpenType font decoders. *)
+(** The type for single OpenType font decoders. *)
 
-val decoder : [< src ] -> decoder
+type ttc_element
+(** The type for TTC elements. *)
+
+type decoder_scheme =
+  | SingleDecoder      of decoder
+  | TrueTypeCollection of ttc_element list
+(** The type for OpenType font decoders, including those of TrueType Collection. *)
+
+val decoder_of_ttc_element : ttc_element -> (decoder, error) result
+
+val decoder : [< src ] -> (decoder_scheme, error) result
 (** [decoder src] is a decoder decoding from [src]. *)
 
 val decoder_src : decoder -> src
@@ -244,7 +257,7 @@ val decoder_src : decoder -> src
     {{:http://www.microsoft.com/typography/otspec/default.htm}
     specification} for details. *)
 
-type flavour = [ `TTF_true | `TTF_OT | `CFF ]
+type flavour = TTF_true | TTF_OT | CFF
 (** The type for OpenType flavours. *)
 
 val flavour : decoder -> (flavour, error) result
