@@ -1,6 +1,6 @@
 (* -*- coding: utf-8 -*- *)
 (*---------------------------------------------------------------------------
-   Copyright (c) 2013 Daniel C. Bünzli. All rights reserved.
+   Copyright (c) 2013 Daniel C. Bünzli, and 2017 Takashi Suwa. All rights reserved.
    Distributed under the ISC license, see terms at the end of the file.
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
@@ -133,33 +133,30 @@ let pp_cp ppf cp = Format.fprintf ppf "U+%04X" cp
 type error_ctx = [ `Table of tag | `Offset_table | `Table_directory ]
 type error =
 [
-  | `Unknown_flavour of tag
-(*
-  | `Unsupported_TTC
-*)
-  | `Unsupported_cmaps of (int * int * int) list
+  | `Unknown_flavour                  of tag
+  | `Unsupported_cmaps                of (int * int * int) list
   | `Unsupported_glyf_matching_points
-  | `Missing_required_table of tag
-  | `Unknown_version of error_ctx * int32
-  | `Unknown_loca_format of error_ctx * int
-  | `Unknown_composite_format of error_ctx * int
-  | `Invalid_offset of error_ctx * int
-  | `Invalid_cp of int
-  | `Invalid_cp_range of int * int
-  | `Invalid_postscript_name of string
-  | `Unexpected_eoi of error_ctx
-(* added by gfn: *)
-  | `Inconsistent_length_of_coverage of error_ctx
+  | `Missing_required_table           of tag
+  | `Unknown_version                  of error_ctx * int32
+  | `Unknown_loca_format              of error_ctx * int
+  | `Unknown_composite_format         of error_ctx * int
+  | `Invalid_offset                   of error_ctx * int
+  | `Invalid_cp                       of int
+  | `Invalid_cp_range                 of int * int
+  | `Invalid_postscript_name          of string
+  | `Unexpected_eoi                   of error_ctx
+(* added by T. Suwa: *)
+  | `Inconsistent_length_of_coverage  of error_ctx
   | `Inconsistent_length_of_class
-  | `Missing_required_script_tag of string
-  | `Missing_required_langsys_tag of string
-  | `Missing_required_feature_tag of string
-  | `Invalid_lookup_order of int
+  | `Missing_required_script_tag      of string
+  | `Missing_required_langsys_tag     of string
+  | `Missing_required_feature_tag     of string
+  | `Invalid_lookup_order             of int
   | `Invalid_extension_position
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
-  | `Invalid_cff_not_an_offsize of int
+  | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
@@ -167,8 +164,8 @@ type error =
 ]
 
 let pp_ctx ppf = function
-| `Table tag -> pp ppf "table %a" Tag.pp tag
-| `Offset_table -> pp ppf "offset table"
+| `Table tag       -> pp ppf "table %a" Tag.pp tag
+| `Offset_table    -> pp ppf "offset table"
 | `Table_directory -> pp ppf "table directory"
 
 let pp_error ppf = function
@@ -405,6 +402,8 @@ type 'a ok = ('a, error) result
 let confirm b e =
   if not b then err e else return ()
 
+let confirm_version d version versionreq =
+  if version <> versionreq then err_version d versionreq else return ()
 
 let d_repeat n df d =
   let rec aux acc i =
@@ -478,9 +477,6 @@ let d_version is_cff_element d =
 
 
 let d_structure d =                   (* offset table and table directory. *)
-(*
-  d_version      d >>= fun () ->                          (* offset table. *)
-*)
   d_uint16       d >>= fun count ->                          (* numTables. *)
   d_skip (3 * 2) d >>= fun () ->
   set_ctx d `Table_directory;                          (* table directory. *)
@@ -488,11 +484,12 @@ let d_structure d =                   (* offset table and table directory. *)
 
 
 let d_ttc_header d : (ttc_element list) ok =
-  d_uint32 d >>= fun version_ttc ->
-  print_for_debug (Printf.sprintf "version_ttc = %08x" (Int32.to_int version_ttc));  (* for debug *)
-  confirm (version_ttc = 0x00010000l || version_ttc = 0x00020000l) (e_version d version_ttc) >>= fun () ->
-  d_long_offset_list d >>= fun offsetlst ->
-  return (offsetlst |> List.map (fun offset -> (offset, d)))
+  d_uint32 d >>= function
+  | version_ttc  when version_ttc = 0x00010000l || version_ttc = 0x00020000l ->
+      d_long_offset_list d >>= fun offsetlst ->
+      return (offsetlst |> List.map (fun offset -> (offset, d)))
+  | version_ttc ->
+      err_version d version_ttc
 
 
 let decoder src =
@@ -532,6 +529,7 @@ let decoder_of_ttc_element ttcelem =
   d_version true delem >>= fun _ ->
   return delem
 
+
 let init_decoder d =
   match d.state with
   | Ready    -> begin d.ctx <- `Table_directory; return () end
@@ -541,22 +539,27 @@ let init_decoder d =
       | Ok(()) as ok -> ok
       | Error(e)     -> err_fatal d e
 
+
 let flavour d =
     init_decoder d >>= fun () -> return (d.flavour)
+
 
 let table_list d =
   let tags d = List.rev_map (fun (t, _, _) -> t) d.tables in
     init_decoder d >>= fun () -> return (tags d)
 
+
 let table_mem d tag =
   let exists_tag tag d = List.exists (fun (t, _, _) -> tag = t) d.tables in
     init_decoder d >>= fun () -> return (exists_tag tag d)
+
 
 let table_raw d tag =
   init_decoder   d >>=
   seek_table tag d >>= function
     | None      -> return None
     | Some(len) -> d_bytes len d >>= fun bytes -> return (Some(bytes))
+
 
 (* convenience *)
 
@@ -566,6 +569,7 @@ let glyph_count d =
   d_skip 4 d >>= fun () ->
   d_uint16 d >>= fun count ->
   return count
+
 
 let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
   init_decoder d >>=
@@ -607,6 +611,7 @@ let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
       | _ -> d_skip (5 * 2) d >>= loop (ncount - 1)
   in
   loop ncount ()
+
 
 (* cmap table *)
 
