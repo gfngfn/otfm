@@ -33,30 +33,38 @@ type pair_position =
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
 
 let main () =
-  let filename = try Sys.argv.(1) with Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end in
+  let filename =
+    try Sys.argv.(1) with
+    | Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end
+  in
   let src =
     match string_of_file filename with
     | Ok(src)       -> src
     | Error(`Msg e) -> begin print_endline e; exit 1 end
   in
-  let d = Otfm.decoder (`String(src)) in
-  let () = print_endline "finish initializing decoder" in
-  let f_lig lst (gidfst, liginfolst) =
-    (gidfst, liginfolst) :: lst
-  in
-  let f_pair1 lst (gidfst, pairinfolst) =
-    Pair1(gidfst, pairinfolst) :: lst
-  in
-(*
-  let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
-    Pair2(clsval, pairinfolst) :: lst
-  in
-*)
-  let f_pair2 _ _ lst _ = lst in
+  Otfm.decoder (`String(src)) >>= function
+  | Otfm.SingleDecoder(d) ->
+      let () = print_endline "finish initializing decoder" in
+      let f_lig lst (gidfst, liginfolst) =
+        (gidfst, liginfolst) :: lst
+      in
+      let f_pair1 lst (gidfst, pairinfolst) =
+        Pair1(gidfst, pairinfolst) :: lst
+      in
+    (*
+      let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
+        Pair2(clsval, pairinfolst) :: lst
+      in
+    *)
+      let f_pair2 _ _ lst _ = lst in
 
-  Otfm.gsub d "latn" None "liga" f_lig [] >>= fun gsubres ->
-  Otfm.gpos d "latn" None "kern" f_pair1 f_pair2 [] >>= fun gposres ->
-  return (gsubres, gposres)
+      Otfm.gsub d "latn" None "liga" f_lig [] >>= fun gsubres ->
+      Otfm.gpos d "latn" None "kern" f_pair1 f_pair2 [] >>= fun gposres ->
+      return (gsubres, gposres)
+
+  | Otfm.TrueTypeCollection(_) ->
+      let () = print_endline "TTC file" in
+      return ([], [])
 
 
 let () =
