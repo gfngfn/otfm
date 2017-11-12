@@ -287,6 +287,9 @@ val postscript_name : decoder -> (string option, error) result
 
 (** {2:cmap cmap table} *)
 
+type device_table = int * int * int * int
+(** The type for device tables. *)
+
 type glyph_id = int
 (** The type for glyph ids, from [0] to [65534]. *)
 
@@ -565,7 +568,7 @@ val gpos : decoder -> string -> string option -> string ->
   (class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) ->
   'a -> ('a, error) result
 
-type math_value_record = int * unit option
+type math_value_record = int * device_table option
 
 type math_constants =
   {

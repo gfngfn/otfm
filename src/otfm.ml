@@ -397,6 +397,17 @@ let d_utf_16be len (* in bytes *) d =            (* returns an UTF-8 string. *)
   return (Buffer.contents (Uutf.String.fold_utf_16be add_utf_8 d.buf s))
 
 
+type device_table = int * int * int * int
+
+
+let d_device_table d =
+  d_uint16 d >>= fun startSize ->
+  d_uint16 d >>= fun endSize ->
+  d_uint16 d >>= fun deltaFormat ->
+  d_uint16 d >>= fun deltaValue ->
+  return (startSize, endSize, deltaFormat, deltaValue)
+
+
 type 'a ok = ('a, error) result
 
 
@@ -1821,7 +1832,7 @@ let gpos d scriptTag langSysTag_opt featureTag f_pair1 f_pair2 init =
 
 (* -- MATH table -- *)
 
-type math_value_record = int * unit option
+type math_value_record = int * device_table option
 
 type math_constants =
   {
@@ -1932,8 +1943,8 @@ type math =
 
 let d_math_value_record offset_origin d : math_value_record ok =
   d_int16 d >>= fun value ->
-  d_offset_opt offset_origin d >>= fun offsetopt_DeviceTable ->
-  return (value, None (* temporary; should return a device table *))
+  d_fetch_opt offset_origin d_device_table d >>= fun device_table_opt ->
+  return (value, device_table_opt)
 
 
 let d_math_constants d : math_constants ok =
