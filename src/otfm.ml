@@ -1900,11 +1900,34 @@ type math_glyph_info =
     math_kern_info             : (glyph_id * math_kern_info_record) list;
   }
 
-type glyph_part_record = glyph_id * int * int * int * int
+type glyph_part_record =
+  {
+    glyph_id_for_part      : glyph_id;
+    start_connector_length : int;
+    end_connector_length   : int;
+    full_advance           : int;
+    part_flags             : int;
+  }
 
-type math_glyph_construction = (math_value_record * glyph_part_record list) option * (glyph_id * int) list
+type math_glyph_construction =
+  {
+    glyph_assembly                 : (math_value_record * glyph_part_record list) option;
+    math_glyph_variant_record_list : (glyph_id * int) list;
+  }
 
-type math_variants = int * (glyph_id * math_glyph_construction) list * (glyph_id * math_glyph_construction) list
+type math_variants =
+  {
+    min_connector_overlap : int;
+    vert_glyph_assoc      : (glyph_id * math_glyph_construction) list;
+    horiz_glyph_assoc     : (glyph_id * math_glyph_construction) list;
+  }
+
+type math =
+  {
+    math_constants  : math_constants;
+    math_glyph_info : math_glyph_info;
+    math_variants   : math_variants;
+  }
 
 
 let d_math_value_record offset_origin d : math_value_record ok =
@@ -2114,7 +2137,13 @@ let d_glyph_part_record d : glyph_part_record ok =
   d_uint16 d >>= fun endConnectorLength ->
   d_uint16 d >>= fun fullAdvance ->
   d_uint16 d >>= fun partFlags ->
-  return (glyph, startConnectorLength, endConnectorLength, fullAdvance, partFlags)
+  return {
+    glyph_id_for_part      = glyph;
+    start_connector_length = startConnectorLength;
+    end_connector_length   = endConnectorLength;
+    full_advance           = fullAdvance;
+    part_flags             = partFlags;
+  }
 
 
 let d_glyph_assembly d : (math_value_record * glyph_part_record list) ok =
@@ -2131,7 +2160,10 @@ let d_math_glyph_construction d : math_glyph_construction ok =
   print_for_debug "| | MathGlyphVariantRecord";
   d_list d_math_glyph_variant_record d >>= fun mathGlyphVariantRecord_lst ->
   print_for_debug "| | END MathGlyphConstruction}";
-  return (glyphAssembly, mathGlyphVariantRecord_lst)
+  return {
+    glyph_assembly                 = glyphAssembly;
+    math_glyph_variant_record_list = mathGlyphVariantRecord_lst;
+  }
 
 
 let d_math_variants d : math_variants ok =
@@ -2150,10 +2182,14 @@ let d_math_variants d : math_variants ok =
   d_repeat horizGlyphCount df d >>= fun horizGlyphConstruction_lst ->
   combine_coverage d vertGlyphCoverage vertGlyphConstruction_lst >>= fun vertcomb ->
   combine_coverage d horizGlyphCoverage horizGlyphConstruction_lst >>= fun horizcomb ->
-  return (minConnectorOverlap, vertcomb, horizcomb)
+  return {
+    min_connector_overlap = minConnectorOverlap;
+    vert_glyph_assoc      = vertcomb;
+    horiz_glyph_assoc     = horizcomb;
+  }
 
 
-let math d : (math_constants * math_glyph_info * math_variants) ok =
+let math d : math ok =
   init_decoder d >>=
   seek_table Tag.math d >>= function
     | None    -> err (`Missing_required_table(Tag.math))
@@ -2169,7 +2205,11 @@ let math d : (math_constants * math_glyph_info * math_variants) ok =
         print_for_debug_int "jump to MathVariants" (cur_pos d);
         d_fetch offset_MATH d_math_variants d >>= fun mathVariants ->
         print_for_debug "end MATH";
-        return (mathConstants, mathGlyphInfo, mathVariants)
+        return {
+          math_constants  = mathConstants;
+          math_glyph_info = mathGlyphInfo;
+          math_variants   = mathVariants;
+        }
 
 
 (* -- BASE table -- *)

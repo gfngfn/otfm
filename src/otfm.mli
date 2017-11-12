@@ -644,13 +644,36 @@ type math_glyph_info =
     math_kern_info             : (glyph_id * math_kern_info_record) list;
   }
 
-type glyph_part_record = glyph_id * int * int * int * int
+type glyph_part_record =
+  {
+    glyph_id_for_part      : glyph_id;
+    start_connector_length : int;
+    end_connector_length   : int;
+    full_advance           : int;
+    part_flags             : int;
+  }
 
-type math_glyph_construction = (math_value_record * glyph_part_record list) option * (glyph_id * int) list
+type math_glyph_construction =
+  {
+    glyph_assembly                 : (math_value_record * glyph_part_record list) option;
+    math_glyph_variant_record_list : (glyph_id * int) list;
+  }
 
-type math_variants = int * (glyph_id * math_glyph_construction) list * (glyph_id * math_glyph_construction) list
+type math_variants =
+  {
+    min_connector_overlap : int;
+    vert_glyph_assoc      : (glyph_id * math_glyph_construction) list;
+    horiz_glyph_assoc     : (glyph_id * math_glyph_construction) list;
+  }
 
-val math : decoder -> (math_constants * math_glyph_info * math_variants, error) result
+type math =
+  {
+    math_constants  : math_constants;
+    math_glyph_info : math_glyph_info;
+    math_variants   : math_variants;
+  }
+
+val math : decoder -> (math, error) result
 
 type cff_info
 
