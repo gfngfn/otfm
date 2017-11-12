@@ -646,7 +646,7 @@ type math_glyph_info =
 
 type glyph_part_record = glyph_id * int * int * int * int
 
-type math_glyph_construction = (math_value_record * glyph_part_record list) * (glyph_id * int) list
+type math_glyph_construction = (math_value_record * glyph_part_record list) option * (glyph_id * int) list
 
 type math_variants = int * (glyph_id * math_glyph_construction) list * (glyph_id * math_glyph_construction) list
 

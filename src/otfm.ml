@@ -1679,17 +1679,37 @@ let d_fetch offset_origin df d =
 
 let d_fetch_opt offset_origin df d =
   let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
   d_offset_opt offset_origin d >>= function
     | None ->
+        print_for_debug "              | NULL";
         seek_pos (pos_before + 2) d >>= fun () ->
         return None
 
     | Some(offset) ->
+        print_for_debug "              | non-NULL";
         seek_pos offset d >>= fun () ->
         df d >>= fun res ->
         seek_pos (pos_before + 2) d >>= fun () ->
         return (Some(res))
-  
+
+
+let d_fetch_list offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "               | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return []
+
+    | Some(offset) ->
+        print_for_debug "               | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun lst ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return lst
+
 
 let d_pair_adjustment_subtable d : gpos_subtable ok =
     (* -- the position is supposed to be set
@@ -1882,7 +1902,7 @@ type math_glyph_info =
 
 type glyph_part_record = glyph_id * int * int * int * int
 
-type math_glyph_construction = (math_value_record * glyph_part_record list) * (glyph_id * int) list
+type math_glyph_construction = (math_value_record * glyph_part_record list) option * (glyph_id * int) list
 
 type math_variants = int * (glyph_id * math_glyph_construction) list * (glyph_id * math_glyph_construction) list
 
@@ -2073,7 +2093,7 @@ let d_math_glyph_info d : math_glyph_info ok =
   print_for_debug_int "| NULLABLE OFFSET" temp;
 
   print_for_debug_int "| jump to MathKernInfo" (cur_pos d);
-  d_fetch offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
+  d_fetch_list offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
   print_for_debug "| END MathGlyphInfo";
   return {
     math_italics_correction    = mathItalicsCorrection;
@@ -2106,20 +2126,27 @@ let d_glyph_assembly d : (math_value_record * glyph_part_record list) ok =
 
 let d_math_glyph_construction d : math_glyph_construction ok =
   let offset_MathGlyphConstruction_table = cur_pos d in
-  d_fetch offset_MathGlyphConstruction_table d_glyph_assembly d >>= fun glyphAssembly ->
+  print_for_debug "| | {GlyphAssembly";
+  d_fetch_opt offset_MathGlyphConstruction_table d_glyph_assembly d >>= fun glyphAssembly ->
+  print_for_debug "| | MathGlyphVariantRecord";
   d_list d_math_glyph_variant_record d >>= fun mathGlyphVariantRecord_lst ->
+  print_for_debug "| | END MathGlyphConstruction}";
   return (glyphAssembly, mathGlyphVariantRecord_lst)
 
 
 let d_math_variants d : math_variants ok =
   let offset_MathVariants_table = cur_pos d in
   d_uint16 d >>= fun minConnectorOverlap ->
+  print_for_debug "| VertGlyphCoverage";
   d_coverage offset_MathVariants_table d >>= fun vertGlyphCoverage ->
+  print_for_debug "| HorizGlyphCoverage";
   d_coverage offset_MathVariants_table d >>= fun horizGlyphCoverage ->
   d_uint16 d >>= fun vertGlyphCount ->
   d_uint16 d >>= fun horizGlyphCount ->
   let df = d_fetch offset_MathVariants_table d_math_glyph_construction in
+  print_for_debug "| VertGlyphConstruction";
   d_repeat vertGlyphCount df d >>= fun vertGlyphConstruction_lst ->
+  print_for_debug "| HorizGlyphConstruction";
   d_repeat horizGlyphCount df d >>= fun horizGlyphConstruction_lst ->
   combine_coverage d vertGlyphCoverage vertGlyphConstruction_lst >>= fun vertcomb ->
   combine_coverage d horizGlyphCoverage horizGlyphConstruction_lst >>= fun horizcomb ->
