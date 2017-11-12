@@ -6,7 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 
-let print_for_debug msg = () (* print_endline msg *) (* for debug *)
+let print_for_debug msg = print_endline msg (* for debug *)
 
 let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
 
@@ -1667,7 +1667,10 @@ let d_class_definition d : (class_definition list) ok =
 
 let d_fetch offset_origin df d =
   let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch) | pos_before" pos_before;
   d_offset offset_origin d >>= fun offset ->
+  print_for_debug_int "          | rel_offset" (offset - offset_origin);
+  print_for_debug_int "          | offset" offset;
   seek_pos offset d >>= fun () ->
   df d >>= fun res ->
   seek_pos (pos_before + 2) d >>= fun () ->
@@ -1860,6 +1863,29 @@ type math_constants =
     radical_degree_bottom_raise_percent           : int;
   }
 
+type math_kern = math_value_record list * math_value_record list
+
+type math_kern_info_record =
+  {
+    top_right_math_kern    : math_kern option;
+    top_left_math_kern     : math_kern option;
+    bottom_right_math_kern : math_kern option;
+    bottom_left_math_kern  : math_kern option;
+  }
+
+type math_glyph_info =
+  {
+    math_italics_correction    : (glyph_id * math_value_record) list;
+    math_top_accent_attachment : (glyph_id * math_value_record) list;
+    math_kern_info             : (glyph_id * math_kern_info_record) list;
+  }
+
+type glyph_part_record = glyph_id * int * int * int * int
+
+type math_glyph_construction = (math_value_record * glyph_part_record list) * (glyph_id * int) list
+
+type math_variants = int * (glyph_id * math_glyph_construction) list * (glyph_id * math_glyph_construction) list
+
 
 let d_math_value_record offset_origin d : math_value_record ok =
   d_int16 d >>= fun value ->
@@ -2000,17 +2026,6 @@ let d_math_top_accent_attachment d : ((glyph_id * math_value_record) list) ok =
   combine_coverage d coverage mvrlst
 
 
-type math_kern = math_value_record list * math_value_record list
-
-type math_kern_info_record =
-  {
-    top_right_math_kern    : math_kern option;
-    top_left_math_kern     : math_kern option;
-    bottom_right_math_kern : math_kern option;
-    bottom_left_math_kern  : math_kern option;
-  }
-
-
 let d_math_kern d : math_kern ok =
   let offset_MathKern_table = cur_pos d in
   d_uint16 d >>= fun heightCount ->
@@ -2035,28 +2050,31 @@ let d_math_kern_info_record d : math_kern_info_record ok =
 
 let d_math_kern_info d : ((glyph_id * math_kern_info_record) list) ok =
   let offset_MathKernInfo_table = cur_pos d in
+  print_for_debug_int "MathKernInfo[1]" (cur_pos d);
   d_coverage offset_MathKernInfo_table d >>= fun coverage ->
+  print_for_debug "MathKernInfo[2]";
   d_list d_math_kern_info_record d >>= fun mvrlst ->
   combine_coverage d coverage mvrlst
 
 
-type math_glyph_info =
-  {
-    math_italics_correction    : (glyph_id * math_value_record) list;
-    math_top_accent_attachment : (glyph_id * math_value_record) list;
-    math_kern_info             : (glyph_id * math_kern_info_record) list;
-  }
-
-
 let d_math_glyph_info d : math_glyph_info ok =
   let offset_MathGlyphInfo_table = cur_pos d in
+  print_for_debug_int "| jump to MathItalicsCorrection" (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_italics_correction_info d >>= fun mathItalicsCorrection ->
-  d_fetch offset_MathGlyphInfo_table d_math_top_accent_attachment  d >>= fun mathTopAccentAttachment ->
+  print_for_debug_int "| jump to MathTopAccentAttachment" (cur_pos d);
+  d_fetch offset_MathGlyphInfo_table d_math_top_accent_attachment d >>= fun mathTopAccentAttachment ->
 (*
   d_coverage offset_MathGlyphInfo_table d >>= fun _ ->
 *)
+(*
   d_skip 2 d >>= fun () ->  (* temporary *)
+*)
+  d_uint16 d >>= fun temp ->
+  print_for_debug_int "| NULLABLE OFFSET" temp;
+
+  print_for_debug_int "| jump to MathKernInfo" (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
+  print_for_debug "| END MathGlyphInfo";
   return {
     math_italics_correction    = mathItalicsCorrection;
     math_top_accent_attachment = mathTopAccentAttachment;
@@ -2068,9 +2086,6 @@ let d_math_glyph_variant_record d : (glyph_id * int) ok =
   d_uint16 d >>= fun variantGlyph ->
   d_uint16 d >>= fun advanceMeasurement ->
   return (variantGlyph, advanceMeasurement)
-
-
-type glyph_part_record = glyph_id * int * int * int * int
 
 
 let d_glyph_part_record d : glyph_part_record ok =
@@ -2089,9 +2104,6 @@ let d_glyph_assembly d : (math_value_record * glyph_part_record list) ok =
   return (italicsCorrection, partRecords_lst)
 
 
-type math_glyph_construction = (math_value_record * glyph_part_record list) * (glyph_id * int) list
-
-
 let d_math_glyph_construction d : math_glyph_construction ok =
   let offset_MathGlyphConstruction_table = cur_pos d in
   d_fetch offset_MathGlyphConstruction_table d_glyph_assembly d >>= fun glyphAssembly ->
@@ -2099,7 +2111,7 @@ let d_math_glyph_construction d : math_glyph_construction ok =
   return (glyphAssembly, mathGlyphVariantRecord_lst)
 
 
-let d_math_variants d =
+let d_math_variants d : math_variants ok =
   let offset_MathVariants_table = cur_pos d in
   d_uint16 d >>= fun minConnectorOverlap ->
   d_coverage offset_MathVariants_table d >>= fun vertGlyphCoverage ->
@@ -2114,17 +2126,22 @@ let d_math_variants d =
   return (minConnectorOverlap, vertcomb, horizcomb)
 
 
-let math d =
+let math d : (math_constants * math_glyph_info * math_variants) ok =
   init_decoder d >>=
   seek_table Tag.math d >>= function
     | None    -> err (`Missing_required_table(Tag.math))
     | Some(_) ->
         let offset_MATH = cur_pos d in
+        print_for_debug_int "begin MATH" offset_MATH;
         d_uint32 d >>= fun version ->
         confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
+        print_for_debug_int "jump to MathConstants" (cur_pos d);
         d_fetch offset_MATH d_math_constants d >>= fun mathConstants ->
+        print_for_debug_int "jump to MathGlyphInfo" (cur_pos d);
         d_fetch offset_MATH d_math_glyph_info d >>= fun mathGlyphInfo ->
+        print_for_debug_int "jump to MathVariants" (cur_pos d);
         d_fetch offset_MATH d_math_variants d >>= fun mathVariants ->
+        print_for_debug "end MATH";
         return (mathConstants, mathGlyphInfo, mathVariants)
 
 
