@@ -6,7 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 
-let print_for_debug msg = print_endline msg (* for debug *)
+let print_for_debug msg = () (* print_endline msg *) (* for debug *)
 
 let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
 
@@ -1347,7 +1347,7 @@ let d_range_record d =
   return (range [] start_gid end_gid)
 
 
-let d_coverage_main d : (glyph_id list) ok =
+let d_coverage d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
@@ -1359,21 +1359,67 @@ let d_coverage_main d : (glyph_id list) ok =
     | _ -> err_version d (Int32.of_int coverageFormat)
   in print_for_debug "end Coverage table"; res  (* for debug *)
 
-
+(*
 let d_coverage offset_origin d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           just before an offset field to a coverage table -- *)
   let pos_first = cur_pos d in
   d_offset offset_origin d   >>= fun offset_Coverage ->
   seek_pos offset_Coverage d >>= fun () ->
-  d_coverage_main d          >>= fun gidlst ->
+  d_coverage d          >>= fun gidlst ->
   seek_pos (pos_first + 2) d >>= fun () ->
   return gidlst
-
+*)
 
 let combine_coverage d coverage lst =
   try return (List.combine coverage lst) with
   | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(d.ctx))
+
+
+let d_fetch offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch) | pos_before" pos_before;
+  d_offset offset_origin d >>= fun offset ->
+  print_for_debug_int "          | rel_offset" (offset - offset_origin);
+  print_for_debug_int "          | offset" offset;
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 2) d >>= fun () ->
+  return res
+
+
+let d_fetch_opt offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "              | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return None
+
+    | Some(offset) ->
+        print_for_debug "              | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun res ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return (Some(res))
+
+
+let d_fetch_list offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "               | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return []
+
+    | Some(offset) ->
+        print_for_debug "               | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun lst ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return lst
 
 
 let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
@@ -1393,7 +1439,7 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
     (* -- the position is supposed to be set
           just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
-  d_coverage offset_Substitution_table d >>= fun coverage ->
+  d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
   print_for_debug_int "size of Coverage" (List.length coverage);  (* for debug *)
   List.iter (print_for_debug_int "  *   elem") coverage;  (* for debug *)
 
@@ -1676,52 +1722,6 @@ let d_class_definition d : (class_definition list) ok =
   | _ -> err_version d (Int32.of_int classFormat)
 
 
-let d_fetch offset_origin df d =
-  let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch) | pos_before" pos_before;
-  d_offset offset_origin d >>= fun offset ->
-  print_for_debug_int "          | rel_offset" (offset - offset_origin);
-  print_for_debug_int "          | offset" offset;
-  seek_pos offset d >>= fun () ->
-  df d >>= fun res ->
-  seek_pos (pos_before + 2) d >>= fun () ->
-  return res
-
-
-let d_fetch_opt offset_origin df d =
-  let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
-  d_offset_opt offset_origin d >>= function
-    | None ->
-        print_for_debug "              | NULL";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return None
-
-    | Some(offset) ->
-        print_for_debug "              | non-NULL";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun res ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return (Some(res))
-
-
-let d_fetch_list offset_origin df d =
-  let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
-  d_offset_opt offset_origin d >>= function
-    | None ->
-        print_for_debug "               | NULL";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return []
-
-    | Some(offset) ->
-        print_for_debug "               | non-NULL";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun lst ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return lst
-
-
 let d_pair_adjustment_subtable d : gpos_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of a PairPos subtable [page 194] -- *)
@@ -1729,7 +1729,7 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
   d_uint16 d >>= fun posFormat ->
   match posFormat with
   | 1 ->
-      d_coverage offset_PairPos d >>= fun coverage ->
+      d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
       d_list (d_offset offset_PairPos) d >>= fun offsetlst_PairSet ->
@@ -1738,7 +1738,7 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
       return (PairPosAdjustment1(comb))
 
   | 2 ->
-      d_coverage offset_PairPos d >>= fun coverage ->
+      d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
       d_fetch offset_PairPos d_class_definition d >>= fun classDef1 ->
@@ -2068,14 +2068,14 @@ let d_math_constants d : math_constants ok =
 
 let d_math_italics_correction_info d : ((glyph_id * math_value_record) list) ok =
   let offset_MathItalicCollectionInfo_table = cur_pos d in
-  d_coverage offset_MathItalicCollectionInfo_table d >>= fun coverage ->
+  d_fetch offset_MathItalicCollectionInfo_table d_coverage d >>= fun coverage ->
   d_list (d_math_value_record offset_MathItalicCollectionInfo_table) d >>= fun mvrlst ->
   combine_coverage d coverage mvrlst
 
 
 let d_math_top_accent_attachment d : ((glyph_id * math_value_record) list) ok =
   let offset_MathTopAccentAttachment_table = cur_pos d in
-  d_coverage offset_MathTopAccentAttachment_table d >>= fun coverage ->
+  d_fetch offset_MathTopAccentAttachment_table d_coverage d >>= fun coverage ->
   d_list (d_math_value_record offset_MathTopAccentAttachment_table) d >>= fun mvrlst ->
   combine_coverage d coverage mvrlst
 
@@ -2105,7 +2105,7 @@ let d_math_kern_info_record d : math_kern_info_record ok =
 let d_math_kern_info d : ((glyph_id * math_kern_info_record) list) ok =
   let offset_MathKernInfo_table = cur_pos d in
   print_for_debug_int "MathKernInfo[1]" (cur_pos d);
-  d_coverage offset_MathKernInfo_table d >>= fun coverage ->
+  d_fetch offset_MathKernInfo_table d_coverage d >>= fun coverage ->
   print_for_debug "MathKernInfo[2]";
   d_list d_math_kern_info_record d >>= fun mvrlst ->
   combine_coverage d coverage mvrlst
@@ -2181,9 +2181,9 @@ let d_math_variants d : math_variants ok =
   let offset_MathVariants_table = cur_pos d in
   d_uint16 d >>= fun minConnectorOverlap ->
   print_for_debug "| VertGlyphCoverage";
-  d_coverage offset_MathVariants_table d >>= fun vertGlyphCoverage ->
+  d_fetch offset_MathVariants_table d_coverage d >>= fun vertGlyphCoverage ->
   print_for_debug "| HorizGlyphCoverage";
-  d_coverage offset_MathVariants_table d >>= fun horizGlyphCoverage ->
+  d_fetch offset_MathVariants_table d_coverage d >>= fun horizGlyphCoverage ->
   d_uint16 d >>= fun vertGlyphCount ->
   d_uint16 d >>= fun horizGlyphCount ->
   let df = d_fetch offset_MathVariants_table d_math_glyph_construction in
