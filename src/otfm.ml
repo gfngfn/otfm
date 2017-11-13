@@ -2117,15 +2117,7 @@ let d_math_glyph_info d : math_glyph_info ok =
   d_fetch offset_MathGlyphInfo_table d_math_italics_correction_info d >>= fun mathItalicsCorrection ->
   print_for_debug_int "| jump to MathTopAccentAttachment" (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_top_accent_attachment d >>= fun mathTopAccentAttachment ->
-(*
-  d_coverage offset_MathGlyphInfo_table d >>= fun _ ->
-*)
-(*
-  d_skip 2 d >>= fun () ->  (* temporary *)
-*)
-  d_uint16 d >>= fun temp ->
-  print_for_debug_int "| NULLABLE OFFSET" temp;
-
+  d_fetch_opt offset_MathGlyphInfo_table d_coverage d >>= fun _ ->
   print_for_debug_int "| jump to MathKernInfo" (cur_pos d);
   d_fetch_list offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
   print_for_debug "| END MathGlyphInfo";
