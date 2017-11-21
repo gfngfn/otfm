@@ -99,6 +99,7 @@ module Tag = struct
   let gpos = 0x47504F53l
   let gsub = 0x47535542l
   let jstf = 0x4A535446l
+  let math = 0x4d415448l
 
   (* Functions *)
 
@@ -394,6 +395,17 @@ let d_utf_16be len (* in bytes *) d =            (* returns an UTF-8 string. *)
   d_bytes len d >>= fun s ->
   Buffer.clear d.buf;
   return (Buffer.contents (Uutf.String.fold_utf_16be add_utf_8 d.buf s))
+
+
+type device_table = int * int * int * int
+
+
+let d_device_table d =
+  d_uint16 d >>= fun startSize ->
+  d_uint16 d >>= fun endSize ->
+  d_uint16 d >>= fun deltaFormat ->
+  d_uint16 d >>= fun deltaValue ->
+  return (startSize, endSize, deltaFormat, deltaValue)
 
 
 type 'a ok = ('a, error) result
@@ -1335,7 +1347,7 @@ let d_range_record d =
   return (range [] start_gid end_gid)
 
 
-let d_coverage_main d : (glyph_id list) ok =
+let d_coverage d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
@@ -1347,16 +1359,67 @@ let d_coverage_main d : (glyph_id list) ok =
     | _ -> err_version d (Int32.of_int coverageFormat)
   in print_for_debug "end Coverage table"; res  (* for debug *)
 
-
+(*
 let d_coverage offset_origin d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           just before an offset field to a coverage table -- *)
   let pos_first = cur_pos d in
   d_offset offset_origin d   >>= fun offset_Coverage ->
   seek_pos offset_Coverage d >>= fun () ->
-  d_coverage_main d          >>= fun gidlst ->
+  d_coverage d          >>= fun gidlst ->
   seek_pos (pos_first + 2) d >>= fun () ->
   return gidlst
+*)
+
+let combine_coverage d coverage lst =
+  try return (List.combine coverage lst) with
+  | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(d.ctx))
+
+
+let d_fetch offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch) | pos_before" pos_before;
+  d_offset offset_origin d >>= fun offset ->
+  print_for_debug_int "          | rel_offset" (offset - offset_origin);
+  print_for_debug_int "          | offset" offset;
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 2) d >>= fun () ->
+  return res
+
+
+let d_fetch_opt offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "              | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return None
+
+    | Some(offset) ->
+        print_for_debug "              | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun res ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return (Some(res))
+
+
+let d_fetch_list offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "               | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return []
+
+    | Some(offset) ->
+        print_for_debug "               | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun lst ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return lst
 
 
 let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
@@ -1376,7 +1439,7 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
     (* -- the position is supposed to be set
           just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
-  d_coverage offset_Substitution_table d >>= fun coverage ->
+  d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
   print_for_debug_int "size of Coverage" (List.length coverage);  (* for debug *)
   List.iter (print_for_debug_int "  *   elem") coverage;  (* for debug *)
 
@@ -1384,10 +1447,7 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
   d_offset_list offset_Substitution_table d >>= fun offsetlst_LigatureSet ->
   print_for_debug_int "number of LigatureSet" (List.length offsetlst_LigatureSet);  (* for debug *)
   seek_every_pos offsetlst_LigatureSet df d >>= fun datalst ->
-  try
-    return (List.combine coverage datalst)
-  with
-  | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
+  combine_coverage d coverage datalst
 
 
 let advanced_table_scheme tag_Gxxx lookup d scriptTag langSysTag_opt featureTag : 'a ok =
@@ -1662,15 +1722,6 @@ let d_class_definition d : (class_definition list) ok =
   | _ -> err_version d (Int32.of_int classFormat)
 
 
-let d_fetch offset_origin df d =
-  let pos_before = cur_pos d in
-  d_offset offset_origin d >>= fun offset ->
-  seek_pos offset d >>= fun () ->
-  df d >>= fun res ->
-  seek_pos (pos_before + 2) d >>= fun () ->
-  return res
-
-
 let d_pair_adjustment_subtable d : gpos_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of a PairPos subtable [page 194] -- *)
@@ -1678,18 +1729,16 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
   d_uint16 d >>= fun posFormat ->
   match posFormat with
   | 1 ->
-      d_coverage offset_PairPos d >>= fun coverage ->
+      d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
       d_list (d_offset offset_PairPos) d >>= fun offsetlst_PairSet ->
       seek_every_pos offsetlst_PairSet (d_pair_set valueFormat1 valueFormat2) d >>= fun pairsetlst ->
-      begin
-        try return (PairPosAdjustment1(List.combine coverage pairsetlst)) with
-        | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
-      end
+      combine_coverage d coverage pairsetlst >>= fun comb ->
+      return (PairPosAdjustment1(comb))
 
   | 2 ->
-      d_coverage offset_PairPos d >>= fun coverage ->
+      d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
       d_fetch offset_PairPos d_class_definition d >>= fun classDef1 ->
@@ -1780,6 +1829,393 @@ let gpos d scriptTag langSysTag_opt featureTag f_pair1 f_pair2 init =
   advanced_table_scheme Tag.gpos lookup_gpos d scriptTag langSysTag_opt featureTag
     >>= fun subtables -> return (fold_subtables_gpos f_pair1 f_pair2 init subtables)
 
+
+(* -- MATH table -- *)
+
+type math_value_record = int * device_table option
+
+type math_constants =
+  {
+    script_percent_scale_down                     : int;
+    script_script_percent_scale_down              : int;
+    delimited_sub_formula_min_height              : int;
+    display_operator_min_height                   : int;
+    math_leading                                  : math_value_record;
+    axis_height                                   : math_value_record;
+    accent_base_height                            : math_value_record;
+    flattened_accent_base_height                  : math_value_record;
+    subscript_shift_down                          : math_value_record;
+    subscript_top_max                             : math_value_record;
+    subscript_baseline_drop_min                   : math_value_record;
+    superscript_shift_up                          : math_value_record;
+    superscript_shift_up_cramped                  : math_value_record;
+    superscript_bottom_min                        : math_value_record;
+    superscript_baseline_drop_max                 : math_value_record;
+    sub_superscript_gap_min                       : math_value_record;
+    superscript_bottom_max_with_subscript         : math_value_record;
+    space_after_script                            : math_value_record;
+    upper_limit_gap_min                           : math_value_record;
+    upper_limit_baseline_rise_min                 : math_value_record;
+    lower_limit_gap_min                           : math_value_record;
+    lower_limit_baseline_drop_min                 : math_value_record;
+    stack_top_shift_up                            : math_value_record;
+    stack_top_display_style_shift_up              : math_value_record;
+    stack_bottom_shift_down                       : math_value_record;
+    stack_bottom_display_style_shift_down         : math_value_record;
+    stack_gap_min                                 : math_value_record;
+    stack_display_style_gap_min                   : math_value_record;
+    stretch_stack_top_shift_up                    : math_value_record;
+    stretch_stack_bottom_shift_down               : math_value_record;
+    stretch_stack_gap_above_min                   : math_value_record;
+    stretch_stack_gap_below_min                   : math_value_record;
+    fraction_numerator_shift_up                   : math_value_record;
+    fraction_numerator_display_style_shift_up     : math_value_record;
+    fraction_denominator_shift_down               : math_value_record;
+    fraction_denominator_display_style_shift_down : math_value_record;
+    fraction_numerator_gap_min                    : math_value_record;
+    fraction_num_display_style_gap_min            : math_value_record;
+    fraction_rule_thickness                       : math_value_record;
+    fraction_denominator_gap_min                  : math_value_record;
+    fraction_denom_display_style_gap_min          : math_value_record;
+    skewed_fraction_horizontal_gap                : math_value_record;
+    skewed_fraction_vertical_gap                  : math_value_record;
+    overbar_vertical_gap                          : math_value_record;
+    overbar_rule_thickness                        : math_value_record;
+    overbar_extra_ascender                        : math_value_record;
+    underbar_vertical_gap                         : math_value_record;
+    underbar_rule_thickness                       : math_value_record;
+    underbar_extra_descender                      : math_value_record;
+    radical_vertical_gap                          : math_value_record;
+    radical_display_style_vertical_gap            : math_value_record;
+    radical_rule_thickness                        : math_value_record;
+    radical_extra_ascender                        : math_value_record;
+    radical_kern_before_degree                    : math_value_record;
+    radical_kern_after_degree                     : math_value_record;
+    radical_degree_bottom_raise_percent           : int;
+  }
+
+type math_kern = math_value_record list * math_value_record list
+
+type math_kern_info_record =
+  {
+    top_right_math_kern    : math_kern option;
+    top_left_math_kern     : math_kern option;
+    bottom_right_math_kern : math_kern option;
+    bottom_left_math_kern  : math_kern option;
+  }
+
+type math_glyph_info =
+  {
+    math_italics_correction    : (glyph_id * math_value_record) list;
+    math_top_accent_attachment : (glyph_id * math_value_record) list;
+    math_kern_info             : (glyph_id * math_kern_info_record) list;
+  }
+
+type glyph_part_record =
+  {
+    glyph_id_for_part      : glyph_id;
+    start_connector_length : int;
+    end_connector_length   : int;
+    full_advance           : int;
+    part_flags             : int;
+  }
+
+type math_glyph_construction =
+  {
+    glyph_assembly                 : (math_value_record * glyph_part_record list) option;
+    math_glyph_variant_record_list : (glyph_id * int) list;
+  }
+
+type math_variants =
+  {
+    min_connector_overlap : int;
+    vert_glyph_assoc      : (glyph_id * math_glyph_construction) list;
+    horiz_glyph_assoc     : (glyph_id * math_glyph_construction) list;
+  }
+
+type math =
+  {
+    math_constants  : math_constants;
+    math_glyph_info : math_glyph_info;
+    math_variants   : math_variants;
+  }
+
+
+let d_math_value_record offset_origin d : math_value_record ok =
+  d_int16 d >>= fun value ->
+  d_fetch_opt offset_origin d_device_table d >>= fun device_table_opt ->
+  return (value, device_table_opt)
+
+
+let d_math_constants d : math_constants ok =
+  let offset_origin = cur_pos d in
+  let dm = d_math_value_record offset_origin in
+  d_int16  d >>= fun script_percent_scale_down ->
+  d_int16  d >>= fun script_script_percent_scale_down ->
+  d_uint16 d >>= fun delimited_sub_formula_min_height ->
+  d_uint16 d >>= fun display_operator_min_height ->
+  dm       d >>= fun math_leading ->
+  dm       d >>= fun axis_height ->
+  dm       d >>= fun accent_base_height ->
+  dm       d >>= fun flattened_accent_base_height ->
+  dm       d >>= fun subscript_shift_down ->
+  dm       d >>= fun subscript_top_max ->
+  dm       d >>= fun subscript_baseline_drop_min ->
+  dm       d >>= fun superscript_shift_up ->
+  dm       d >>= fun superscript_shift_up_cramped ->
+  dm       d >>= fun superscript_bottom_min ->
+  dm       d >>= fun superscript_baseline_drop_max ->
+  dm       d >>= fun sub_superscript_gap_min ->
+  dm       d >>= fun superscript_bottom_max_with_subscript ->
+  dm       d >>= fun space_after_script ->
+  dm       d >>= fun upper_limit_gap_min ->
+  dm       d >>= fun upper_limit_baseline_rise_min ->
+  dm       d >>= fun lower_limit_gap_min ->
+  dm       d >>= fun lower_limit_baseline_drop_min ->
+  dm       d >>= fun stack_top_shift_up ->
+  dm       d >>= fun stack_top_display_style_shift_up ->
+  dm       d >>= fun stack_bottom_shift_down ->
+  dm       d >>= fun stack_bottom_display_style_shift_down ->
+  dm       d >>= fun stack_gap_min ->
+  dm       d >>= fun stack_display_style_gap_min ->
+  dm       d >>= fun stretch_stack_top_shift_up ->
+  dm       d >>= fun stretch_stack_bottom_shift_down ->
+  dm       d >>= fun stretch_stack_gap_above_min ->
+  dm       d >>= fun stretch_stack_gap_below_min ->
+  dm       d >>= fun fraction_numerator_shift_up ->
+  dm       d >>= fun fraction_numerator_display_style_shift_up ->
+  dm       d >>= fun fraction_denominator_shift_down ->
+  dm       d >>= fun fraction_denominator_display_style_shift_down ->
+  dm       d >>= fun fraction_numerator_gap_min ->
+  dm       d >>= fun fraction_num_display_style_gap_min ->
+  dm       d >>= fun fraction_rule_thickness ->
+  dm       d >>= fun fraction_denominator_gap_min ->
+  dm       d >>= fun fraction_denom_display_style_gap_min ->
+  dm       d >>= fun skewed_fraction_horizontal_gap ->
+  dm       d >>= fun skewed_fraction_vertical_gap ->
+  dm       d >>= fun overbar_vertical_gap ->
+  dm       d >>= fun overbar_rule_thickness ->
+  dm       d >>= fun overbar_extra_ascender ->
+  dm       d >>= fun underbar_vertical_gap ->
+  dm       d >>= fun underbar_rule_thickness ->
+  dm       d >>= fun underbar_extra_descender ->
+  dm       d >>= fun radical_vertical_gap ->
+  dm       d >>= fun radical_display_style_vertical_gap ->
+  dm       d >>= fun radical_rule_thickness ->
+  dm       d >>= fun radical_extra_ascender ->
+  dm       d >>= fun radical_kern_before_degree ->
+  dm       d >>= fun radical_kern_after_degree ->
+  d_int16  d >>= fun radical_degree_bottom_raise_percent ->
+  return {
+    script_percent_scale_down                     ;
+    script_script_percent_scale_down              ;
+    delimited_sub_formula_min_height              ;
+    display_operator_min_height                   ;
+    math_leading                                  ;
+    axis_height                                   ;
+    accent_base_height                            ;
+    flattened_accent_base_height                  ;
+    subscript_shift_down                          ;
+    subscript_top_max                             ;
+    subscript_baseline_drop_min                   ;
+    superscript_shift_up                          ;
+    superscript_shift_up_cramped                  ;
+    superscript_bottom_min                        ;
+    superscript_baseline_drop_max                 ;
+    sub_superscript_gap_min                       ;
+    superscript_bottom_max_with_subscript         ;
+    space_after_script                            ;
+    upper_limit_gap_min                           ;
+    upper_limit_baseline_rise_min                 ;
+    lower_limit_gap_min                           ;
+    lower_limit_baseline_drop_min                 ;
+    stack_top_shift_up                            ;
+    stack_top_display_style_shift_up              ;
+    stack_bottom_shift_down                       ;
+    stack_bottom_display_style_shift_down         ;
+    stack_gap_min                                 ;
+    stack_display_style_gap_min                   ;
+    stretch_stack_top_shift_up                    ;
+    stretch_stack_bottom_shift_down               ;
+    stretch_stack_gap_above_min                   ;
+    stretch_stack_gap_below_min                   ;
+    fraction_numerator_shift_up                   ;
+    fraction_numerator_display_style_shift_up     ;
+    fraction_denominator_shift_down               ;
+    fraction_denominator_display_style_shift_down ;
+    fraction_numerator_gap_min                    ;
+    fraction_num_display_style_gap_min            ;
+    fraction_rule_thickness                       ;
+    fraction_denominator_gap_min                  ;
+    fraction_denom_display_style_gap_min          ;
+    skewed_fraction_horizontal_gap                ;
+    skewed_fraction_vertical_gap                  ;
+    overbar_vertical_gap                          ;
+    overbar_rule_thickness                        ;
+    overbar_extra_ascender                        ;
+    underbar_vertical_gap                         ;
+    underbar_rule_thickness                       ;
+    underbar_extra_descender                      ;
+    radical_vertical_gap                          ;
+    radical_display_style_vertical_gap            ;
+    radical_rule_thickness                        ;
+    radical_extra_ascender                        ;
+    radical_kern_before_degree                    ;
+    radical_kern_after_degree                     ;
+    radical_degree_bottom_raise_percent           ;
+  }
+
+
+let d_math_italics_correction_info d : ((glyph_id * math_value_record) list) ok =
+  let offset_MathItalicCollectionInfo_table = cur_pos d in
+  d_fetch offset_MathItalicCollectionInfo_table d_coverage d >>= fun coverage ->
+  d_list (d_math_value_record offset_MathItalicCollectionInfo_table) d >>= fun mvrlst ->
+  combine_coverage d coverage mvrlst
+
+
+let d_math_top_accent_attachment d : ((glyph_id * math_value_record) list) ok =
+  let offset_MathTopAccentAttachment_table = cur_pos d in
+  d_fetch offset_MathTopAccentAttachment_table d_coverage d >>= fun coverage ->
+  d_list (d_math_value_record offset_MathTopAccentAttachment_table) d >>= fun mvrlst ->
+  combine_coverage d coverage mvrlst
+
+
+let d_math_kern d : math_kern ok =
+  let offset_MathKern_table = cur_pos d in
+  d_uint16 d >>= fun heightCount ->
+  d_repeat heightCount (d_math_value_record offset_MathKern_table) d >>= fun correctionHeight_lst ->
+  d_repeat (heightCount + 1) (d_math_value_record offset_MathKern_table) d >>= fun kernValue_lst ->
+  return (correctionHeight_lst, kernValue_lst)
+
+
+let d_math_kern_info_record d : math_kern_info_record ok =
+  let offset_MathKernInfo_table = cur_pos d in
+  d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topRightMathKern_opt ->
+  d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topLeftMathKern_opt ->
+  d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun bottomRightMathKern_opt ->
+  d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun bottomLeftMathKern_opt ->
+  return {
+    top_right_math_kern    = topRightMathKern_opt;
+    top_left_math_kern     = topLeftMathKern_opt;
+    bottom_right_math_kern = bottomRightMathKern_opt;
+    bottom_left_math_kern  = bottomLeftMathKern_opt;
+  }
+
+
+let d_math_kern_info d : ((glyph_id * math_kern_info_record) list) ok =
+  let offset_MathKernInfo_table = cur_pos d in
+  print_for_debug_int "MathKernInfo[1]" (cur_pos d);
+  d_fetch offset_MathKernInfo_table d_coverage d >>= fun coverage ->
+  print_for_debug "MathKernInfo[2]";
+  d_list d_math_kern_info_record d >>= fun mvrlst ->
+  combine_coverage d coverage mvrlst
+
+
+let d_math_glyph_info d : math_glyph_info ok =
+  let offset_MathGlyphInfo_table = cur_pos d in
+  print_for_debug_int "| jump to MathItalicsCorrection" (cur_pos d);
+  d_fetch offset_MathGlyphInfo_table d_math_italics_correction_info d >>= fun mathItalicsCorrection ->
+  print_for_debug_int "| jump to MathTopAccentAttachment" (cur_pos d);
+  d_fetch offset_MathGlyphInfo_table d_math_top_accent_attachment d >>= fun mathTopAccentAttachment ->
+  d_fetch_opt offset_MathGlyphInfo_table d_coverage d >>= fun _ ->
+  print_for_debug_int "| jump to MathKernInfo" (cur_pos d);
+  d_fetch_list offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
+  print_for_debug "| END MathGlyphInfo";
+  return {
+    math_italics_correction    = mathItalicsCorrection;
+    math_top_accent_attachment = mathTopAccentAttachment;
+    math_kern_info             = mathKernInfo;
+  }
+
+
+let d_math_glyph_variant_record d : (glyph_id * int) ok =
+  d_uint16 d >>= fun variantGlyph ->
+  d_uint16 d >>= fun advanceMeasurement ->
+  return (variantGlyph, advanceMeasurement)
+
+
+let d_glyph_part_record d : glyph_part_record ok =
+  d_uint16 d >>= fun glyph ->
+  d_uint16 d >>= fun startConnectorLength ->
+  d_uint16 d >>= fun endConnectorLength ->
+  d_uint16 d >>= fun fullAdvance ->
+  d_uint16 d >>= fun partFlags ->
+  return {
+    glyph_id_for_part      = glyph;
+    start_connector_length = startConnectorLength;
+    end_connector_length   = endConnectorLength;
+    full_advance           = fullAdvance;
+    part_flags             = partFlags;
+  }
+
+
+let d_glyph_assembly d : (math_value_record * glyph_part_record list) ok =
+  let offset_GlyphAssembly_table = cur_pos d in
+  d_math_value_record offset_GlyphAssembly_table d >>= fun italicsCorrection ->
+  d_list d_glyph_part_record d >>= fun partRecords_lst ->
+  return (italicsCorrection, partRecords_lst)
+
+
+let d_math_glyph_construction d : math_glyph_construction ok =
+  let offset_MathGlyphConstruction_table = cur_pos d in
+  print_for_debug "| | {GlyphAssembly";
+  d_fetch_opt offset_MathGlyphConstruction_table d_glyph_assembly d >>= fun glyphAssembly ->
+  print_for_debug "| | MathGlyphVariantRecord";
+  d_list d_math_glyph_variant_record d >>= fun mathGlyphVariantRecord_lst ->
+  print_for_debug "| | END MathGlyphConstruction}";
+  return {
+    glyph_assembly                 = glyphAssembly;
+    math_glyph_variant_record_list = mathGlyphVariantRecord_lst;
+  }
+
+
+let d_math_variants d : math_variants ok =
+  let offset_MathVariants_table = cur_pos d in
+  d_uint16 d >>= fun minConnectorOverlap ->
+  print_for_debug "| VertGlyphCoverage";
+  d_fetch offset_MathVariants_table d_coverage d >>= fun vertGlyphCoverage ->
+  print_for_debug "| HorizGlyphCoverage";
+  d_fetch offset_MathVariants_table d_coverage d >>= fun horizGlyphCoverage ->
+  d_uint16 d >>= fun vertGlyphCount ->
+  d_uint16 d >>= fun horizGlyphCount ->
+  let df = d_fetch offset_MathVariants_table d_math_glyph_construction in
+  print_for_debug "| VertGlyphConstruction";
+  d_repeat vertGlyphCount df d >>= fun vertGlyphConstruction_lst ->
+  print_for_debug "| HorizGlyphConstruction";
+  d_repeat horizGlyphCount df d >>= fun horizGlyphConstruction_lst ->
+  combine_coverage d vertGlyphCoverage vertGlyphConstruction_lst >>= fun vertcomb ->
+  combine_coverage d horizGlyphCoverage horizGlyphConstruction_lst >>= fun horizcomb ->
+  return {
+    min_connector_overlap = minConnectorOverlap;
+    vert_glyph_assoc      = vertcomb;
+    horiz_glyph_assoc     = horizcomb;
+  }
+
+
+let math d : math ok =
+  init_decoder d >>=
+  seek_table Tag.math d >>= function
+    | None    -> err (`Missing_required_table(Tag.math))
+    | Some(_) ->
+        let offset_MATH = cur_pos d in
+        print_for_debug_int "begin MATH" offset_MATH;
+        d_uint32 d >>= fun version ->
+        confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
+        print_for_debug_int "jump to MathConstants" (cur_pos d);
+        d_fetch offset_MATH d_math_constants d >>= fun mathConstants ->
+        print_for_debug_int "jump to MathGlyphInfo" (cur_pos d);
+        d_fetch offset_MATH d_math_glyph_info d >>= fun mathGlyphInfo ->
+        print_for_debug_int "jump to MathVariants" (cur_pos d);
+        d_fetch offset_MATH d_math_variants d >>= fun mathVariants ->
+        print_for_debug "end MATH";
+        return {
+          math_constants  = mathConstants;
+          math_glyph_info = mathGlyphInfo;
+          math_variants   = mathVariants;
+        }
+
+
+(* -- BASE table -- *)
 
 let base d =
   let offset_BASE = cur_pos d in
