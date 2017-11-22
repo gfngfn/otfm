@@ -64,9 +64,9 @@ let main () =
   in
   Otfm.decoder (`String(src)) >>= function
   | Otfm.SingleDecoder(d) ->
-
+(*
       pp_cmap fmt d >>= fun () ->
-
+*)
       Otfm.math d >>= fun math ->
       let mgi = math.Otfm.math_glyph_info in
 

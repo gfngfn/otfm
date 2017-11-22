@@ -1351,13 +1351,13 @@ let d_coverage d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
-  print_for_debug_int "coverageFormat" coverageFormat;  (* for debug *)
+  print_for_debug_int "{Coverage format" coverageFormat;  (* for debug *)
   let res =  (* for debug *)
     match coverageFormat with
     | 1 -> d_list d_uint16 d
     | 2 -> d_list d_range_record d >>= fun rnglst -> return (List.concat rnglst)
     | _ -> err_version d (Int32.of_int coverageFormat)
-  in print_for_debug "end Coverage table"; res  (* for debug *)
+  in print_for_debug "end Coverage table}"; res  (* for debug *)
 
 (*
 let d_coverage offset_origin d : (glyph_id list) ok =
@@ -1390,15 +1390,16 @@ let d_fetch offset_origin df d =
 
 let d_fetch_opt offset_origin df d =
   let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
   d_offset_opt offset_origin d >>= function
     | None ->
-        print_for_debug "              | NULL";
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | NULL";
         seek_pos (pos_before + 2) d >>= fun () ->
         return None
 
     | Some(offset) ->
-        print_for_debug "              | non-NULL";
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | non-NULL";
         seek_pos offset d >>= fun () ->
         df d >>= fun res ->
         seek_pos (pos_before + 2) d >>= fun () ->
@@ -2088,8 +2089,8 @@ let d_math_kern d : math_kern ok =
   return (correctionHeight_lst, kernValue_lst)
 
 
-let d_math_kern_info_record d : math_kern_info_record ok =
-  let offset_MathKernInfo_table = cur_pos d in
+let d_math_kern_info_record offset_MathKernInfo_table d : math_kern_info_record ok =
+  print_for_debug_int "### MathKernInfoRecord[1]" (cur_pos d);
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topRightMathKern_opt ->
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topLeftMathKern_opt ->
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun bottomRightMathKern_opt ->
@@ -2104,23 +2105,24 @@ let d_math_kern_info_record d : math_kern_info_record ok =
 
 let d_math_kern_info d : ((glyph_id * math_kern_info_record) list) ok =
   let offset_MathKernInfo_table = cur_pos d in
-  print_for_debug_int "MathKernInfo[1]" (cur_pos d);
+  print_for_debug_int "## MathKernInfo[1]" (cur_pos d);
   d_fetch offset_MathKernInfo_table d_coverage d >>= fun coverage ->
-  print_for_debug "MathKernInfo[2]";
-  d_list d_math_kern_info_record d >>= fun mvrlst ->
+  print_for_debug_int "## MathKernInfo[2]" (cur_pos d);
+  d_list (d_math_kern_info_record offset_MathKernInfo_table) d >>= fun mvrlst ->
+  print_for_debug_int "## MathKernInfo[3]" (cur_pos d);
   combine_coverage d coverage mvrlst
 
 
 let d_math_glyph_info d : math_glyph_info ok =
   let offset_MathGlyphInfo_table = cur_pos d in
-  print_for_debug_int "| jump to MathItalicsCorrection" (cur_pos d);
+  print_for_debug_int "# jump to MathItalicsCorrection" (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_italics_correction_info d >>= fun mathItalicsCorrection ->
-  print_for_debug_int "| jump to MathTopAccentAttachment" (cur_pos d);
+  print_for_debug_int "# jump to MathTopAccentAttachment" (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_top_accent_attachment d >>= fun mathTopAccentAttachment ->
   d_fetch_opt offset_MathGlyphInfo_table d_coverage d >>= fun _ ->
-  print_for_debug_int "| jump to MathKernInfo" (cur_pos d);
+  print_for_debug_int "# jump to MathKernInfo" (cur_pos d);
   d_fetch_list offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
-  print_for_debug "| END MathGlyphInfo";
+  print_for_debug "# END MathGlyphInfo";
   return {
     math_italics_correction    = mathItalicsCorrection;
     math_top_accent_attachment = mathTopAccentAttachment;
