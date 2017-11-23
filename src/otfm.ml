@@ -834,11 +834,9 @@ let cmap d : (cmap_subtable list) ok =
           begin
             match (pid, eid) with
             | (0, _)   (* Unicode *)
-(*
             | (3, 1)   (* Windows, UCS-2 *)
             | (3, 10)  (* Windows, UCS-4 *)
             | (1, _)   (* Macintosh *)
-*)
                 -> true
 
             | _ -> false
