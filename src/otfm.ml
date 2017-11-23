@@ -1521,6 +1521,53 @@ let combine_coverage d coverage lst =
   | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(d.ctx))
 
 
+let d_fetch offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch) | pos_before" pos_before;
+  d_offset offset_origin d >>= fun offset ->
+  print_for_debug_int "          | rel_offset" (offset - offset_origin);
+  print_for_debug_int "          | offset" offset;
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 2) d >>= fun () ->
+  return res
+
+
+let d_fetch_opt offset_origin df d =
+  let pos_before = cur_pos d in
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return None
+
+    | Some(offset) ->
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun res ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return (Some(res))
+
+
+let d_fetch_list offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "               | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return []
+
+    | Some(offset) ->
+        print_for_debug "               | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun lst ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return lst
+
+
 let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
   let rec aux acc offsetlst =
   match offsetlst with
