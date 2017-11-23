@@ -6,6 +6,9 @@
   ---------------------------------------------------------------------------*)
 
 
+let debugfmt =
+  Format.formatter_of_out_channel (open_out "/dev/null")
+
 let print_for_debug msg = () (* print_endline msg *) (* for debug *)
 
 let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
@@ -519,6 +522,16 @@ let d_fetch_list offset_origin df d =
         return lst
 
 
+let d_fetch_long offset_origin df d =
+  let pos_before = cur_pos d in
+  d_uint32_int d >>= fun reloffset ->
+  let offset = offset_origin + reloffset in
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 4) d >>= fun () ->
+  return (offset, res)
+
+
 let rec d_table_records d count =
   if count = 0 then begin d.state <- Ready; return () end else
     d_uint32     d >>= fun tag ->
@@ -728,7 +741,8 @@ let d_cmap_4_ranges d f acc u0s u1s delta offset count =       (* ugly. *)
 
 
 let d_cmap_4 d f acc =
-  d_skip (3 * 2) d >>= fun () ->
+  (* -- now the position is set immediately AFTER the format number entry -- *)
+  d_skip (2 * 2) d >>= fun () ->
   d_uint16       d >>= fun count2 ->
   let count = count2 / 2 in
   let a () = Array.make count 0 in
@@ -762,7 +776,8 @@ let rec d_cmap_groups d count f kind acc =
 
 
 let d_cmap_seg kind d f acc =
-  d_skip (2 * 2 + 2 * 4) d >>= fun () ->
+  (* -- now the position is set immediately AFTER the format number entry -- *)
+  d_skip (1 * 2 + 2 * 4) d >>= fun () ->
   d_uint32_int           d >>= fun nGroups ->
   d_cmap_groups d nGroups f kind acc
 
@@ -771,15 +786,18 @@ let d_cmap_12 d f acc = d_cmap_seg `Glyph_range d f acc
 let d_cmap_13 d f acc = d_cmap_seg `Glyph d f acc
 
 
-type cmap_subtable = int * int * int * int
+type cmap_subtable = (decoder * int) * (int * int * int)
 
 
-let rec d_encoding_record d : cmap_subtable ok =
+let rec d_encoding_record offset_cmap d : cmap_subtable ok =
   d_uint16     d            >>= fun platformID ->
+  Format.fprintf debugfmt "platformID = %d\n" platformID;  (* for debug *)
   d_uint16     d            >>= fun encodingID ->
-  d_uint32_int d            >>= fun offset ->
-  d_fetch offset d_uint16 d >>= fun format ->
-  return (platformID, encodingID, format, offset)
+  Format.fprintf debugfmt "encodingID = %d\n" encodingID;  (* for debug *)
+  d_fetch_long offset_cmap d_uint16 d >>= fun (offset, format) ->
+  Format.fprintf debugfmt "offset = %d\n" offset;  (* for debug *)
+  Format.fprintf debugfmt "format = %d\n" format;  (* for debug *)
+  return ((d, offset), (platformID, encodingID, format))
 (*
   let cur = cur_pos d in
   seek_table_pos pos d >>= fun () ->
@@ -804,22 +822,46 @@ let select_cmap cmaps =
 let cmap d : (cmap_subtable list) ok =
   init_decoder d >>=
   seek_required_table Tag.cmap d >>= fun () ->
+  let offset_cmap = cur_pos d in
   d_uint16 d >>= fun version ->                           (* cmap header. *)
   if version <> 0 then err_version d (Int32.of_int version) else
-  d_list d_encoding_record d >>= fun subtbllst ->
+  d_list (d_encoding_record offset_cmap) d >>= fun rawsubtbllst ->
+  let subtbllst =
+    rawsubtbllst |> List.filter (fun (_, (pid, eid, format)) ->
+      Format.fprintf debugfmt "(pid, eid, format = %d, %d, %d)" pid eid format;  (* for debug *)
+      match format with
+      | (4 | 12 | 13) ->
+          begin
+            match (pid, eid) with
+            | (0, _)   (* Unicode *)
+(*
+            | (3, 1)   (* Windows, UCS-2 *)
+            | (3, 10)  (* Windows, UCS-4 *)
+            | (1, _)   (* Macintosh *)
+*)
+                -> true
+
+            | _ -> false
+          end
+
+      | _ -> false (* -- unsupported subtable format -- *)
+    )
+  in
   return subtbllst
 
 
 let cmap_subtable_ids (subtbl : cmap_subtable) =
-  let (pid, eid, fmt, _) = subtbl in
-    (pid, eid, fmt)
+  let (_, ids) = subtbl in
+    ids
 
 
-let cmap_subtable d (subtbl : cmap_subtable) f acc =
-  let (_, _, _, offset) = subtbl in
+let cmap_subtable (subtbl : cmap_subtable) f acc =
+  let ((d, offset), _) = subtbl in
+  Format.fprintf debugfmt "subtable offset = %d\n" offset;
   seek_pos offset d >>= fun () ->
   (* -- now the position is set at the beginning of the designated cmap subtable --  *)
   d_uint16 d >>= fun format ->
+  Format.fprintf debugfmt "subtable format = %d\n" format;
   match format with
   | 4  -> d_cmap_4 d f acc
   | 12 -> d_cmap_12 d f acc
@@ -2373,7 +2415,9 @@ let d_index dl d =
         loop_data (v :: acc) tail
   in
   d_uint8 d                     >>= fun count ->
+(*
   Printf.printf "count: %d\n" count;  (* for debug *)
+*)
   if count = 0 then return [] else
   d_offsize d                   >>= fun offSize ->
   d_cff_offset_list offSize count d >>= fun lenlst ->
@@ -2432,7 +2476,9 @@ let d_dict len d =
     if len = -1 (* doubtful*) then return mapacc else
     if len < -1 (* doubtful*) then err `Invalid_cff_inconsistent_length else
       d_dict_keyval d >>= fun (step, vlst, k) ->
+(*
       Printf.printf "step: %d\n" step;  (*for debug *)
+*)
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
     Printf.printf "length: %d\n" len;  (* for debug *)
@@ -2442,14 +2488,18 @@ let cff_info d =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   (* Header: *)
+(*
     Printf.printf "Header\n";  (* for debug *)
+*)
     d_uint8 d              >>= fun major ->
     d_uint8 d              >>= fun minor ->
     d_uint8 d              >>= fun hdrSize ->
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
   (* Name INDEX (should contain only one element): *)
+(*
     Printf.printf "Name INDEX\n";  (* for debug *)
+*)
     d_index (fun i -> d_bytes (?@ i)) d >>= fun namelst ->
     begin
       match namelst with
@@ -2458,7 +2508,9 @@ let cff_info d =
       | n :: []     -> return (Some(n))
     end >>= fun name ->
   (* Top DICT INDEX (should contain only one DICT): *)
+(*
     Printf.printf "Top DICT INDEX\n";  (* for debug *)
+*)
     d_index (fun i -> d_dict (?@ i)) d  >>= function
       | []            -> err `Invalid_cff_not_a_singleton
       | _ :: _ :: _   -> err `Invalid_cff_not_a_singleton

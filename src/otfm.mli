@@ -313,8 +313,8 @@ val cmap : decoder -> (cmap_subtable list, error) result
 val cmap_subtable_ids : cmap_subtable -> int * int * int
 (** [cmap_subtable_ids st] returns the triple (platformID, encodingID, subtable format) of the subtable [st]. *)
 
-val cmap_subtable : decoder -> cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 'a) -> 'a -> ('a, error) result
-(** [cmap_subtable d st f acc] folds over a mapping from unicode
+val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 'a) -> 'a -> ('a, error) result
+(** [cmap_subtable st f acc] folds over a mapping from unicode
     scalar values to glyph ids by reading the cmap subtable [st].
 
     {b Limitations.} Only the format 13 (last resort font), format 12

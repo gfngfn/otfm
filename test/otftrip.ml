@@ -39,17 +39,24 @@ let string_of_file inf =
 
 let pp_cmap ppf d =
   let pp_map ppf u gid = pp ppf "@,(%a %d)" Otfm.pp_cp u gid in
-  let pp_binding ppf () k (u0, u1) gid = match k with
-  | `Glyph -> for u = u0 to u1 do pp_map ppf u gid done
-  | `Glyph_range -> for i = 0 to (u1 - u0) do pp_map ppf (u0 + i) (gid + i)done
+  let pp_binding ppf () k (u0, u1) gid =
+    match k with
+    | `Glyph       -> for u = u0 to u1 do pp_map ppf u gid done
+    | `Glyph_range -> for i = 0 to (u1 - u0) do pp_map ppf (u0 + i) (gid + i)done
   in
   pp ppf "@,@[<v1>(cmap";
-  match Otfm.cmap d (pp_binding ppf) () with
-  | Error _ as e -> e
-  | Ok ((pid, eid, fmt), _) ->
-      pp ppf "@,@[<1>(source@ (platform-id %d)@ (encoding-id %d)\
-              @ (format %d))@])@]" pid eid fmt;
-      Ok ()
+  match Otfm.cmap d with
+  | Error(_) as e -> e
+  | Ok(subtbllst) ->
+      subtbllst |> List.fold_left (fun _ subtbl ->
+        let (pid, eid, fmt) = Otfm.cmap_subtable_ids subtbl in
+        pp ppf "@,@[<v1>@[<1>(cmap-source@ (platform-id %d)@ (encoding-id %d)\
+              @ (format %d)" pid eid fmt;
+        let res = Otfm.cmap_subtable subtbl (pp_binding ppf) () in
+        pp ppf ")@]@])@]";
+        res
+      ) (Ok())
+
 
 let pp_glyf ppf has_glyf d =
   if not has_glyf then Ok () else
@@ -311,7 +318,7 @@ let dec_file inf = match string_of_file inf with
     | Ok(Otfm.SingleDecoder(d)) ->
         Otfm.flavour d      >>= fun () ->
         Otfm.table_list d   >>= fun () ->
-        Otfm.cmap d nop4 () >>= fun () ->
+        Otfm.cmap d         >>= fun () ->
         Otfm.head d         >>= fun () ->
         Otfm.hhea d         >>= fun () ->
         Otfm.hmtx d nop4 () >>= fun () ->
@@ -332,7 +339,7 @@ let ps_file inf = match string_of_file inf with
           | Ok (Some n) -> Printf.printf "%s: %s\n" inf n; Ok ()
         end
 
-    | _ -> Printf.printf "error, or TTC file\n"; Ok ()
+    | _ -> Printf.eprintf "error, or TTC file\n"; Ok ()
 
 (* otftrip *)
 
@@ -353,10 +360,11 @@ let main () =
   in
   Arg.parse (Arg.align options) add_file usage;
   let files = match List.rev ! files with [] -> ["-"] | fs -> fs in
-  let cmd = match !cmd with
-  | `Pp -> pp_file Format.std_formatter
-  | `Dec -> dec_file
-  | `Ps -> ps_file
+  let cmd =
+    match !cmd with
+    | `Pp  -> pp_file Format.std_formatter (* (Format.formatter_of_out_channel (open_out "/dev/null")) *)
+    | `Dec -> dec_file
+    | `Ps  -> ps_file
   in
   let fold_cmd cmd err fn = match cmd fn with
   | Error `Reported -> true
