@@ -135,7 +135,7 @@ type error_ctx = [ `Table of tag | `Offset_table | `Table_directory ]
 type error =
 [
   | `Unknown_flavour                  of tag
-  | `Unsupported_cmaps                of (int * int * int) list
+  | `Unsupported_cmap_format          of int
   | `Unsupported_glyf_matching_points
   | `Missing_required_table           of tag
   | `Unknown_version                  of error_ctx * int32
@@ -178,10 +178,13 @@ let pp_error ppf = function
 | `Unsupported_TTC ->
     pp ppf "@[True@ Type@ collections (TTC)@ are@ not@ supported@]"
 *)
-| `Unsupported_cmaps maps ->
+| `Unsupported_cmap_format cmapfmt ->
+    pp ppf "@[Unsupported@ cmap@ subtable@ format@ %d@]" cmapfmt
+(*
     let pp_sep ppf () = pp ppf ",@ " in
     let pp_map ppf (pid, eid, fmt) = pp ppf "(%d,%d,%d)" pid eid fmt in
     pp ppf "@[All@ cmaps:@ %a@ are@ unsupported@]" (pp_list ~pp_sep pp_map) maps
+*)
 | `Unsupported_glyf_matching_points ->
     pp ppf "@[Unsupported@ glyf@ matching@ points)@]"
 | `Unknown_version (ctx, v) ->
@@ -469,6 +472,53 @@ let d_offset_opt (offset_origin : int) d : (int option) ok =
     return (Some(offset_origin + reloffset))
 
 
+let d_fetch offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch) | pos_before" pos_before;
+  d_offset offset_origin d >>= fun offset ->
+  print_for_debug_int "          | rel_offset" (offset - offset_origin);
+  print_for_debug_int "          | offset" offset;
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 2) d >>= fun () ->
+  return res
+
+
+let d_fetch_opt offset_origin df d =
+  let pos_before = cur_pos d in
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return None
+
+    | Some(offset) ->
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun res ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return (Some(res))
+
+
+let d_fetch_list offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "               | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return []
+
+    | Some(offset) ->
+        print_for_debug "               | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun lst ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return lst
+
+
 let rec d_table_records d count =
   if count = 0 then begin d.state <- Ready; return () end else
     d_uint32     d >>= fun tag ->
@@ -636,10 +686,10 @@ let rec d_array el count i a d =
   a.(i) <- v;
   d_array el count (i + 1) a d
 
-let d_cmap_4_ranges cmap d f acc u0s u1s delta offset count =       (* ugly. *)
+let d_cmap_4_ranges d f acc u0s u1s delta offset count =       (* ugly. *)
   let garray_pos = cur_pos d in
   let rec loop acc i =
-    if i = count then return (cmap, acc) else
+    if i = count then return acc else
     let i' = i + 1 in
     let offset = offset.(i) in
     let delta = delta.(i) in
@@ -676,7 +726,8 @@ let d_cmap_4_ranges cmap d f acc u0s u1s delta offset count =       (* ugly. *)
   in
   loop acc 0
 
-let d_cmap_4 cmap d f acc () =
+
+let d_cmap_4 d f acc =
   d_skip (3 * 2) d >>= fun () ->
   d_uint16       d >>= fun count2 ->
   let count = count2 / 2 in
@@ -687,7 +738,7 @@ let d_cmap_4 cmap d f acc () =
   d_array d_uint16 count 0 (a ()) d >>= fun u0s ->
   d_array d_int16  count 0 (a ()) d >>= fun delta ->
   d_array d_uint16 count 0 (a ()) d >>= fun offset ->
-  d_cmap_4_ranges cmap d f acc u0s u1s delta offset count
+  d_cmap_4_ranges d f acc u0s u1s delta offset count
 
 
 (* -- cmap Format 12: Segmented coverage
@@ -699,39 +750,45 @@ let d_cp d =
   return u
 
 
-let rec d_cmap_groups cmap d count f kind acc =
+let rec d_cmap_groups d count f kind acc =
   if count = 0 then
-    return (cmap, acc)
+    return acc
   else
     d_cp d >>= fun startCharCode ->
     d_cp d >>= fun endCharCode ->
     if startCharCode > endCharCode then err (`Invalid_cp_range(startCharCode, endCharCode)) else
     d_uint32_int d >>= fun startGlyphID ->
-    d_cmap_groups cmap d (count - 1) f kind (f acc kind (startCharCode, endCharCode) startGlyphID)
+    d_cmap_groups d (count - 1) f kind (f acc kind (startCharCode, endCharCode) startGlyphID)
 
 
-let d_cmap_seg cmap kind d f acc () =
+let d_cmap_seg kind d f acc =
   d_skip (2 * 2 + 2 * 4) d >>= fun () ->
   d_uint32_int           d >>= fun nGroups ->
-  d_cmap_groups cmap d nGroups f kind acc
+  d_cmap_groups d nGroups f kind acc
 
 
-let d_cmap_12 cmap d f acc () = d_cmap_seg cmap `Glyph_range d f acc ()
-let d_cmap_13 cmap d f acc () = d_cmap_seg cmap `Glyph d f acc ()
+let d_cmap_12 d f acc = d_cmap_seg `Glyph_range d f acc
+let d_cmap_13 d f acc = d_cmap_seg `Glyph d f acc
 
 
-let rec d_cmap_records d count acc =
-  if count = 0 then return acc else
-  d_uint16           d >>= fun pid ->
-  d_uint16           d >>= fun eid ->
-  d_uint32_int       d >>= fun pos ->
+type cmap_subtable = int * int * int * int
+
+
+let rec d_encoding_record d : cmap_subtable ok =
+  d_uint16     d            >>= fun platformID ->
+  d_uint16     d            >>= fun encodingID ->
+  d_uint32_int d            >>= fun offset ->
+  d_fetch offset d_uint16 d >>= fun format ->
+  return (platformID, encodingID, format, offset)
+(*
   let cur = cur_pos d in
   seek_table_pos pos d >>= fun () ->
   d_uint16           d >>= fun fmt ->
   seek_pos cur       d >>= fun () ->
   d_cmap_records d (count - 1) ((pos, pid, eid, fmt) :: acc)
+*)
 
-
+(*
 let select_cmap cmaps =
   let rec loop f sel =
     function
@@ -741,13 +798,36 @@ let select_cmap cmaps =
     | []            -> sel
   in
     loop min_int None cmaps
+*)
 
 
-let cmap d f acc =
+let cmap d : (cmap_subtable list) ok =
   init_decoder d >>=
   seek_required_table Tag.cmap d >>= fun () ->
   d_uint16 d >>= fun version ->                           (* cmap header. *)
   if version <> 0 then err_version d (Int32.of_int version) else
+  d_list d_encoding_record d >>= fun subtbllst ->
+  return subtbllst
+
+
+let cmap_subtable_ids (subtbl : cmap_subtable) =
+  let (pid, eid, fmt, _) = subtbl in
+    (pid, eid, fmt)
+
+
+let cmap_subtable d (subtbl : cmap_subtable) f acc =
+  let (_, _, _, offset) = subtbl in
+  seek_pos offset d >>= fun () ->
+  (* -- now the position is set at the beginning of the designated cmap subtable --  *)
+  d_uint16 d >>= fun format ->
+  match format with
+  | 4  -> d_cmap_4 d f acc
+  | 12 -> d_cmap_12 d f acc
+  | 13 -> d_cmap_13 d f acc
+  | _  -> err (`Unsupported_cmap_format(format))
+
+
+(*
   d_uint16 d >>= fun count ->                               (* numTables. *)
   d_cmap_records d count [] >>= fun cmaps ->
   match select_cmap cmaps with
@@ -764,6 +844,7 @@ let cmap d f acc =
         | _  -> assert false
       in
       seek_table_pos pos d >>= d_cmap (pid, eid, fmt) d f acc
+*)
 
 (* glyf table *)
 
@@ -1398,53 +1479,6 @@ let d_coverage offset_origin d : (glyph_id list) ok =
 let combine_coverage d coverage lst =
   try return (List.combine coverage lst) with
   | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(d.ctx))
-
-
-let d_fetch offset_origin df d =
-  let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch) | pos_before" pos_before;
-  d_offset offset_origin d >>= fun offset ->
-  print_for_debug_int "          | rel_offset" (offset - offset_origin);
-  print_for_debug_int "          | offset" offset;
-  seek_pos offset d >>= fun () ->
-  df d >>= fun res ->
-  seek_pos (pos_before + 2) d >>= fun () ->
-  return res
-
-
-let d_fetch_opt offset_origin df d =
-  let pos_before = cur_pos d in
-  d_offset_opt offset_origin d >>= function
-    | None ->
-        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
-        print_for_debug     "              | NULL";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return None
-
-    | Some(offset) ->
-        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
-        print_for_debug     "              | non-NULL";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun res ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return (Some(res))
-
-
-let d_fetch_list offset_origin df d =
-  let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
-  d_offset_opt offset_origin d >>= function
-    | None ->
-        print_for_debug "               | NULL";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return []
-
-    | Some(offset) ->
-        print_for_debug "               | non-NULL";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun lst ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return lst
 
 
 let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
