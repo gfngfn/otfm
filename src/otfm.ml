@@ -689,21 +689,36 @@ let d_cmap_4 cmap d f acc () =
   d_array d_uint16 count 0 (a ()) d >>= fun offset ->
   d_cmap_4_ranges cmap d f acc u0s u1s delta offset count
 
+
+(* -- cmap Format 12: Segmented coverage
+      cmap Format 13: Many-to-one range mappings -- *)
+
+let d_cp d =
+  d_uint32_int d >>= fun u ->
+  if not (is_cp u) then err (`Invalid_cp(u)) else
+  return u
+
+
 let rec d_cmap_groups cmap d count f kind acc =
-  if count = 0 then return (cmap, acc) else
-  d_uint32_int d >>= fun u0 -> if not (is_cp u0) then err (`Invalid_cp u0) else
-  d_uint32_int d >>= fun u1 -> if not (is_cp u1) then err (`Invalid_cp u1) else
-  if u0 > u1 then err (`Invalid_cp_range (u0, u1)) else
-  d_uint32_int d >>= fun gid ->
-  d_cmap_groups cmap d (count - 1) f kind (f acc kind (u0, u1) gid)
+  if count = 0 then
+    return (cmap, acc)
+  else
+    d_cp d >>= fun startCharCode ->
+    d_cp d >>= fun endCharCode ->
+    if startCharCode > endCharCode then err (`Invalid_cp_range(startCharCode, endCharCode)) else
+    d_uint32_int d >>= fun startGlyphID ->
+    d_cmap_groups cmap d (count - 1) f kind (f acc kind (startCharCode, endCharCode) startGlyphID)
+
 
 let d_cmap_seg cmap kind d f acc () =
   d_skip (2 * 2 + 2 * 4) d >>= fun () ->
-  d_uint32_int           d >>= fun count ->
-  d_cmap_groups cmap d count f kind acc
+  d_uint32_int           d >>= fun nGroups ->
+  d_cmap_groups cmap d nGroups f kind acc
+
 
 let d_cmap_12 cmap d f acc () = d_cmap_seg cmap `Glyph_range d f acc ()
 let d_cmap_13 cmap d f acc () = d_cmap_seg cmap `Glyph d f acc ()
+
 
 let rec d_cmap_records d count acc =
   if count = 0 then return acc else
@@ -716,13 +731,17 @@ let rec d_cmap_records d count acc =
   seek_pos cur       d >>= fun () ->
   d_cmap_records d (count - 1) ((pos, pid, eid, fmt) :: acc)
 
+
 let select_cmap cmaps =
-  let rec loop f sel = function
-  | (_, _, _, (4 | 12 | 13 as f') as c) :: cs when f' > f -> loop f (Some c) cs
-  | [] -> sel
-  | _ :: cs -> loop f sel cs
+  let rec loop f sel =
+    function
+    | (_, _, _, (4 | 12 | 13 as f') as c) :: cs
+        when f' > f -> loop f (Some(c)) cs
+    | _ :: cs       -> loop f sel cs
+    | []            -> sel
   in
-  loop min_int None cmaps
+    loop min_int None cmaps
+
 
 let cmap d f acc =
   init_decoder d >>=
@@ -735,11 +754,16 @@ let cmap d f acc =
   | None ->
       let drop_pos (_, pid, eid, fmt) = (pid, eid, fmt) in
       err (`Unsupported_cmaps (List.map drop_pos cmaps))
-  | Some (pos, pid, eid, fmt) ->
-      let cmap = match fmt with
-      | 4 -> d_cmap_4 | 12 -> d_cmap_12 | 13 -> d_cmap_13 | _ -> assert false
+
+  | Some(pos, pid, eid, fmt) ->
+      let d_cmap =
+        match fmt with
+        | 4  -> d_cmap_4
+        | 12 -> d_cmap_12
+        | 13 -> d_cmap_13
+        | _  -> assert false
       in
-      seek_table_pos pos d >>= cmap (pid, eid, fmt) d f acc
+      seek_table_pos pos d >>= d_cmap (pid, eid, fmt) d f acc
 
 (* glyf table *)
 
