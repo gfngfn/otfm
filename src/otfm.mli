@@ -189,7 +189,7 @@ type error =
 (*
   | `Unsupported_TTC
 *)
-  | `Unsupported_cmaps of (int * int * int) list
+  | `Unsupported_cmap_format of int
   | `Unsupported_glyf_matching_points
   | `Missing_required_table of tag
   | `Unknown_version of error_ctx * int32
@@ -303,24 +303,23 @@ type map_kind = [ `Glyph | `Glyph_range ]
     {- [`Glyph_range], [u0] maps to [gid], [u0 + 1] to [gid + 1], ...
        and [u1] to [gid + (u1 - u0)]}} *)
 
-val cmap : decoder -> ('a -> map_kind -> cp_range -> glyph_id -> 'a) ->
-  'a -> ((int * int * int) * 'a, error) result
-(** [cmap d f acc] folds over a mapping from unicode
-    scalar values to glyph ids by reading the
-    {{:https://www.microsoft.com/typography/otspec/cmap.htm}cmap} table.
-    The returned triple of integer indicates the platform id, encoding
-    id and format of the cmap used.
+type cmap_subtable
+(** The type for cmap subtables. *)
+
+val cmap : decoder -> (cmap_subtable list, error) result
+(** [cmap d] returns the list of all
+    {{:https://www.microsoft.com/typography/otspec/cmap.htm}cmap} subtables in the font. *)
+
+val cmap_subtable_ids : cmap_subtable -> int * int * int
+(** [cmap_subtable_ids st] returns the triple (platformID, encodingID, subtable format) of the subtable [st]. *)
+
+val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 'a) -> 'a -> ('a, error) result
+(** [cmap_subtable st f acc] folds over a mapping from unicode
+    scalar values to glyph ids by reading the cmap subtable [st].
 
     {b Limitations.} Only the format 13 (last resort font), format 12
     (UCS-4) and format 4 (UCS-2) cmap table formats are supported.
-
-    If multiple tables are present, it favours 13 over 12 over 4.  If
-    multiple tables of the same format are present it takes the first
-    one it finds.
-
-    If no supported cmap table is found the error [`Unsupported_cmaps]
-    is returned with the list of platform id, encoding id, format
-    available in the font. *)
+*)
 
 (** {2:glyf glyf table} *)
 
