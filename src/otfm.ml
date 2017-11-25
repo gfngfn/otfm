@@ -1,9 +1,18 @@
 (* -*- coding: utf-8 -*- *)
 (*---------------------------------------------------------------------------
-   Copyright (c) 2013 Daniel C. Bünzli. All rights reserved.
+   Copyright (c) 2013 Daniel C. Bünzli, and 2017 Takashi Suwa. All rights reserved.
    Distributed under the ISC license, see terms at the end of the file.
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
+
+
+let debugfmt =
+  Format.formatter_of_out_channel (open_out "/dev/null")
+
+let print_for_debug msg = () (* print_endline msg *) (* for debug *)
+
+let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
+
 
 open Result
 
@@ -93,6 +102,7 @@ module Tag = struct
   let gpos = 0x47504F53l
   let gsub = 0x47535542l
   let jstf = 0x4A535446l
+  let math = 0x4d415448l
 
   (* Functions *)
 
@@ -127,39 +137,39 @@ let pp_cp ppf cp = Format.fprintf ppf "U+%04X" cp
 type error_ctx = [ `Table of tag | `Offset_table | `Table_directory ]
 type error =
 [
-  | `Unknown_flavour of tag
-  | `Unsupported_TTC
-  | `Unsupported_cmaps of (int * int * int) list
+  | `Unknown_flavour                  of tag
+  | `Unsupported_cmap_format          of int
   | `Unsupported_glyf_matching_points
-  | `Missing_required_table of tag
-  | `Unknown_version of error_ctx * int32
-  | `Unknown_loca_format of error_ctx * int
-  | `Unknown_composite_format of error_ctx * int
-  | `Invalid_offset of error_ctx * int
-  | `Invalid_cp of int
-  | `Invalid_cp_range of int * int
-  | `Invalid_postscript_name of string
-  | `Unexpected_eoi of error_ctx
-(* added by gfn: *)
-  | `Inconsistent_length_of_coverage of error_ctx
+  | `Missing_required_table           of tag
+  | `Unknown_version                  of error_ctx * int32
+  | `Unknown_loca_format              of error_ctx * int
+  | `Unknown_composite_format         of error_ctx * int
+  | `Invalid_offset                   of error_ctx * int
+  | `Invalid_cp                       of int
+  | `Invalid_cp_range                 of int * int
+  | `Invalid_postscript_name          of string
+  | `Unexpected_eoi                   of error_ctx
+(* added by T. Suwa: *)
+  | `Inconsistent_length_of_coverage  of error_ctx
   | `Inconsistent_length_of_class
-  | `Missing_required_script_tag of string
-  | `Missing_required_langsys_tag of string
-  | `Missing_required_feature_tag of string
-  | `Invalid_lookup_order of int
+  | `Missing_required_script_tag      of string
+  | `Missing_required_langsys_tag     of string
+  | `Missing_required_feature_tag     of string
+  | `Invalid_lookup_order             of int
   | `Invalid_extension_position
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
-  | `Invalid_cff_not_an_offsize of int
+  | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Layered_ttc
 ]
 
 let pp_ctx ppf = function
-| `Table tag -> pp ppf "table %a" Tag.pp tag
-| `Offset_table -> pp ppf "offset table"
+| `Table tag       -> pp ppf "table %a" Tag.pp tag
+| `Offset_table    -> pp ppf "offset table"
 | `Table_directory -> pp ppf "table directory"
 
 let pp_error ppf = function
@@ -167,12 +177,17 @@ let pp_error ppf = function
     pp ppf "@[Unknown@ OpenType@ flavour (%a)@]" Tag.pp tag
 | `Missing_required_table tag ->
     pp ppf "@[Missing@ required@ table (%a)@]" Tag.pp tag
+(*
 | `Unsupported_TTC ->
     pp ppf "@[True@ Type@ collections (TTC)@ are@ not@ supported@]"
-| `Unsupported_cmaps maps ->
+*)
+| `Unsupported_cmap_format cmapfmt ->
+    pp ppf "@[Unsupported@ cmap@ subtable@ format@ %d@]" cmapfmt
+(*
     let pp_sep ppf () = pp ppf ",@ " in
     let pp_map ppf (pid, eid, fmt) = pp ppf "(%d,%d,%d)" pid eid fmt in
     pp ppf "@[All@ cmaps:@ %a@ are@ unsupported@]" (pp_list ~pp_sep pp_map) maps
+*)
 | `Unsupported_glyf_matching_points ->
     pp ppf "@[Unsupported@ glyf@ matching@ points)@]"
 | `Unknown_version (ctx, v) ->
@@ -220,15 +235,22 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
 | `Invalid_cff_invalid_first_offset ->
     pp ppf "@[Invalid@ CFF@ table;@ invalid@ first@ offset@]"
+| `Layered_ttc ->
+    pp ppf "@[Layered@ TTC@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
 
-type flavour = [ `TTF_true | `TTF_OT | `CFF ]
+type flavour = TTF_true | TTF_OT | CFF
 type src = [ `String of string ]
 
 (* TODO maybe it would be better not to maintain t_pos/i_pos,
    but rather pass them as arguments to decoding functions. *)
+
+type decoder_state =
+  | Fatal of error
+  | Start
+  | Ready
 
 type decoder =
   {
@@ -236,7 +258,7 @@ type decoder =
     mutable i_pos : int;                          (* input current position. *)
     mutable i_max : int;                          (* input maximal position. *)
     mutable t_pos : int;                  (* current decoded table position. *)
-    mutable state : [ `Fatal of error | `Start | `Ready ]; (* decoder state. *)
+    mutable state : decoder_state;                         (* decoder state. *)
     mutable ctx : error_ctx;                   (* the current error context. *)
     mutable flavour : flavour;                           (* decoded flavour. *)
     mutable tables : (tag * int * int) list;       (* decoded table records. *)
@@ -246,16 +268,13 @@ type decoder =
     mutable buf : Buffer.t;                              (* internal buffer. *)
   }
 
+type ttc_element = int * decoder
+
+type decoder_scheme =
+  | SingleDecoder      of decoder
+  | TrueTypeCollection of ttc_element list
+
 let decoder_src d = `String(d.i)
-let decoder src =
-  let (i, i_pos, i_max) =
-    match src with
-    | `String(s) -> (s, 0, String.length s - 1)
-  in
-  { i; i_pos; i_max; t_pos = 0;
-    state = `Start; ctx = `Offset_table; flavour = `TTF_OT; tables = [];
-    loca_pos = -1; loca_format = -1; glyf_pos = -1;
-    buf = Buffer.create 253; }
 
 let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
 let return x                 = Ok(x)
@@ -266,7 +285,7 @@ let e_version d v            = `Unknown_version(d.ctx, v)
 let err_version d v          = err (e_version d v)
 let err_loca_format d v      = err (`Unknown_loca_format(d.ctx, v))
 let err_composite_format d v = err (`Unknown_composite_format(d.ctx, v))
-let err_fatal d e            = begin d.state <- `Fatal(e); err e end
+let err_fatal d e            = begin d.state <- Fatal(e); err e end
 let set_ctx d ctx            = begin d.ctx <- ctx; end
 
 let miss d count = d.i_max - d.i_pos + 1 < count
@@ -383,8 +402,138 @@ let d_utf_16be len (* in bytes *) d =            (* returns an UTF-8 string. *)
   Buffer.clear d.buf;
   return (Buffer.contents (Uutf.String.fold_utf_16be add_utf_8 d.buf s))
 
+
+type device_table = int * int * int * int
+
+
+let d_device_table d =
+  d_uint16 d >>= fun startSize ->
+  d_uint16 d >>= fun endSize ->
+  d_uint16 d >>= fun deltaFormat ->
+  d_uint16 d >>= fun deltaValue ->
+  return (startSize, endSize, deltaFormat, deltaValue)
+
+
+type 'a ok = ('a, error) result
+
+
+let confirm b e =
+  if not b then err e else return ()
+
+let confirm_version d version versionreq =
+  if version <> versionreq then err_version d versionreq else return ()
+
+let d_repeat n df d =
+  let rec aux acc i =
+    if i <= 0 then return (List.rev acc) else
+    df d >>= fun data ->
+    aux (data :: acc) (i - 1)
+  in
+  aux [] n
+
+
+let d_list df d =
+  d_uint16 d >>= fun count ->
+  print_for_debug_int "(d_list) count" count;
+  d_repeat count df d
+
+
+let d_list_filtered df indexlst d =
+  let rec aux acc imax i =
+    if i >= imax then return (List.rev acc) else
+    df d >>= fun data ->
+    if List.mem i indexlst then
+      aux (data :: acc) imax (i + 1)
+    else
+      aux acc imax (i + 1)
+  in
+    d_uint16 d >>= fun count ->
+    print_for_debug_int "count" count;
+    aux [] count 0
+
+
+let d_offset_list (offset_origin : int) d : (int list) ok =
+  d_list d_uint16 d >>= fun reloffsetlst ->
+  return (reloffsetlst |> List.map (fun reloffset -> offset_origin + reloffset))
+
+
+let d_offset (offset_origin : int) d : int ok =
+  d_uint16 d >>= fun reloffset ->
+  return (offset_origin + reloffset)
+
+
+let d_long_offset_list d : (int list) ok =
+  d_uint32_int d >>= fun count ->
+  d_repeat count d_uint32_int d
+
+
+let d_offset_opt (offset_origin : int) d : (int option) ok =
+  d_uint16 d >>= fun reloffset ->
+  if reloffset = 0 then
+    return None
+  else
+    return (Some(offset_origin + reloffset))
+
+
+let d_fetch offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch) | pos_before" pos_before;
+  d_offset offset_origin d >>= fun offset ->
+  print_for_debug_int "          | rel_offset" (offset - offset_origin);
+  print_for_debug_int "          | offset" offset;
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 2) d >>= fun () ->
+  return res
+
+
+let d_fetch_opt offset_origin df d =
+  let pos_before = cur_pos d in
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return None
+
+    | Some(offset) ->
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun res ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return (Some(res))
+
+
+let d_fetch_list offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "               | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return []
+
+    | Some(offset) ->
+        print_for_debug "               | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun lst ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return lst
+
+
+let d_fetch_long offset_origin df d =
+  let pos_before = cur_pos d in
+  d_uint32_int d >>= fun reloffset ->
+  let offset = offset_origin + reloffset in
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 4) d >>= fun () ->
+  return (offset, res)
+
+
 let rec d_table_records d count =
-  if count = 0 then begin d.state <- `Ready; return () end else
+  if count = 0 then begin d.state <- Ready; return () end else
     d_uint32     d >>= fun tag ->
     d_skip 4     d >>= fun () ->
     d_uint32_int d >>= fun off ->
@@ -392,46 +541,100 @@ let rec d_table_records d count =
     d.tables <- (tag, off, len) :: d.tables;
     d_table_records d (count - 1)
 
-let d_version d =
+
+let d_version is_cff_element d =
   d_uint32 d >>= function
-    | t  when t = Tag.v_OTTO  -> begin d.flavour <- `CFF     ; return () end
-    | t  when t = Tag.v_true  -> begin d.flavour <- `TTF_true; return () end
-    | t  when t = 0x00010000l -> begin d.flavour <- `TTF_OT  ; return () end
-    | t  when t = Tag.v_ttcf  -> Error(`Unsupported_TTC)
-    | t                       -> Error(`Unknown_flavour(t))
+    | t  when t = Tag.v_OTTO  -> begin d.flavour <- CFF     ; return true end
+    | t  when t = Tag.v_true  -> begin d.flavour <- TTF_true; return true end
+    | t  when t = 0x00010000l -> begin d.flavour <- TTF_OT  ; return true end
+    | t  when t = Tag.v_ttcf  -> if is_cff_element then err `Layered_ttc else return false
+    | t                       -> err (`Unknown_flavour(t))
+
 
 let d_structure d =                   (* offset table and table directory. *)
-  d_version      d >>= fun () ->                          (* offset table. *)
   d_uint16       d >>= fun count ->                          (* numTables. *)
   d_skip (3 * 2) d >>= fun () ->
   set_ctx d `Table_directory;                          (* table directory. *)
   d_table_records d count
 
+
+let d_ttc_header d : (ttc_element list) ok =
+  d_uint32 d >>= function
+  | version_ttc  when version_ttc = 0x00010000l || version_ttc = 0x00020000l ->
+      d_long_offset_list d >>= fun offsetlst ->
+      return (offsetlst |> List.map (fun offset -> (offset, d)))
+  | version_ttc ->
+      err_version d version_ttc
+
+
+let decoder src =
+  let (i, i_pos, i_max) =
+    match src with
+    | `String(s) -> (s, 0, String.length s - 1)
+  in
+    let d =
+      { i; i_pos; i_max; t_pos = 0;
+        state = Start;
+        ctx = `Offset_table;
+        flavour = TTF_OT;    (* dummy initial value *)
+        tables = [];         (* dummy initial value *)
+        loca_pos = -1; loca_format = -1; glyf_pos = -1;
+        buf = Buffer.create 253; }
+    in
+  d_version false d >>= fun is_single ->
+  if is_single then
+    return (SingleDecoder(d))
+  else
+    d_ttc_header d >>= fun ttc ->
+    return (TrueTypeCollection(ttc))
+
+
+let decoder_of_ttc_element ttcelem =
+  let (offset, d) = ttcelem in
+  let delem =
+    { i = d.i;  i_pos = d.i_pos;  i_max = d.i_max;  t_pos = d.t_pos;
+      state = Start;
+      ctx = `Offset_table;
+      flavour = d.flavour;
+      tables = d.tables;
+      loca_pos = d.loca_pos;  loca_format = d.loca_format;  glyf_pos = d.glyf_pos;
+      buf = Buffer.create 253; }
+  in
+  seek_pos offset delem >>= fun () ->
+  d_version true delem >>= fun _ ->
+  return delem
+
+
 let init_decoder d =
   match d.state with
-  | `Ready    -> begin d.ctx <- `Table_directory; return () end
-  | `Fatal(e) -> err e
-  | `Start    ->
+  | Ready    -> begin d.ctx <- `Table_directory; return () end
+  | Fatal(e) -> err e
+  | Start    ->
       match d_structure d with
-      | Ok() as ok -> ok
-      | Error(e)   -> err_fatal d e
+      | Ok(()) as ok -> ok
+      | Error(e)     -> err_fatal d e
+
 
 let flavour d =
     init_decoder d >>= fun () -> return (d.flavour)
+
 
 let table_list d =
   let tags d = List.rev_map (fun (t, _, _) -> t) d.tables in
     init_decoder d >>= fun () -> return (tags d)
 
+
 let table_mem d tag =
   let exists_tag tag d = List.exists (fun (t, _, _) -> tag = t) d.tables in
     init_decoder d >>= fun () -> return (exists_tag tag d)
+
 
 let table_raw d tag =
   init_decoder   d >>=
   seek_table tag d >>= function
     | None      -> return None
     | Some(len) -> d_bytes len d >>= fun bytes -> return (Some(bytes))
+
 
 (* convenience *)
 
@@ -441,6 +644,7 @@ let glyph_count d =
   d_skip 4 d >>= fun () ->
   d_uint16 d >>= fun count ->
   return count
+
 
 let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
   init_decoder d >>=
@@ -483,6 +687,7 @@ let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
   in
   loop ncount ()
 
+
 (* cmap table *)
 
 type glyph_id = int
@@ -494,10 +699,10 @@ let rec d_array el count i a d =
   a.(i) <- v;
   d_array el count (i + 1) a d
 
-let d_cmap_4_ranges cmap d f acc u0s u1s delta offset count =       (* ugly. *)
+let d_cmap_4_ranges d f acc u0s u1s delta offset count =       (* ugly. *)
   let garray_pos = cur_pos d in
   let rec loop acc i =
-    if i = count then return (cmap, acc) else
+    if i = count then return acc else
     let i' = i + 1 in
     let offset = offset.(i) in
     let delta = delta.(i) in
@@ -534,8 +739,10 @@ let d_cmap_4_ranges cmap d f acc u0s u1s delta offset count =       (* ugly. *)
   in
   loop acc 0
 
-let d_cmap_4 cmap d f acc () =
-  d_skip (3 * 2) d >>= fun () ->
+
+let d_cmap_4 d f acc =
+  (* -- now the position is set immediately AFTER the format number entry -- *)
+  d_skip (2 * 2) d >>= fun () ->
   d_uint16       d >>= fun count2 ->
   let count = count2 / 2 in
   let a () = Array.make count 0 in
@@ -545,59 +752,139 @@ let d_cmap_4 cmap d f acc () =
   d_array d_uint16 count 0 (a ()) d >>= fun u0s ->
   d_array d_int16  count 0 (a ()) d >>= fun delta ->
   d_array d_uint16 count 0 (a ()) d >>= fun offset ->
-  d_cmap_4_ranges cmap d f acc u0s u1s delta offset count
+  d_cmap_4_ranges d f acc u0s u1s delta offset count
 
-let rec d_cmap_groups cmap d count f kind acc =
-  if count = 0 then return (cmap, acc) else
-  d_uint32_int d >>= fun u0 -> if not (is_cp u0) then err (`Invalid_cp u0) else
-  d_uint32_int d >>= fun u1 -> if not (is_cp u1) then err (`Invalid_cp u1) else
-  if u0 > u1 then err (`Invalid_cp_range (u0, u1)) else
-  d_uint32_int d >>= fun gid ->
-  d_cmap_groups cmap d (count - 1) f kind (f acc kind (u0, u1) gid)
 
-let d_cmap_seg cmap kind d f acc () =
-  d_skip (2 * 2 + 2 * 4) d >>= fun () ->
-  d_uint32_int           d >>= fun count ->
-  d_cmap_groups cmap d count f kind acc
+(* -- cmap Format 12: Segmented coverage
+      cmap Format 13: Many-to-one range mappings -- *)
 
-let d_cmap_12 cmap d f acc () = d_cmap_seg cmap `Glyph_range d f acc ()
-let d_cmap_13 cmap d f acc () = d_cmap_seg cmap `Glyph d f acc ()
+let d_cp d =
+  d_uint32_int d >>= fun u ->
+  if not (is_cp u) then err (`Invalid_cp(u)) else
+  return u
 
-let rec d_cmap_records d count acc =
-  if count = 0 then return acc else
-  d_uint16           d >>= fun pid ->
-  d_uint16           d >>= fun eid ->
-  d_uint32_int       d >>= fun pos ->
+
+let rec d_cmap_groups d count f kind acc =
+  if count = 0 then
+    return acc
+  else
+    d_cp d >>= fun startCharCode ->
+    d_cp d >>= fun endCharCode ->
+    if startCharCode > endCharCode then err (`Invalid_cp_range(startCharCode, endCharCode)) else
+    d_uint32_int d >>= fun startGlyphID ->
+    d_cmap_groups d (count - 1) f kind (f acc kind (startCharCode, endCharCode) startGlyphID)
+
+
+let d_cmap_seg kind d f acc =
+  (* -- now the position is set immediately AFTER the format number entry -- *)
+  d_skip (1 * 2 + 2 * 4) d >>= fun () ->
+  d_uint32_int           d >>= fun nGroups ->
+  d_cmap_groups d nGroups f kind acc
+
+
+let d_cmap_12 d f acc = d_cmap_seg `Glyph_range d f acc
+let d_cmap_13 d f acc = d_cmap_seg `Glyph d f acc
+
+
+type cmap_subtable = (decoder * int) * (int * int * int)
+
+
+let rec d_encoding_record offset_cmap d : cmap_subtable ok =
+  d_uint16     d            >>= fun platformID ->
+  Format.fprintf debugfmt "platformID = %d\n" platformID;  (* for debug *)
+  d_uint16     d            >>= fun encodingID ->
+  Format.fprintf debugfmt "encodingID = %d\n" encodingID;  (* for debug *)
+  d_fetch_long offset_cmap d_uint16 d >>= fun (offset, format) ->
+  Format.fprintf debugfmt "offset = %d\n" offset;  (* for debug *)
+  Format.fprintf debugfmt "format = %d\n" format;  (* for debug *)
+  return ((d, offset), (platformID, encodingID, format))
+(*
   let cur = cur_pos d in
   seek_table_pos pos d >>= fun () ->
   d_uint16           d >>= fun fmt ->
   seek_pos cur       d >>= fun () ->
   d_cmap_records d (count - 1) ((pos, pid, eid, fmt) :: acc)
+*)
 
+(*
 let select_cmap cmaps =
-  let rec loop f sel = function
-  | (_, _, _, (4 | 12 | 13 as f') as c) :: cs when f' > f -> loop f (Some c) cs
-  | [] -> sel
-  | _ :: cs -> loop f sel cs
+  let rec loop f sel =
+    function
+    | (_, _, _, (4 | 12 | 13 as f') as c) :: cs
+        when f' > f -> loop f (Some(c)) cs
+    | _ :: cs       -> loop f sel cs
+    | []            -> sel
   in
-  loop min_int None cmaps
+    loop min_int None cmaps
+*)
 
-let cmap d f acc =
+
+let cmap d : (cmap_subtable list) ok =
   init_decoder d >>=
   seek_required_table Tag.cmap d >>= fun () ->
+  let offset_cmap = cur_pos d in
   d_uint16 d >>= fun version ->                           (* cmap header. *)
   if version <> 0 then err_version d (Int32.of_int version) else
+  d_list (d_encoding_record offset_cmap) d >>= fun rawsubtbllst ->
+  let subtbllst =
+    rawsubtbllst |> List.filter (fun (_, (pid, eid, format)) ->
+      Format.fprintf debugfmt "(pid, eid, format = %d, %d, %d)" pid eid format;  (* for debug *)
+      match format with
+      | (4 | 12 | 13) ->
+          begin
+            match (pid, eid) with
+            | (0, _)   (* Unicode *)
+            | (3, 1)   (* Windows, UCS-2 *)
+            | (3, 10)  (* Windows, UCS-4 *)
+            | (1, _)   (* Macintosh *)
+                -> true
+
+            | _ -> false
+          end
+
+      | _ -> false (* -- unsupported subtable format -- *)
+    )
+  in
+  return subtbllst
+
+
+let cmap_subtable_ids (subtbl : cmap_subtable) =
+  let (_, ids) = subtbl in
+    ids
+
+
+let cmap_subtable (subtbl : cmap_subtable) f acc =
+  let ((d, offset), _) = subtbl in
+  Format.fprintf debugfmt "subtable offset = %d\n" offset;
+  seek_pos offset d >>= fun () ->
+  (* -- now the position is set at the beginning of the designated cmap subtable --  *)
+  d_uint16 d >>= fun format ->
+  Format.fprintf debugfmt "subtable format = %d\n" format;
+  match format with
+  | 4  -> d_cmap_4 d f acc
+  | 12 -> d_cmap_12 d f acc
+  | 13 -> d_cmap_13 d f acc
+  | _  -> err (`Unsupported_cmap_format(format))
+
+
+(*
   d_uint16 d >>= fun count ->                               (* numTables. *)
   d_cmap_records d count [] >>= fun cmaps ->
   match select_cmap cmaps with
   | None ->
       let drop_pos (_, pid, eid, fmt) = (pid, eid, fmt) in
       err (`Unsupported_cmaps (List.map drop_pos cmaps))
-  | Some (pos, pid, eid, fmt) ->
-      let cmap = match fmt with
-      | 4 -> d_cmap_4 | 12 -> d_cmap_12 | 13 -> d_cmap_13 | _ -> assert false
+
+  | Some(pos, pid, eid, fmt) ->
+      let d_cmap =
+        match fmt with
+        | 4  -> d_cmap_4
+        | 12 -> d_cmap_12
+        | 13 -> d_cmap_13
+        | _  -> assert false
       in
-      seek_table_pos pos d >>= cmap (pid, eid, fmt) d f acc
+      seek_table_pos pos d >>= d_cmap (pid, eid, fmt) d f acc
+*)
 
 (* glyf table *)
 
@@ -1169,20 +1456,9 @@ let loca d gid =
 
 (* -- GSUB table -- *)
 
-let print_for_debug msg = () (* print_endline msg *)
-
-let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
-
-
-type 'a ok = ('a, error) result
-
 type gsub_subtable =
   | LigatureSubtable of (glyph_id * (glyph_id list * glyph_id) list) list
   (* temporary; should contain more lookup type *)
-
-
-let confirm b e =
-  if not b then err e else return ()
 
 
 let seek_pos_from_list origin scriptTag d =
@@ -1205,53 +1481,6 @@ let seek_pos_from_list origin scriptTag d =
   return found
 
 
-let d_list_filtered df indexlst d =
-  let rec aux acc imax i =
-    if i >= imax then return (List.rev acc) else
-    df d >>= fun data ->
-    if List.mem i indexlst then
-      aux (data :: acc) imax (i + 1)
-    else
-      aux acc imax (i + 1)
-  in
-    d_uint16 d >>= fun count ->
-    print_for_debug_int "count" count;
-    aux [] count 0
-
-
-let d_repeat n df d =
-  let rec aux acc i =
-    if i <= 0 then return (List.rev acc) else
-    df d >>= fun data ->
-    aux (data :: acc) (i - 1)
-  in
-  aux [] n
-
-
-let d_list df d =
-  d_uint16 d >>= fun count ->
-  print_for_debug_int "(d_list) count" count;
-  d_repeat count df d
-
-
-let d_offset_list (offset_origin : int) d : (int list) ok =
-  d_list d_uint16 d >>= fun reloffsetlst ->
-  return (reloffsetlst |> List.map (fun reloffset -> offset_origin + reloffset))
-
-
-let d_offset (offset_origin : int) d : int ok =
-  d_uint16 d >>= fun reloffset ->
-  return (offset_origin + reloffset)
-
-
-let d_offset_opt (offset_origin : int) d : (int option) ok =
-  d_uint16 d >>= fun reloffset ->
-  if reloffset = 0 then
-    return None
-  else
-    return (Some(offset_origin + reloffset))
-
-
 let d_range_record d =
   let rec range acc i j =
     if i > j then List.rev acc else
@@ -1263,28 +1492,80 @@ let d_range_record d =
   return (range [] start_gid end_gid)
 
 
-let d_coverage_main d : (glyph_id list) ok =
+let d_coverage d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
-  print_for_debug_int "coverageFormat" coverageFormat;  (* for debug *)
+  print_for_debug_int "{Coverage format" coverageFormat;  (* for debug *)
   let res =  (* for debug *)
     match coverageFormat with
     | 1 -> d_list d_uint16 d
     | 2 -> d_list d_range_record d >>= fun rnglst -> return (List.concat rnglst)
     | _ -> err_version d (Int32.of_int coverageFormat)
-  in print_for_debug "end Coverage table"; res  (* for debug *)
+  in print_for_debug "end Coverage table}"; res  (* for debug *)
 
-
+(*
 let d_coverage offset_origin d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           just before an offset field to a coverage table -- *)
   let pos_first = cur_pos d in
   d_offset offset_origin d   >>= fun offset_Coverage ->
   seek_pos offset_Coverage d >>= fun () ->
-  d_coverage_main d          >>= fun gidlst ->
+  d_coverage d          >>= fun gidlst ->
   seek_pos (pos_first + 2) d >>= fun () ->
   return gidlst
+*)
+
+let combine_coverage d coverage lst =
+  try return (List.combine coverage lst) with
+  | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(d.ctx))
+
+
+let d_fetch offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch) | pos_before" pos_before;
+  d_offset offset_origin d >>= fun offset ->
+  print_for_debug_int "          | rel_offset" (offset - offset_origin);
+  print_for_debug_int "          | offset" offset;
+  seek_pos offset d >>= fun () ->
+  df d >>= fun res ->
+  seek_pos (pos_before + 2) d >>= fun () ->
+  return res
+
+
+let d_fetch_opt offset_origin df d =
+  let pos_before = cur_pos d in
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return None
+
+    | Some(offset) ->
+        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
+        print_for_debug     "              | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun res ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return (Some(res))
+
+
+let d_fetch_list offset_origin df d =
+  let pos_before = cur_pos d in
+  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  d_offset_opt offset_origin d >>= function
+    | None ->
+        print_for_debug "               | NULL";
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return []
+
+    | Some(offset) ->
+        print_for_debug "               | non-NULL";
+        seek_pos offset d >>= fun () ->
+        df d >>= fun lst ->
+        seek_pos (pos_before + 2) d >>= fun () ->
+        return lst
 
 
 let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
@@ -1304,7 +1585,7 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
     (* -- the position is supposed to be set
           just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
-  d_coverage offset_Substitution_table d >>= fun coverage ->
+  d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
   print_for_debug_int "size of Coverage" (List.length coverage);  (* for debug *)
   List.iter (print_for_debug_int "  *   elem") coverage;  (* for debug *)
 
@@ -1312,10 +1593,7 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
   d_offset_list offset_Substitution_table d >>= fun offsetlst_LigatureSet ->
   print_for_debug_int "number of LigatureSet" (List.length offsetlst_LigatureSet);  (* for debug *)
   seek_every_pos offsetlst_LigatureSet df d >>= fun datalst ->
-  try
-    return (List.combine coverage datalst)
-  with
-  | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
+  combine_coverage d coverage datalst
 
 
 let advanced_table_scheme tag_Gxxx lookup d scriptTag langSysTag_opt featureTag : 'a ok =
@@ -1590,15 +1868,6 @@ let d_class_definition d : (class_definition list) ok =
   | _ -> err_version d (Int32.of_int classFormat)
 
 
-let d_fetch offset_origin df d =
-  let pos_before = cur_pos d in
-  d_offset offset_origin d >>= fun offset ->
-  seek_pos offset d >>= fun () ->
-  df d >>= fun res ->
-  seek_pos (pos_before + 2) d >>= fun () ->
-  return res
-
-
 let d_pair_adjustment_subtable d : gpos_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of a PairPos subtable [page 194] -- *)
@@ -1606,18 +1875,16 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
   d_uint16 d >>= fun posFormat ->
   match posFormat with
   | 1 ->
-      d_coverage offset_PairPos d >>= fun coverage ->
+      d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
       d_list (d_offset offset_PairPos) d >>= fun offsetlst_PairSet ->
       seek_every_pos offsetlst_PairSet (d_pair_set valueFormat1 valueFormat2) d >>= fun pairsetlst ->
-      begin
-        try return (PairPosAdjustment1(List.combine coverage pairsetlst)) with
-        | Invalid_argument(_) -> err (`Inconsistent_length_of_coverage(`Table(Tag.gsub)))
-      end
+      combine_coverage d coverage pairsetlst >>= fun comb ->
+      return (PairPosAdjustment1(comb))
 
   | 2 ->
-      d_coverage offset_PairPos d >>= fun coverage ->
+      d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
       d_fetch offset_PairPos d_class_definition d >>= fun classDef1 ->
@@ -1708,6 +1975,394 @@ let gpos d scriptTag langSysTag_opt featureTag f_pair1 f_pair2 init =
   advanced_table_scheme Tag.gpos lookup_gpos d scriptTag langSysTag_opt featureTag
     >>= fun subtables -> return (fold_subtables_gpos f_pair1 f_pair2 init subtables)
 
+
+(* -- MATH table -- *)
+
+type math_value_record = int * device_table option
+
+type math_constants =
+  {
+    script_percent_scale_down                     : int;
+    script_script_percent_scale_down              : int;
+    delimited_sub_formula_min_height              : int;
+    display_operator_min_height                   : int;
+    math_leading                                  : math_value_record;
+    axis_height                                   : math_value_record;
+    accent_base_height                            : math_value_record;
+    flattened_accent_base_height                  : math_value_record;
+    subscript_shift_down                          : math_value_record;
+    subscript_top_max                             : math_value_record;
+    subscript_baseline_drop_min                   : math_value_record;
+    superscript_shift_up                          : math_value_record;
+    superscript_shift_up_cramped                  : math_value_record;
+    superscript_bottom_min                        : math_value_record;
+    superscript_baseline_drop_max                 : math_value_record;
+    sub_superscript_gap_min                       : math_value_record;
+    superscript_bottom_max_with_subscript         : math_value_record;
+    space_after_script                            : math_value_record;
+    upper_limit_gap_min                           : math_value_record;
+    upper_limit_baseline_rise_min                 : math_value_record;
+    lower_limit_gap_min                           : math_value_record;
+    lower_limit_baseline_drop_min                 : math_value_record;
+    stack_top_shift_up                            : math_value_record;
+    stack_top_display_style_shift_up              : math_value_record;
+    stack_bottom_shift_down                       : math_value_record;
+    stack_bottom_display_style_shift_down         : math_value_record;
+    stack_gap_min                                 : math_value_record;
+    stack_display_style_gap_min                   : math_value_record;
+    stretch_stack_top_shift_up                    : math_value_record;
+    stretch_stack_bottom_shift_down               : math_value_record;
+    stretch_stack_gap_above_min                   : math_value_record;
+    stretch_stack_gap_below_min                   : math_value_record;
+    fraction_numerator_shift_up                   : math_value_record;
+    fraction_numerator_display_style_shift_up     : math_value_record;
+    fraction_denominator_shift_down               : math_value_record;
+    fraction_denominator_display_style_shift_down : math_value_record;
+    fraction_numerator_gap_min                    : math_value_record;
+    fraction_num_display_style_gap_min            : math_value_record;
+    fraction_rule_thickness                       : math_value_record;
+    fraction_denominator_gap_min                  : math_value_record;
+    fraction_denom_display_style_gap_min          : math_value_record;
+    skewed_fraction_horizontal_gap                : math_value_record;
+    skewed_fraction_vertical_gap                  : math_value_record;
+    overbar_vertical_gap                          : math_value_record;
+    overbar_rule_thickness                        : math_value_record;
+    overbar_extra_ascender                        : math_value_record;
+    underbar_vertical_gap                         : math_value_record;
+    underbar_rule_thickness                       : math_value_record;
+    underbar_extra_descender                      : math_value_record;
+    radical_vertical_gap                          : math_value_record;
+    radical_display_style_vertical_gap            : math_value_record;
+    radical_rule_thickness                        : math_value_record;
+    radical_extra_ascender                        : math_value_record;
+    radical_kern_before_degree                    : math_value_record;
+    radical_kern_after_degree                     : math_value_record;
+    radical_degree_bottom_raise_percent           : int;
+  }
+
+type math_kern = math_value_record list * math_value_record list
+
+type math_kern_info_record =
+  {
+    top_right_math_kern    : math_kern option;
+    top_left_math_kern     : math_kern option;
+    bottom_right_math_kern : math_kern option;
+    bottom_left_math_kern  : math_kern option;
+  }
+
+type math_glyph_info =
+  {
+    math_italics_correction    : (glyph_id * math_value_record) list;
+    math_top_accent_attachment : (glyph_id * math_value_record) list;
+    math_kern_info             : (glyph_id * math_kern_info_record) list;
+  }
+
+type glyph_part_record =
+  {
+    glyph_id_for_part      : glyph_id;
+    start_connector_length : int;
+    end_connector_length   : int;
+    full_advance           : int;
+    part_flags             : int;
+  }
+
+type math_glyph_construction =
+  {
+    glyph_assembly                 : (math_value_record * glyph_part_record list) option;
+    math_glyph_variant_record_list : (glyph_id * int) list;
+  }
+
+type math_variants =
+  {
+    min_connector_overlap : int;
+    vert_glyph_assoc      : (glyph_id * math_glyph_construction) list;
+    horiz_glyph_assoc     : (glyph_id * math_glyph_construction) list;
+  }
+
+type math =
+  {
+    math_constants  : math_constants;
+    math_glyph_info : math_glyph_info;
+    math_variants   : math_variants;
+  }
+
+
+let d_math_value_record offset_origin d : math_value_record ok =
+  d_int16 d >>= fun value ->
+  d_fetch_opt offset_origin d_device_table d >>= fun device_table_opt ->
+  return (value, device_table_opt)
+
+
+let d_math_constants d : math_constants ok =
+  let offset_origin = cur_pos d in
+  let dm = d_math_value_record offset_origin in
+  d_int16  d >>= fun script_percent_scale_down ->
+  d_int16  d >>= fun script_script_percent_scale_down ->
+  d_uint16 d >>= fun delimited_sub_formula_min_height ->
+  d_uint16 d >>= fun display_operator_min_height ->
+  dm       d >>= fun math_leading ->
+  dm       d >>= fun axis_height ->
+  dm       d >>= fun accent_base_height ->
+  dm       d >>= fun flattened_accent_base_height ->
+  dm       d >>= fun subscript_shift_down ->
+  dm       d >>= fun subscript_top_max ->
+  dm       d >>= fun subscript_baseline_drop_min ->
+  dm       d >>= fun superscript_shift_up ->
+  dm       d >>= fun superscript_shift_up_cramped ->
+  dm       d >>= fun superscript_bottom_min ->
+  dm       d >>= fun superscript_baseline_drop_max ->
+  dm       d >>= fun sub_superscript_gap_min ->
+  dm       d >>= fun superscript_bottom_max_with_subscript ->
+  dm       d >>= fun space_after_script ->
+  dm       d >>= fun upper_limit_gap_min ->
+  dm       d >>= fun upper_limit_baseline_rise_min ->
+  dm       d >>= fun lower_limit_gap_min ->
+  dm       d >>= fun lower_limit_baseline_drop_min ->
+  dm       d >>= fun stack_top_shift_up ->
+  dm       d >>= fun stack_top_display_style_shift_up ->
+  dm       d >>= fun stack_bottom_shift_down ->
+  dm       d >>= fun stack_bottom_display_style_shift_down ->
+  dm       d >>= fun stack_gap_min ->
+  dm       d >>= fun stack_display_style_gap_min ->
+  dm       d >>= fun stretch_stack_top_shift_up ->
+  dm       d >>= fun stretch_stack_bottom_shift_down ->
+  dm       d >>= fun stretch_stack_gap_above_min ->
+  dm       d >>= fun stretch_stack_gap_below_min ->
+  dm       d >>= fun fraction_numerator_shift_up ->
+  dm       d >>= fun fraction_numerator_display_style_shift_up ->
+  dm       d >>= fun fraction_denominator_shift_down ->
+  dm       d >>= fun fraction_denominator_display_style_shift_down ->
+  dm       d >>= fun fraction_numerator_gap_min ->
+  dm       d >>= fun fraction_num_display_style_gap_min ->
+  dm       d >>= fun fraction_rule_thickness ->
+  dm       d >>= fun fraction_denominator_gap_min ->
+  dm       d >>= fun fraction_denom_display_style_gap_min ->
+  dm       d >>= fun skewed_fraction_horizontal_gap ->
+  dm       d >>= fun skewed_fraction_vertical_gap ->
+  dm       d >>= fun overbar_vertical_gap ->
+  dm       d >>= fun overbar_rule_thickness ->
+  dm       d >>= fun overbar_extra_ascender ->
+  dm       d >>= fun underbar_vertical_gap ->
+  dm       d >>= fun underbar_rule_thickness ->
+  dm       d >>= fun underbar_extra_descender ->
+  dm       d >>= fun radical_vertical_gap ->
+  dm       d >>= fun radical_display_style_vertical_gap ->
+  dm       d >>= fun radical_rule_thickness ->
+  dm       d >>= fun radical_extra_ascender ->
+  dm       d >>= fun radical_kern_before_degree ->
+  dm       d >>= fun radical_kern_after_degree ->
+  d_int16  d >>= fun radical_degree_bottom_raise_percent ->
+  return {
+    script_percent_scale_down                     ;
+    script_script_percent_scale_down              ;
+    delimited_sub_formula_min_height              ;
+    display_operator_min_height                   ;
+    math_leading                                  ;
+    axis_height                                   ;
+    accent_base_height                            ;
+    flattened_accent_base_height                  ;
+    subscript_shift_down                          ;
+    subscript_top_max                             ;
+    subscript_baseline_drop_min                   ;
+    superscript_shift_up                          ;
+    superscript_shift_up_cramped                  ;
+    superscript_bottom_min                        ;
+    superscript_baseline_drop_max                 ;
+    sub_superscript_gap_min                       ;
+    superscript_bottom_max_with_subscript         ;
+    space_after_script                            ;
+    upper_limit_gap_min                           ;
+    upper_limit_baseline_rise_min                 ;
+    lower_limit_gap_min                           ;
+    lower_limit_baseline_drop_min                 ;
+    stack_top_shift_up                            ;
+    stack_top_display_style_shift_up              ;
+    stack_bottom_shift_down                       ;
+    stack_bottom_display_style_shift_down         ;
+    stack_gap_min                                 ;
+    stack_display_style_gap_min                   ;
+    stretch_stack_top_shift_up                    ;
+    stretch_stack_bottom_shift_down               ;
+    stretch_stack_gap_above_min                   ;
+    stretch_stack_gap_below_min                   ;
+    fraction_numerator_shift_up                   ;
+    fraction_numerator_display_style_shift_up     ;
+    fraction_denominator_shift_down               ;
+    fraction_denominator_display_style_shift_down ;
+    fraction_numerator_gap_min                    ;
+    fraction_num_display_style_gap_min            ;
+    fraction_rule_thickness                       ;
+    fraction_denominator_gap_min                  ;
+    fraction_denom_display_style_gap_min          ;
+    skewed_fraction_horizontal_gap                ;
+    skewed_fraction_vertical_gap                  ;
+    overbar_vertical_gap                          ;
+    overbar_rule_thickness                        ;
+    overbar_extra_ascender                        ;
+    underbar_vertical_gap                         ;
+    underbar_rule_thickness                       ;
+    underbar_extra_descender                      ;
+    radical_vertical_gap                          ;
+    radical_display_style_vertical_gap            ;
+    radical_rule_thickness                        ;
+    radical_extra_ascender                        ;
+    radical_kern_before_degree                    ;
+    radical_kern_after_degree                     ;
+    radical_degree_bottom_raise_percent           ;
+  }
+
+
+let d_math_italics_correction_info d : ((glyph_id * math_value_record) list) ok =
+  let offset_MathItalicCollectionInfo_table = cur_pos d in
+  d_fetch offset_MathItalicCollectionInfo_table d_coverage d >>= fun coverage ->
+  d_list (d_math_value_record offset_MathItalicCollectionInfo_table) d >>= fun mvrlst ->
+  combine_coverage d coverage mvrlst
+
+
+let d_math_top_accent_attachment d : ((glyph_id * math_value_record) list) ok =
+  let offset_MathTopAccentAttachment_table = cur_pos d in
+  d_fetch offset_MathTopAccentAttachment_table d_coverage d >>= fun coverage ->
+  d_list (d_math_value_record offset_MathTopAccentAttachment_table) d >>= fun mvrlst ->
+  combine_coverage d coverage mvrlst
+
+
+let d_math_kern d : math_kern ok =
+  let offset_MathKern_table = cur_pos d in
+  d_uint16 d >>= fun heightCount ->
+  d_repeat heightCount (d_math_value_record offset_MathKern_table) d >>= fun correctionHeight_lst ->
+  d_repeat (heightCount + 1) (d_math_value_record offset_MathKern_table) d >>= fun kernValue_lst ->
+  return (correctionHeight_lst, kernValue_lst)
+
+
+let d_math_kern_info_record offset_MathKernInfo_table d : math_kern_info_record ok =
+  print_for_debug_int "### MathKernInfoRecord[1]" (cur_pos d);
+  d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topRightMathKern_opt ->
+  d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topLeftMathKern_opt ->
+  d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun bottomRightMathKern_opt ->
+  d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun bottomLeftMathKern_opt ->
+  return {
+    top_right_math_kern    = topRightMathKern_opt;
+    top_left_math_kern     = topLeftMathKern_opt;
+    bottom_right_math_kern = bottomRightMathKern_opt;
+    bottom_left_math_kern  = bottomLeftMathKern_opt;
+  }
+
+
+let d_math_kern_info d : ((glyph_id * math_kern_info_record) list) ok =
+  let offset_MathKernInfo_table = cur_pos d in
+  print_for_debug_int "## MathKernInfo[1]" (cur_pos d);
+  d_fetch offset_MathKernInfo_table d_coverage d >>= fun coverage ->
+  print_for_debug_int "## MathKernInfo[2]" (cur_pos d);
+  d_list (d_math_kern_info_record offset_MathKernInfo_table) d >>= fun mvrlst ->
+  print_for_debug_int "## MathKernInfo[3]" (cur_pos d);
+  combine_coverage d coverage mvrlst
+
+
+let d_math_glyph_info d : math_glyph_info ok =
+  let offset_MathGlyphInfo_table = cur_pos d in
+  print_for_debug_int "# jump to MathItalicsCorrection" (cur_pos d);
+  d_fetch offset_MathGlyphInfo_table d_math_italics_correction_info d >>= fun mathItalicsCorrection ->
+  print_for_debug_int "# jump to MathTopAccentAttachment" (cur_pos d);
+  d_fetch offset_MathGlyphInfo_table d_math_top_accent_attachment d >>= fun mathTopAccentAttachment ->
+  d_fetch_opt offset_MathGlyphInfo_table d_coverage d >>= fun _ ->
+  print_for_debug_int "# jump to MathKernInfo" (cur_pos d);
+  d_fetch_list offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
+  print_for_debug "# END MathGlyphInfo";
+  return {
+    math_italics_correction    = mathItalicsCorrection;
+    math_top_accent_attachment = mathTopAccentAttachment;
+    math_kern_info             = mathKernInfo;
+  }
+
+
+let d_math_glyph_variant_record d : (glyph_id * int) ok =
+  d_uint16 d >>= fun variantGlyph ->
+  d_uint16 d >>= fun advanceMeasurement ->
+  return (variantGlyph, advanceMeasurement)
+
+
+let d_glyph_part_record d : glyph_part_record ok =
+  d_uint16 d >>= fun glyph ->
+  d_uint16 d >>= fun startConnectorLength ->
+  d_uint16 d >>= fun endConnectorLength ->
+  d_uint16 d >>= fun fullAdvance ->
+  d_uint16 d >>= fun partFlags ->
+  return {
+    glyph_id_for_part      = glyph;
+    start_connector_length = startConnectorLength;
+    end_connector_length   = endConnectorLength;
+    full_advance           = fullAdvance;
+    part_flags             = partFlags;
+  }
+
+
+let d_glyph_assembly d : (math_value_record * glyph_part_record list) ok =
+  let offset_GlyphAssembly_table = cur_pos d in
+  d_math_value_record offset_GlyphAssembly_table d >>= fun italicsCorrection ->
+  d_list d_glyph_part_record d >>= fun partRecords_lst ->
+  return (italicsCorrection, partRecords_lst)
+
+
+let d_math_glyph_construction d : math_glyph_construction ok =
+  let offset_MathGlyphConstruction_table = cur_pos d in
+  print_for_debug "| | {GlyphAssembly";
+  d_fetch_opt offset_MathGlyphConstruction_table d_glyph_assembly d >>= fun glyphAssembly ->
+  print_for_debug "| | MathGlyphVariantRecord";
+  d_list d_math_glyph_variant_record d >>= fun mathGlyphVariantRecord_lst ->
+  print_for_debug "| | END MathGlyphConstruction}";
+  return {
+    glyph_assembly                 = glyphAssembly;
+    math_glyph_variant_record_list = mathGlyphVariantRecord_lst;
+  }
+
+
+let d_math_variants d : math_variants ok =
+  let offset_MathVariants_table = cur_pos d in
+  d_uint16 d >>= fun minConnectorOverlap ->
+  print_for_debug "| VertGlyphCoverage";
+  d_fetch offset_MathVariants_table d_coverage d >>= fun vertGlyphCoverage ->
+  print_for_debug "| HorizGlyphCoverage";
+  d_fetch offset_MathVariants_table d_coverage d >>= fun horizGlyphCoverage ->
+  d_uint16 d >>= fun vertGlyphCount ->
+  d_uint16 d >>= fun horizGlyphCount ->
+  let df = d_fetch offset_MathVariants_table d_math_glyph_construction in
+  print_for_debug "| VertGlyphConstruction";
+  d_repeat vertGlyphCount df d >>= fun vertGlyphConstruction_lst ->
+  print_for_debug "| HorizGlyphConstruction";
+  d_repeat horizGlyphCount df d >>= fun horizGlyphConstruction_lst ->
+  combine_coverage d vertGlyphCoverage vertGlyphConstruction_lst >>= fun vertcomb ->
+  combine_coverage d horizGlyphCoverage horizGlyphConstruction_lst >>= fun horizcomb ->
+  return {
+    min_connector_overlap = minConnectorOverlap;
+    vert_glyph_assoc      = vertcomb;
+    horiz_glyph_assoc     = horizcomb;
+  }
+
+
+let math d : math ok =
+  init_decoder d >>=
+  seek_table Tag.math d >>= function
+    | None    -> err (`Missing_required_table(Tag.math))
+    | Some(_) ->
+        let offset_MATH = cur_pos d in
+        print_for_debug_int "begin MATH" offset_MATH;
+        d_uint32 d >>= fun version ->
+        confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
+        print_for_debug_int "jump to MathConstants" (cur_pos d);
+        d_fetch offset_MATH d_math_constants d >>= fun mathConstants ->
+        print_for_debug_int "jump to MathGlyphInfo" (cur_pos d);
+        d_fetch offset_MATH d_math_glyph_info d >>= fun mathGlyphInfo ->
+        print_for_debug_int "jump to MathVariants" (cur_pos d);
+        d_fetch offset_MATH d_math_variants d >>= fun mathVariants ->
+        print_for_debug "end MATH";
+        return {
+          math_constants  = mathConstants;
+          math_glyph_info = mathGlyphInfo;
+          math_variants   = mathVariants;
+        }
+
+
+(* -- BASE table -- *)
 
 let base d =
   let offset_BASE = cur_pos d in
@@ -1805,7 +2460,9 @@ let d_index dl d =
         loop_data (v :: acc) tail
   in
   d_uint8 d                     >>= fun count ->
+(*
   Printf.printf "count: %d\n" count;  (* for debug *)
+*)
   if count = 0 then return [] else
   d_offsize d                   >>= fun offSize ->
   d_cff_offset_list offSize count d >>= fun lenlst ->
@@ -1864,7 +2521,9 @@ let d_dict len d =
     if len = -1 (* doubtful*) then return mapacc else
     if len < -1 (* doubtful*) then err `Invalid_cff_inconsistent_length else
       d_dict_keyval d >>= fun (step, vlst, k) ->
+(*
       Printf.printf "step: %d\n" step;  (*for debug *)
+*)
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
     Printf.printf "length: %d\n" len;  (* for debug *)
@@ -1874,14 +2533,18 @@ let cff_info d =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   (* Header: *)
+(*
     Printf.printf "Header\n";  (* for debug *)
+*)
     d_uint8 d              >>= fun major ->
     d_uint8 d              >>= fun minor ->
     d_uint8 d              >>= fun hdrSize ->
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
   (* Name INDEX (should contain only one element): *)
+(*
     Printf.printf "Name INDEX\n";  (* for debug *)
+*)
     d_index (fun i -> d_bytes (?@ i)) d >>= fun namelst ->
     begin
       match namelst with
@@ -1890,7 +2553,9 @@ let cff_info d =
       | n :: []     -> return (Some(n))
     end >>= fun name ->
   (* Top DICT INDEX (should contain only one DICT): *)
+(*
     Printf.printf "Top DICT INDEX\n";  (* for debug *)
+*)
     d_index (fun i -> d_dict (?@ i)) d  >>= function
       | []            -> err `Invalid_cff_not_a_singleton
       | _ :: _ :: _   -> err `Invalid_cff_not_a_singleton
