@@ -156,6 +156,7 @@ type error =
   | `Missing_required_langsys_tag     of string
   | `Missing_required_feature_tag     of string
   | `Invalid_lookup_order             of int
+  | `Invalid_feature_index            of int
   | `Invalid_extension_position
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
@@ -438,11 +439,11 @@ let d_list df d =
   d_repeat count df d
 
 
-let d_list_filtered df indexlst d =
+let d_list_filtered df predicate d =
   let rec aux acc imax i =
     if i >= imax then return (List.rev acc) else
     df d >>= fun data ->
-    if List.mem i indexlst then
+    if predicate i then
       aux (data :: acc) imax (i + 1)
     else
       aux acc imax (i + 1)
@@ -450,6 +451,19 @@ let d_list_filtered df indexlst d =
     d_uint16 d >>= fun count ->
     print_for_debug_int "count" count;
     aux [] count 0
+
+
+let d_list_access df ireq d =
+  let rec aux imax i =
+    if i >= imax then return None else
+    df d >>= fun data ->
+    if i = ireq then
+      return (Some(data))
+    else
+      aux imax (i + 1)
+  in
+    d_uint16 d >>= fun count ->
+    aux count 0
 
 
 let d_offset_list (offset_origin : int) d : (int list) ok =
@@ -1596,71 +1610,134 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
   combine_coverage d coverage datalst
 
 
-let advanced_table_scheme tag_Gxxx lookup d scriptTag langSysTag_opt featureTag : 'a ok =
+type gxxx_script = decoder * string * int * int * int
+
+type gsub_script = gxxx_script
+
+type gpos_script = gxxx_script
+
+
+let gxxx_script_tag (_, scriptTag, _, _, _) = scriptTag
+
+let gsub_script_tag = gxxx_script_tag
+
+let gpos_script_tag = gxxx_script_tag
+
+
+let d_tag_offset_record offset_Gxxx d =
+  d_bytes 4 d >>= fun tag ->
+  d_offset offset_Gxxx d >>= fun offset ->
+  return (tag, offset)
+
+
+let d_tag_offset_list d : ((string * int) list) ok =
+  let offset_ScriptList = cur_pos d in
+  d_list (d_tag_offset_record offset_ScriptList) d
+
+
+let gxxx_script tag_Gxxx d : (gxxx_script list) ok =
   init_decoder d >>=
   seek_table tag_Gxxx d >>= function
-    | None    -> Error(`Missing_required_table(tag_Gxxx))
+    | None    -> err (`Missing_required_table(tag_Gxxx))
     | Some(_) ->
         let offset_Gxxx = cur_pos d in
         d_uint32 d >>= fun version ->
         confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
-        d_offset offset_Gxxx d >>= fun offset_ScriptList ->
+        d_fetch offset_Gxxx d_tag_offset_list d >>= fun scriptList ->
         d_offset offset_Gxxx d >>= fun offset_FeatureList ->
         d_offset offset_Gxxx d >>= fun offset_LookupList ->
-        print_for_debug_int "offset_ScriptList" offset_ScriptList;  (* for debug *)
-        seek_pos offset_ScriptList d >>= fun () ->
-        seek_pos_from_list offset_ScriptList scriptTag d >>= fun found ->
-        confirm found (`Missing_required_script_tag(scriptTag)) >>= fun () ->
-          (* -- now the position is set to the beginning of the required Script table -- *)
-        let offset_Script_table = cur_pos d in
-        print_for_debug_int "offset_Script_table" offset_Script_table;  (* for debug *)
-        d_offset offset_Script_table d >>= fun offset_DefaultLangSys ->
-        begin
-          match langSysTag_opt with
-          | None -> seek_pos offset_DefaultLangSys d
-          | Some(langSysTag) ->
-              begin
-                seek_pos_from_list offset_Script_table langSysTag d >>= fun found ->
-                confirm found (`Missing_required_langsys_tag(langSysTag))
-              end
-        end >>= fun () ->
-          (* -- now the position is set to the beginning of the required LangSys table *)
-        d_uint16 d >>= fun offset_LookupOrder ->
-        confirm (offset_LookupOrder = 0) (`Invalid_lookup_order(offset_LookupOrder)) >>= fun () ->
-        d_uint16 d >>= fun reqFeatureIndex ->
-        let () =  (* for debug *)
-          if reqFeatureIndex = 0xFFFF then
-            print_for_debug "no feature is specified as default."  (* for debug *)
-          else
-            ()
+        let scriptList_res =
+          scriptList |> List.map (fun (scriptTag, offset_Script) ->
+            (d, scriptTag, offset_Script, offset_FeatureList, offset_LookupList)
+          )
         in
-        d_list d_uint16 d >>= fun featrindexlst ->
-          (* -- now we are going to see FeatureList table -- *)
-        print_for_debug_int "offset_FeatureList" offset_FeatureList;  (* for debug *)
-        seek_pos offset_FeatureList d >>= fun () ->
-        print_for_debug "---- FeatureList table ----";  (* for debug *)
-        d_list_filtered (fun d ->
-          d_bytes 4 d >>= fun tag ->
+        return scriptList_res
+
+
+type gxxx_langsys = decoder * string * int * int * int
+
+type gsub_langsys = gxxx_langsys
+
+type gpos_langsys = gxxx_langsys
+
+
+let gxxx_langsys (script : gxxx_script) : (gxxx_langsys * gxxx_langsys list) ok =
+  let (d, scriptTag, offset_Script_table, offset_FeatureList, offset_LookupList) = script in
+  print_for_debug_int "offset_Script_table" offset_Script_table;  (* for debug *)
+  seek_pos offset_Script_table d >>= fun () ->
+  d_offset offset_Script_table d >>= fun offset_DefaultLangSys ->
+  d_list (d_tag_offset_record offset_Script_table) d >>= fun langSysList ->
+  let defaultLangSys_res =
+    (d, "DFLT", offset_DefaultLangSys, offset_FeatureList, offset_LookupList)
+  in
+  let langSysList_res =
+    langSysList |> List.map (fun (langSysTag, offset_LangSys) ->
+      (d, langSysTag, offset_LangSys, offset_FeatureList, offset_LookupList)
+    )
+  in
+  return (defaultLangSys_res, langSysList_res)
+
+
+type gxxx_feature = decoder * string * int * int
+
+type gsub_feature = gxxx_feature
+
+type gpos_feature = gxxx_feature
+
+
+let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature list) ok =
+  let (d, langSysTag, offset_LangSys_table, offset_FeatureList, offset_LookupList) = langsys in
+  seek_pos offset_LangSys_table d >>= fun () ->
+    (* -- now the position is set to the beginning of the required LangSys table *)
+  d_uint16 d >>= fun offset_LookupOrder ->
+  confirm (offset_LookupOrder = 0) (`Invalid_lookup_order(offset_LookupOrder)) >>= fun () ->
+  d_uint16 d >>= fun requiredFeatureIndex ->
+  d_list d_uint16 d >>= fun featureIndex_list ->
+    (* -- now we are going to see FeatureList table -- *)
+  print_for_debug_int "offset_FeatureList" offset_FeatureList;  (* for debug *)
+  seek_pos offset_FeatureList d >>= fun () ->
+  d_list_filtered (d_tag_offset_record offset_FeatureList) (fun fi -> List.mem fi featureIndex_list) d >>= fun featureList ->
+  let featureList_res =
+    featureList |> List.map (fun (featureTag, offset_Feature_table) ->
+      (d, featureTag, offset_Feature_table, offset_LookupList)
+    )
+  in
+  let featurereq =
+        match requiredFeatureIndex with
+        | 0xFFFF -> return None
+        | _      ->
+            begin
+              seek_pos offset_FeatureList d >>= fun () ->
+              d_list_access (d_tag_offset_record offset_FeatureList) requiredFeatureIndex d >>= function
+              | None           -> err (`Invalid_feature_index(requiredFeatureIndex))
+              | Some(_) as opt -> return opt
+            end
+  in
+  featurereq >>= function
+  | None ->
+      return (None, featureList_res)
+
+  | Some((tagreq, offsetreq)) ->
+      let featurereq = (d, tagreq, offsetreq, offset_LookupList) in
+      return (Some(featurereq), featureList_res)
+
+
+let gsub (feature : gxxx_feature) =
+  let (d, featureTag, offset_Feature_table, offset_LookupList) = feature in
+  print_for_debug_int "offset_Feature_table" offset_Feature_table;  (* for debug *)
+  seek_pos offset_Feature_table d >>= fun () ->
+    (* -- now the position is set to the beginning of the required Feature table -- *)
+  print_for_debug "---- Feature table ----";  (* for debug *)
+  d_offset offset_Feature_table d >>= fun offset_FeatureParams ->
+  return ()  (* temporary *)
 (*
-          print_for_debug ("| tag = '" ^ tag ^ "'");  (* for debug *)
-*)
-          d_offset offset_FeatureList d >>= fun offset -> return (tag, offset))
-          featrindexlst d >>= fun pairlst ->
-        begin
-          try return (List.assoc featureTag pairlst) with
-          | Not_found -> err (`Missing_required_feature_tag(featureTag))
-        end >>= fun offset_Feature_table ->
-        print_for_debug_int "offset_Feature_table" offset_Feature_table;  (* for debug *)
-        seek_pos offset_Feature_table d >>= fun () ->
-          (* -- now the position is set to the beginning of the required Feature table -- *)
-        print_for_debug "---- Feature table ----";  (* for debug *)
-        d_offset offset_Feature_table d >>= fun offset_FeatureParams ->
         d_list d_uint16 d >>= fun lookuplst ->
           (* -- now we are going to see LookupList table -- *)
         print_for_debug_int "offset_LookupList" offset_LookupList;  (* for debug *)
         seek_pos offset_LookupList d >>= fun () ->
-        d_list_filtered (d_offset offset_LookupList) lookuplst d >>= fun offsetlst ->
+        d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookuplst) d >>= fun offsetlst ->
         seek_every_pos offsetlst lookup d
+*)
 
 
 let d_ligature_table d : (glyph_id list * glyph_id) ok =
@@ -1733,11 +1810,11 @@ let rec fold_subtables_gsub (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id)
         let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
           iter initnew tail
 
-
+(*
 let gsub d scriptTag langSysTag_opt featureTag f_lig init =
   advanced_table_scheme Tag.gsub lookup_gsub d scriptTag langSysTag_opt featureTag
     >>= fun subtables -> return (fold_subtables_gsub f_lig init subtables)
-
+*)
 
 let d_if cond df d =
   if cond then
@@ -1970,11 +2047,11 @@ let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record
         let initnew = iter init subtablelstsub in
           iter initnew tail
 
-
+(*
 let gpos d scriptTag langSysTag_opt featureTag f_pair1 f_pair2 init =
   advanced_table_scheme Tag.gpos lookup_gpos d scriptTag langSysTag_opt featureTag
     >>= fun subtables -> return (fold_subtables_gpos f_pair1 f_pair2 init subtables)
-
+*)
 
 (* -- MATH table -- *)
 
