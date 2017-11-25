@@ -152,11 +152,14 @@ type error =
 (* added by T. Suwa: *)
   | `Inconsistent_length_of_coverage  of error_ctx
   | `Inconsistent_length_of_class
+(*
   | `Missing_required_script_tag      of string
   | `Missing_required_langsys_tag     of string
   | `Missing_required_feature_tag     of string
+*)
   | `Invalid_lookup_order             of int
   | `Invalid_feature_index            of int
+  | `Invalid_feature_params           of int
   | `Invalid_extension_position
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
@@ -207,7 +210,7 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ PostScript@ name (%S)@]" n
 | `Unexpected_eoi ctx ->
     pp ppf "@[Unexpected@ end@ of@ input@ in %a@]" pp_ctx ctx
-(* added by gfn: *)
+(* added by Takashi SUWA: *)
 | `Inconsistent_length_of_coverage ctx ->
     pp ppf "@[Inconsistent@ length@ of@ coverage@ in %a@]" pp_ctx ctx
 | `Inconsistent_length_of_class ->
@@ -220,6 +223,10 @@ let pp_error ppf = function
     pp ppf "@[Missing@ required@ Feature@ tag@ (%S)@]" tag
 | `Invalid_lookup_order lo ->
     pp ppf "@[Invalid@ lookup@ order@ (%d)@]" lo
+| `Invalid_feature_index fi ->
+    pp ppf "@[Invalid@ feature@ index@ (%d)@]" fi
+| `Invalid_feature_params fp ->
+    pp ppf "@[Invalid@ feature@ params@ (%d)@]" fp
 | `Invalid_extension_position ->
     pp ppf "@[Invalid@ extension@ position@]"
 | `Invalid_cff_not_a_quad ->
@@ -1627,6 +1634,7 @@ let gpos_script_tag = gxxx_script_tag
 let d_tag_offset_record offset_Gxxx d =
   d_bytes 4 d >>= fun tag ->
   d_offset offset_Gxxx d >>= fun offset ->
+  print_for_debug (Printf.sprintf "(%s, %d)" tag offset);  (* for debug *)
   return (tag, offset)
 
 
@@ -1647,11 +1655,16 @@ let gxxx_script tag_Gxxx d : (gxxx_script list) ok =
         d_offset offset_Gxxx d >>= fun offset_FeatureList ->
         d_offset offset_Gxxx d >>= fun offset_LookupList ->
         let scriptList_res =
-          scriptList |> List.map (fun (scriptTag, offset_Script) ->
-            (d, scriptTag, offset_Script, offset_FeatureList, offset_LookupList)
+          scriptList |> List.map (fun (scriptTag, offset_Script_table) ->
+            (d, scriptTag, offset_Script_table, offset_FeatureList, offset_LookupList)
           )
         in
         return scriptList_res
+
+
+let gsub_script = gxxx_script Tag.gsub
+
+let gpos_script = gxxx_script Tag.gpos
 
 
 type gxxx_langsys = decoder * string * int * int * int
@@ -1659,6 +1672,13 @@ type gxxx_langsys = decoder * string * int * int * int
 type gsub_langsys = gxxx_langsys
 
 type gpos_langsys = gxxx_langsys
+
+
+let gxxx_langsys_tag (_, tag, _, _, _) = tag
+
+let gsub_langsys_tag = gxxx_langsys_tag
+
+let gpos_langsys_tag = gxxx_langsys_tag
 
 
 let gxxx_langsys (script : gxxx_script) : (gxxx_langsys * gxxx_langsys list) ok =
@@ -1671,11 +1691,16 @@ let gxxx_langsys (script : gxxx_script) : (gxxx_langsys * gxxx_langsys list) ok 
     (d, "DFLT", offset_DefaultLangSys, offset_FeatureList, offset_LookupList)
   in
   let langSysList_res =
-    langSysList |> List.map (fun (langSysTag, offset_LangSys) ->
-      (d, langSysTag, offset_LangSys, offset_FeatureList, offset_LookupList)
+    langSysList |> List.map (fun (langSysTag, offset_LangSys_table) ->
+      (d, langSysTag, offset_LangSys_table, offset_FeatureList, offset_LookupList)
     )
   in
   return (defaultLangSys_res, langSysList_res)
+
+
+let gsub_langsys = gxxx_langsys
+
+let gpos_langsys = gxxx_langsys
 
 
 type gxxx_feature = decoder * string * int * int
@@ -1683,6 +1708,13 @@ type gxxx_feature = decoder * string * int * int
 type gsub_feature = gxxx_feature
 
 type gpos_feature = gxxx_feature
+
+
+let gxxx_feature_tag (_, tag, _, _) = tag
+
+let gsub_feature_tag = gxxx_feature_tag
+
+let gpos_feature_tag = gxxx_feature_tag
 
 
 let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature list) ok =
@@ -1722,22 +1754,26 @@ let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature 
       return (Some(featurereq), featureList_res)
 
 
-let gsub (feature : gxxx_feature) =
+let gsub_feature = gxxx_feature
+
+let gpos_feature = gxxx_feature
+
+
+let gxxx_subtable_list (type a) (lookup_gxxx : decoder -> a ok) (feature : gxxx_feature) : (a list) ok =
   let (d, featureTag, offset_Feature_table, offset_LookupList) = feature in
   print_for_debug_int "offset_Feature_table" offset_Feature_table;  (* for debug *)
   seek_pos offset_Feature_table d >>= fun () ->
     (* -- now the position is set to the beginning of the required Feature table -- *)
   print_for_debug "---- Feature table ----";  (* for debug *)
-  d_offset offset_Feature_table d >>= fun offset_FeatureParams ->
-  return ()  (* temporary *)
-(*
-        d_list d_uint16 d >>= fun lookuplst ->
-          (* -- now we are going to see LookupList table -- *)
-        print_for_debug_int "offset_LookupList" offset_LookupList;  (* for debug *)
-        seek_pos offset_LookupList d >>= fun () ->
-        d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookuplst) d >>= fun offsetlst ->
-        seek_every_pos offsetlst lookup d
-*)
+  d_uint16 d >>= fun featureParams ->
+  confirm (featureParams = 0) (`Invalid_feature_params(featureParams)) >>= fun () ->
+  d_list d_uint16 d >>= fun lookupListIndexList ->
+  print_for_debug_int "offset_LookupList" offset_LookupList;  (* for debug *)
+  seek_pos offset_LookupList d >>= fun () ->
+    (* -- now the position is set to the beginning of the LookupList table -- *)
+  d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookupListIndexList) d >>= fun offsetlst_Lookup_table ->
+  seek_every_pos offsetlst_Lookup_table lookup_gxxx d
+
 
 
 let d_ligature_table d : (glyph_id list * glyph_id) ok =
@@ -1810,11 +1846,11 @@ let rec fold_subtables_gsub (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id)
         let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
           iter initnew tail
 
-(*
-let gsub d scriptTag langSysTag_opt featureTag f_lig init =
-  advanced_table_scheme Tag.gsub lookup_gsub d scriptTag langSysTag_opt featureTag
-    >>= fun subtables -> return (fold_subtables_gsub f_lig init subtables)
-*)
+
+let gsub feature f_lig init =
+  gxxx_subtable_list lookup_gsub feature >>= fun subtablelst ->
+  return (fold_subtables_gsub f_lig init subtablelst)
+
 
 let d_if cond df d =
   if cond then
@@ -2047,11 +2083,11 @@ let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record
         let initnew = iter init subtablelstsub in
           iter initnew tail
 
-(*
-let gpos d scriptTag langSysTag_opt featureTag f_pair1 f_pair2 init =
-  advanced_table_scheme Tag.gpos lookup_gpos d scriptTag langSysTag_opt featureTag
-    >>= fun subtables -> return (fold_subtables_gpos f_pair1 f_pair2 init subtables)
-*)
+
+let gpos feature f_pair1 f_pair2 init =
+  gxxx_subtable_list lookup_gpos feature >>= fun subtablelst ->
+  return (fold_subtables_gpos f_pair1 f_pair2 init subtablelst)
+
 
 (* -- MATH table -- *)
 

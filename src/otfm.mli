@@ -185,33 +185,34 @@ type error_ctx =
 
 type error =
 [
-  | `Unknown_flavour of tag
-(*
-  | `Unsupported_TTC
-*)
-  | `Unsupported_cmap_format of int
+  | `Unknown_flavour                  of tag
+  | `Unsupported_cmap_format          of int
   | `Unsupported_glyf_matching_points
-  | `Missing_required_table of tag
-  | `Unknown_version of error_ctx * int32
-  | `Unknown_loca_format of error_ctx * int
-  | `Unknown_composite_format of error_ctx * int
-  | `Invalid_offset of error_ctx * int
-  | `Invalid_cp of int
-  | `Invalid_cp_range of int * int
-  | `Invalid_postscript_name of string
-  | `Unexpected_eoi of error_ctx
-(* added by gfn: *)
-  | `Inconsistent_length_of_coverage of error_ctx
+  | `Missing_required_table           of tag
+  | `Unknown_version                  of error_ctx * int32
+  | `Unknown_loca_format              of error_ctx * int
+  | `Unknown_composite_format         of error_ctx * int
+  | `Invalid_offset                   of error_ctx * int
+  | `Invalid_cp                       of int
+  | `Invalid_cp_range                 of int * int
+  | `Invalid_postscript_name          of string
+  | `Unexpected_eoi                   of error_ctx
+(* added by T. Suwa: *)
+  | `Inconsistent_length_of_coverage  of error_ctx
   | `Inconsistent_length_of_class
-  | `Missing_required_script_tag of string
-  | `Missing_required_langsys_tag of string
-  | `Missing_required_feature_tag of string
-  | `Invalid_lookup_order of int
+(*
+  | `Missing_required_script_tag      of string
+  | `Missing_required_langsys_tag     of string
+  | `Missing_required_feature_tag     of string
+*)
+  | `Invalid_lookup_order             of int
+  | `Invalid_feature_index            of int
+  | `Invalid_feature_params           of int
   | `Invalid_extension_position
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
-  | `Invalid_cff_not_an_offsize of int
+  | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
@@ -543,17 +544,69 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
 
-val gsub : decoder -> string -> string option -> string -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a, error) result
+type gsub_script
+(** The type for GSUB Script. *)
+
+type gsub_langsys
+(** The type for GSUB LangSys. *)
+
+type gsub_feature
+(** The type for GSUB Feature. *)
+
+val gsub_script : decoder -> (gsub_script list, error) result
+(** [gsub_script d] returns all of the Script tags the font contains. *)
+
+val gsub_script_tag : gsub_script -> string
+(** Returns the Script tag (e.g. ["arab"], ["cyrl"], ["hani"], ["latn"], etc.). *)
+
+val gsub_langsys : gsub_script -> (gsub_langsys * gsub_langsys list, error) result
+(** [gsub_langsys gs] returns
+    the pair of DefaultLangSys and all of the LangSys tags for the given Script [gs]. *)
+
+val gsub_langsys_tag : gsub_langsys -> string
+(** Returns the LangSys tag (e.g. [Some "DEU"], [Some "JAN"], [Some "TRK"], etc.). *)
+
+val gsub_feature : gsub_langsys -> (gsub_feature option * gsub_feature list, error) result
+(** [gsub_feature gl] returns
+    the pair of RequiredFeatureTag and all of the Feature tags for the given LangSys [gl]. *)
+
+val gsub_feature_tag : gsub_feature -> string
+(** Returns the Feature tag (e.g. ["aalt"], ["liga"], etc.). *)
+
+val gsub : gsub_feature -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a, error) result
 (** {b WARNING: subject to change in the future.}
     Supports only
     {{:https://www.microsoft.com/typography/otspec/gsub.htm#LS}LookupType 4: ligature substitution subtable}.
-    [gsub d scriptTag langSysTagOpt featureTag f init] folds
-    the substitution subtable of [d]
-    corresponding to
-    the script tag [scriptTag] (e.g. ["arab"], ["cyrl"], ["hani"], ["latn"], etc.),
-    the language system tag [langSysTagOpt] (e.g. [Some "DEU"], [Some "JAN"], [Some "TRK"], etc.
-      the default language system will be chosen if [None] is specified), and
-    the OpenType feature tag [featureTag]. *)
+    [gsub feature f init] folds the substitution subtables corresponding to [feature]. *)
+
+type gpos_script
+(** The type for GPOS Script. *)
+
+type gpos_langsys
+(** The type for GPOS LangSys. *)
+
+type gpos_feature
+(** The type for GPOS Feature. *)
+
+val gpos_script : decoder -> (gpos_script list, error) result
+(** [gpos_script d] returns all of the Script tags the font contains. *)
+
+val gpos_script_tag : gpos_script -> string
+(** Returns the Script tag (e.g. ["arab"], ["cyrl"], ["hani"], ["latn"], etc.). *)
+
+val gpos_langsys : gpos_script -> (gpos_langsys * gpos_langsys list, error) result
+(** [gpos_langsys gs] returns
+    the pair of DefaultLangSys and all of the LangSys tags for the given Script [gs]. *)
+
+val gpos_langsys_tag : gpos_langsys -> string
+(** Returns the LangSys tag (e.g. [Some "DEU"], [Some "JAN"], [Some "TRK"], etc.). *)
+
+val gpos_feature : gpos_langsys -> (gpos_feature option * gpos_feature list, error) result
+(** [gpos_feature gl] returns
+    the pair of RequiredFeatureTag and all of the Feature tags for the given LangSys [gl]. *)
+
+val gpos_feature_tag : gpos_feature -> string
+(** Returns the Feature tag (e.g. ["aalt"], ["liga"], etc.). *)
 
 type value_record = {
   x_placement  : int option;
@@ -574,7 +627,7 @@ type class_definition =
   | GlyphToClass      of glyph_id * class_value
   | GlyphRangeToClass of glyph_id * glyph_id * class_value
 
-val gpos : decoder -> string -> string option -> string ->
+val gpos : gpos_feature ->
   ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) ->
   (class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) ->
   'a -> ('a, error) result

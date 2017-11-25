@@ -12,3 +12,6 @@ tmp
 *.ttx
 otftrip
 otftrip-local
+gsubtrip
+cfftrip
+mathtrip

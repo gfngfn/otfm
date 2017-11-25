@@ -24,13 +24,64 @@ let string_of_file inf =
   | Sys_error e -> (Error (`Msg e))
 
 
-let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
+type error = [ Otfm.error | `Msg of string ]
+
+let ( >>= ) x f =
+  match x with
+  | Ok(v)    -> f v
+  | Error(e) -> Error(e :> error)
+
 let return v = Ok(v)
+
+let err e = Error(e)
+
+let pickup lst predicate e =
+  match lst |> List.filter predicate with
+  | []     -> err e
+  | v :: _ -> return v
 
 
 type pair_position =
   | Pair1 of Otfm.glyph_id * (Otfm.glyph_id * Otfm.value_record * Otfm.value_record) list
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
+
+
+let f_lig lst (gidfst, liginfolst) =
+  (gidfst, liginfolst) :: lst
+
+let f_pair1 lst (gidfst, pairinfolst) =
+  Pair1(gidfst, pairinfolst) :: lst
+
+(*
+let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
+  Pair2(clsval, pairinfolst) :: lst
+*)
+let f_pair2 _ _ lst _ = lst
+
+
+let decode_gsub d =
+  Otfm.gsub_script d >>= fun scriptlst ->
+  pickup scriptlst (fun script -> Otfm.gsub_script_tag script = "latn")
+    (`Msg("GSUB does not contain Script tag 'latn'")) >>= fun script_latn ->
+  Otfm.gsub_langsys script_latn >>= fun (langsys_DFLT, _) ->
+  Otfm.gsub_feature langsys_DFLT >>= fun (_, featurelst) ->
+  pickup featurelst (fun feature -> Otfm.gsub_feature_tag feature = "liga")
+    (`Msg("GSUB does not contain Feature tag 'liga' for 'latn'")) >>= fun feature_liga ->
+  Otfm.gsub feature_liga f_lig [] >>= fun gsubres ->
+  return gsubres
+
+
+let decode_gpos d =
+  Otfm.gpos_script d >>= fun scriptlst ->
+  pickup scriptlst (fun script -> Otfm.gpos_script_tag script = "latn")
+    (`Msg("GPOS does not contain Script tag 'latn'")) >>= fun script_latn ->
+  Otfm.gpos_langsys script_latn >>= fun (langsys_DFLT, _) ->
+  Otfm.gpos_feature langsys_DFLT >>= fun (_, featurelst) ->
+  pickup featurelst (fun feature -> Otfm.gpos_feature_tag feature = "kern")
+    (`Msg("GPOS does not contain Feature tag 'kern' for 'latn'")) >>= fun feature_kern ->
+  Otfm.gpos feature_kern f_pair1 f_pair2 [] >>= fun gposres ->
+  return gposres
+
 
 let main () =
   let filename =
@@ -45,22 +96,11 @@ let main () =
   Otfm.decoder (`String(src)) >>= function
   | Otfm.SingleDecoder(d) ->
       let () = print_endline "finish initializing decoder" in
-      let f_lig lst (gidfst, liginfolst) =
-        (gidfst, liginfolst) :: lst
-      in
-      let f_pair1 lst (gidfst, pairinfolst) =
-        Pair1(gidfst, pairinfolst) :: lst
-      in
-    (*
-      let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
-        Pair2(clsval, pairinfolst) :: lst
-      in
-    *)
-      let f_pair2 _ _ lst _ = lst in
-
-      Otfm.gsub d "latn" None "liga" f_lig [] >>= fun gsubres ->
-      Otfm.gpos d "latn" None "kern" f_pair1 f_pair2 [] >>= fun gposres ->
-      return (gsubres, gposres)
+      begin
+        decode_gsub d >>= fun gsubres ->
+        decode_gpos d >>= fun gposres ->
+        return (gsubres, gposres)
+      end
 
   | Otfm.TrueTypeCollection(_) ->
       let () = print_endline "TTC file" in
@@ -69,7 +109,8 @@ let main () =
 
 let () =
   match main () with
-  | Error(e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
+  | Error(#Otfm.error as e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
+  | Error(`Msg(msg))        -> Format.eprintf "%s" msg
   | Ok(gidfst_ligset_assoc, clsfst_pairposlst_assoc) ->
       begin
         print_endline "GSUB:";
