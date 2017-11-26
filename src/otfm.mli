@@ -23,7 +23,7 @@
     {3 References}
     {ul
     {- Microsoft.
-    {e {{:http://www.microsoft.com/typography/otspec/default.htm}
+    {e {{:https://www.microsoft.com/typography/otspec/default.htm}
         The OpenType Specification}}, 2009.}} *)
 
 open Result
@@ -48,86 +48,86 @@ module Tag : sig
   (** {2:req Required tables} *)
 
   val cmap : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/cmap.htm}cmap} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/cmap.htm}cmap} table. *)
   val head : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/head.htm}head} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/head.htm}head} table. *)
   val hhea : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/hhea.htm}hhea} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/hhea.htm}hhea} table. *)
   val hmtx : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/hmtx.htm}hmtx} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/hmtx.htm}hmtx} table. *)
   val maxp : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/maxp.htm}maxp} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/maxp.htm}maxp} table. *)
   val name : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/name.htm}name} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/name.htm}name} table. *)
   val os2 : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/os2.htm}os2} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/os2.htm}os2} table. *)
   val post : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/post.htm}post} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/post.htm}post} table. *)
 
   (** {2 TTF font tables} *)
 
   val cvt  : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/cvt.htm}cvt} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/cvt.htm}cvt} table. *)
   val fpgm : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/fpgm.htm}fpgm} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/fpgm.htm}fpgm} table. *)
   val glyf : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/glyf.htm}glyf} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf} table. *)
   val loca : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/loca.htm}loca} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/loca.htm}loca} table. *)
   val prep : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/prep.htm}prep} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/prep.htm}prep} table. *)
 
   (** {2 CFF font tables} *)
 
   val cff  : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/cff.htm}CFF} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/cff.htm}CFF} table. *)
   val vorg : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/vorg.htm}VORG} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/vorg.htm}VORG} table. *)
 
   (** {2 Bitmap glyph tables} *)
 
   val ebdt : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/ebdt.htm}EBDT} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/ebdt.htm}EBDT} table. *)
 
   val eblc : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/eblc.htm}EBLC} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/eblc.htm}EBLC} table. *)
 
   val ebsc : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/ebsc.htm}EBSC} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/ebsc.htm}EBSC} table. *)
 
   (** {2 Optional tables} *)
 
   val dsig : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/dsig.htm}DSIG} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/dsig.htm}DSIG} table. *)
   val gasp : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/gasp.htm}gasp} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/gasp.htm}gasp} table. *)
   val hdmx : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/hdmx.htm}hdmx} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/hdmx.htm}hdmx} table. *)
   val kern : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/kern.htm}kern} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/kern.htm}kern} table. *)
   val ltsh : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/ltsh.htm}LTSH} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/ltsh.htm}LTSH} table. *)
   val pclt : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/pclt.htm}PCLT} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/pclt.htm}PCLT} table. *)
   val vdmx : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/vdmx.htm}VDMX} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/vdmx.htm}VDMX} table. *)
   val vhea : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/vhea.htm}vhea} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/vhea.htm}vhea} table. *)
   val vmtx : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/vmtx.htm}vmtx} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/vmtx.htm}vmtx} table. *)
 
   (** {2 Advanced typographic tables} *)
 
   val base : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/base.htm}BASE} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/base.htm}BASE} table. *)
   val gdef : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/gdef.htm}GDEF} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/gdef.htm}GDEF} table. *)
   val gpos : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/gpos.htm}GPOS} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/gpos.htm}GPOS} table. *)
   val gsub : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/gsub.htm}GSUB} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/gsub.htm}GSUB} table. *)
   val jstf : tag
-  (** The {{:http://www.microsoft.com/typography/otspec/jstf.htm}JSTF} table. *)
+  (** The {{:https://www.microsoft.com/typography/otspec/jstf.htm}JSTF} table. *)
 
   (** {1 Functions} *)
 
@@ -185,27 +185,38 @@ type error_ctx =
 
 type error =
 [
-  | `Unknown_flavour of tag
-  | `Unsupported_TTC
-  | `Unsupported_cmaps of (int * int * int) list
+  | `Unknown_flavour                  of tag
+  | `Unsupported_cmap_format          of int
   | `Unsupported_glyf_matching_points
-  | `Missing_required_table of tag
-  | `Unknown_version of error_ctx * int32
-  | `Unknown_loca_format of error_ctx * int
-  | `Unknown_composite_format of error_ctx * int
-  | `Invalid_offset of error_ctx * int
-  | `Invalid_cp of int
-  | `Invalid_cp_range of int * int
-  | `Invalid_postscript_name of string
-  | `Unexpected_eoi of error_ctx
-(* added by gfn: *)
+  | `Missing_required_table           of tag
+  | `Unknown_version                  of error_ctx * int32
+  | `Unknown_loca_format              of error_ctx * int
+  | `Unknown_composite_format         of error_ctx * int
+  | `Invalid_offset                   of error_ctx * int
+  | `Invalid_cp                       of int
+  | `Invalid_cp_range                 of int * int
+  | `Invalid_postscript_name          of string
+  | `Unexpected_eoi                   of error_ctx
+(* added by T. Suwa: *)
+  | `Inconsistent_length_of_coverage  of error_ctx
+  | `Inconsistent_length_of_class
+(*
+  | `Missing_required_script_tag      of string
+  | `Missing_required_langsys_tag     of string
+  | `Missing_required_feature_tag     of string
+*)
+  | `Invalid_lookup_order             of int
+  | `Invalid_feature_index            of int
+  | `Invalid_feature_params           of int
+  | `Invalid_extension_position
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
-  | `Invalid_cff_not_an_offsize of int
+  | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Layered_ttc
 ]
 (** The type for decoding errors.
 
@@ -219,9 +230,19 @@ type src = [ `String of string ]
 (** The type for input sources. *)
 
 type decoder
-(** The type for OpenType font decoders. *)
+(** The type for single OpenType font decoders. *)
 
-val decoder : [< src ] -> decoder
+type ttc_element
+(** The type for TTC elements. *)
+
+type decoder_scheme =
+  | SingleDecoder      of decoder
+  | TrueTypeCollection of ttc_element list
+(** The type for OpenType font decoders, including those of TrueType Collection. *)
+
+val decoder_of_ttc_element : ttc_element -> (decoder, error) result
+
+val decoder : [< src ] -> (decoder_scheme, error) result
 (** [decoder src] is a decoder decoding from [src]. *)
 
 val decoder_src : decoder -> src
@@ -234,10 +255,10 @@ val decoder_src : decoder -> src
     be used further. However if {!flavour} or {!table_list} returns an
     error you can safely assume that all other functions will. The
     fields are in general not documented please refer to the OpenType
-    {{:http://www.microsoft.com/typography/otspec/default.htm}
+    {{:https://www.microsoft.com/typography/otspec/default.htm}
     specification} for details. *)
 
-type flavour = [ `TTF | `CFF ]
+type flavour = TTF_true | TTF_OT | CFF
 (** The type for OpenType flavours. *)
 
 val flavour : decoder -> (flavour, error) result
@@ -267,6 +288,9 @@ val postscript_name : decoder -> (string option, error) result
 
 (** {2:cmap cmap table} *)
 
+type device_table = int * int * int * int
+(** The type for device tables. *)
+
 type glyph_id = int
 (** The type for glyph ids, from [0] to [65534]. *)
 
@@ -280,24 +304,23 @@ type map_kind = [ `Glyph | `Glyph_range ]
     {- [`Glyph_range], [u0] maps to [gid], [u0 + 1] to [gid + 1], ...
        and [u1] to [gid + (u1 - u0)]}} *)
 
-val cmap : decoder -> ('a -> map_kind -> cp_range -> glyph_id -> 'a) ->
-  'a -> ((int * int * int) * 'a, error) result
-(** [cmap d f acc] folds over a mapping from unicode
-    scalar values to glyph ids by reading the
-    {{:http://www.microsoft.com/typography/otspec/cmap.htm}cmap} table.
-    The returned triple of integer indicates the platform id, encoding
-    id and format of the cmap used.
+type cmap_subtable
+(** The type for cmap subtables. *)
+
+val cmap : decoder -> (cmap_subtable list, error) result
+(** [cmap d] returns the list of all
+    {{:https://www.microsoft.com/typography/otspec/cmap.htm}cmap} subtables in the font. *)
+
+val cmap_subtable_ids : cmap_subtable -> int * int * int
+(** [cmap_subtable_ids st] returns the triple (platformID, encodingID, subtable format) of the subtable [st]. *)
+
+val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 'a) -> 'a -> ('a, error) result
+(** [cmap_subtable st f acc] folds over a mapping from unicode
+    scalar values to glyph ids by reading the cmap subtable [st].
 
     {b Limitations.} Only the format 13 (last resort font), format 12
     (UCS-4) and format 4 (UCS-2) cmap table formats are supported.
-
-    If multiple tables are present, it favours 13 over 12 over 4.  If
-    multiple tables of the same format are present it takes the first
-    one it finds.
-
-    If no supported cmap table is found the error [`Unsupported_cmaps]
-    is returned with the list of platform id, encoding id, format
-    available in the font. *)
+*)
 
 (** {2:glyf glyf table} *)
 
@@ -323,7 +346,7 @@ type glyph_descr =
 
 val glyf : decoder -> glyf_loc -> (glyph_descr, error) result
 (** [glyf d loc] is the glyph descroption located at [loc] by reading
-    the {{:http://www.microsoft.com/typography/otspec/glyf.htm}glyf}
+    the {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf}
     table. Glyph locations are obtainted via {!loca}. *)
 
 (** {2:head head table} *)
@@ -342,7 +365,7 @@ type head =
     head_lowest_rec_ppem : int;
     head_index_to_loc_format : int; }
 (** The type for representing
-    {{:http://www.microsoft.com/typography/otspec/head.htm}head} tables. *)
+    {{:https://www.microsoft.com/typography/otspec/head.htm}head} tables. *)
 
 val head : decoder -> (head, error) result
 (** [head d] is the head table. *)
@@ -361,7 +384,7 @@ type hhea =
     hhea_caret_slope_run : int;
     hhea_caret_offset : int; }
 (** The type for
-    {{:http://www.microsoft.com/typography/otspec/hhea.htm}hhea} tables. *)
+    {{:https://www.microsoft.com/typography/otspec/hhea.htm}hhea} tables. *)
 
 val hhea : decoder -> (hhea, error) result
 (** [hhea d] is the hhea table. *)
@@ -372,7 +395,7 @@ val hmtx :
   decoder -> ('a -> glyph_id -> int -> int -> 'a) -> 'a -> ('a, error) result
 (** [hmtx d f acc] folds over the horizontal metrics of the font by
     reading the
-    {{:http://www.microsoft.com/typography/otspec/hmtx.htm}hmtx}
+    {{:https://www.microsoft.com/typography/otspec/hmtx.htm}hmtx}
     table.  [f] is applied on each entry with [f acc' gid adv lsb]
     with [gid] the glyph id (guaranteed to range, in order, from
     [0] to glyph count minus one), [adv] the (unsigned) advance width,
@@ -386,7 +409,7 @@ type lang = string
 val name :
   decoder -> ('a -> int -> lang -> string -> 'a) -> 'a -> ('a, error) result
 (** [name d f acc] folds over the name records of the font by
-    reading the {{:http://www.microsoft.com/typography/otspec/name.htm}name}
+    reading the {{:https://www.microsoft.com/typography/otspec/name.htm}name}
     table. [f] is applied on each name id entry with [f acc' nid lang name]
     with [nid] the name id, lang the language tag, and [name] the UTF-8
     encoded name value.
@@ -442,7 +465,7 @@ type os2 =
     os2_us_break_char : int option;
     os2_us_max_context : int option; }
 (** The type for
-    {{:http://www.microsoft.com/typography/otspec/os2.htm}OS/2} tables. *)
+    {{:https://www.microsoft.com/typography/otspec/os2.htm}OS/2} tables. *)
 
 val os2 : decoder -> (os2, error) result
 (** [os2 d] is the OS/2 table. *)
@@ -460,7 +483,7 @@ val kern : decoder ->
   ('a -> glyph_id -> glyph_id -> int -> 'a) -> 'a ->
   ('a, error) result
 (** [kern d t p acc] folds over the kerning tables of [d] by
-    reading the {{:http://www.microsoft.com/typography/otspec/kern.htm}kern}
+    reading the {{:https://www.microsoft.com/typography/otspec/kern.htm}kern}
     table. [t] is called on each new (sub)table, the table pairs are skipped if
     it returns [`Skip] otherwise [p acc' left right value] is called on
     each kerning pair of the table. The function returns [acc] if there
@@ -472,7 +495,7 @@ val kern : decoder ->
 
 val loca : decoder -> glyph_id -> (glyf_loc option, error) result
 (** [loca d gid] looks up the location of the glyph with id [gid] by
-    reading the {{:http://www.microsoft.com/typography/otspec/loca.htm}loca}
+    reading the {{:https://www.microsoft.com/typography/otspec/loca.htm}loca}
     table. The result can be used with {!val:glyf} to lookup the glyph. *)
 
 (** {1:limitations Limitations}
@@ -521,6 +544,224 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
 
+type gsub_script
+(** The type for GSUB Script. *)
+
+type gsub_langsys
+(** The type for GSUB LangSys. *)
+
+type gsub_feature
+(** The type for GSUB Feature. *)
+
+val gsub_script : decoder -> (gsub_script list, error) result
+(** [gsub_script d] returns all of the Script tags the font contains. *)
+
+val gsub_script_tag : gsub_script -> string
+(** Returns the Script tag (e.g. ["arab"], ["cyrl"], ["hani"], ["latn"], etc.). *)
+
+val gsub_langsys : gsub_script -> (gsub_langsys * gsub_langsys list, error) result
+(** [gsub_langsys gs] returns
+    the pair of DefaultLangSys and all of the LangSys tags for the given Script [gs]. *)
+
+val gsub_langsys_tag : gsub_langsys -> string
+(** Returns the LangSys tag (e.g. [Some "DEU"], [Some "JAN"], [Some "TRK"], etc.). *)
+
+val gsub_feature : gsub_langsys -> (gsub_feature option * gsub_feature list, error) result
+(** [gsub_feature gl] returns
+    the pair of RequiredFeatureTag and all of the Feature tags for the given LangSys [gl]. *)
+
+val gsub_feature_tag : gsub_feature -> string
+(** Returns the Feature tag (e.g. ["aalt"], ["liga"], etc.). *)
+
+val gsub : gsub_feature -> ('a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) -> 'a -> ('a, error) result
+(** {b WARNING: subject to change in the future.}
+    Supports only
+    {{:https://www.microsoft.com/typography/otspec/gsub.htm#LS}LookupType 4: ligature substitution subtable}.
+    [gsub feature f init] folds the substitution subtables corresponding to [feature]. *)
+
+type gpos_script
+(** The type for GPOS Script. *)
+
+type gpos_langsys
+(** The type for GPOS LangSys. *)
+
+type gpos_feature
+(** The type for GPOS Feature. *)
+
+val gpos_script : decoder -> (gpos_script list, error) result
+(** [gpos_script d] returns all of the Script tags the font contains. *)
+
+val gpos_script_tag : gpos_script -> string
+(** Returns the Script tag (e.g. ["arab"], ["cyrl"], ["hani"], ["latn"], etc.). *)
+
+val gpos_langsys : gpos_script -> (gpos_langsys * gpos_langsys list, error) result
+(** [gpos_langsys gs] returns
+    the pair of DefaultLangSys and all of the LangSys tags for the given Script [gs]. *)
+
+val gpos_langsys_tag : gpos_langsys -> string
+(** Returns the LangSys tag (e.g. [Some "DEU"], [Some "JAN"], [Some "TRK"], etc.). *)
+
+val gpos_feature : gpos_langsys -> (gpos_feature option * gpos_feature list, error) result
+(** [gpos_feature gl] returns
+    the pair of RequiredFeatureTag and all of the Feature tags for the given LangSys [gl]. *)
+
+val gpos_feature_tag : gpos_feature -> string
+(** Returns the Feature tag (e.g. ["aalt"], ["liga"], etc.). *)
+
+type value_record = {
+  x_placement  : int option;
+  y_placement  : int option;
+  x_advance    : int option;
+  y_advance    : int option;
+  x_pla_device : int option;
+  y_pla_device : int option;
+  x_adv_device : int option;
+  y_adv_device : int option;
+}
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/gpos.htm#valueRecord}ValueRecord} tables. *)
+
+type class_value = int
+
+type class_definition =
+  | GlyphToClass      of glyph_id * class_value
+  | GlyphRangeToClass of glyph_id * glyph_id * class_value
+
+val gpos : gpos_feature ->
+  ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) ->
+  (class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) ->
+  'a -> ('a, error) result
+
+type math_value_record = int * device_table option
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MathValueRecord} tables. *)
+
+type math_constants =
+  {
+    script_percent_scale_down                     : int;
+    script_script_percent_scale_down              : int;
+    delimited_sub_formula_min_height              : int;
+    display_operator_min_height                   : int;
+    math_leading                                  : math_value_record;
+    axis_height                                   : math_value_record;
+    accent_base_height                            : math_value_record;
+    flattened_accent_base_height                  : math_value_record;
+    subscript_shift_down                          : math_value_record;
+    subscript_top_max                             : math_value_record;
+    subscript_baseline_drop_min                   : math_value_record;
+    superscript_shift_up                          : math_value_record;
+    superscript_shift_up_cramped                  : math_value_record;
+    superscript_bottom_min                        : math_value_record;
+    superscript_baseline_drop_max                 : math_value_record;
+    sub_superscript_gap_min                       : math_value_record;
+    superscript_bottom_max_with_subscript         : math_value_record;
+    space_after_script                            : math_value_record;
+    upper_limit_gap_min                           : math_value_record;
+    upper_limit_baseline_rise_min                 : math_value_record;
+    lower_limit_gap_min                           : math_value_record;
+    lower_limit_baseline_drop_min                 : math_value_record;
+    stack_top_shift_up                            : math_value_record;
+    stack_top_display_style_shift_up              : math_value_record;
+    stack_bottom_shift_down                       : math_value_record;
+    stack_bottom_display_style_shift_down         : math_value_record;
+    stack_gap_min                                 : math_value_record;
+    stack_display_style_gap_min                   : math_value_record;
+    stretch_stack_top_shift_up                    : math_value_record;
+    stretch_stack_bottom_shift_down               : math_value_record;
+    stretch_stack_gap_above_min                   : math_value_record;
+    stretch_stack_gap_below_min                   : math_value_record;
+    fraction_numerator_shift_up                   : math_value_record;
+    fraction_numerator_display_style_shift_up     : math_value_record;
+    fraction_denominator_shift_down               : math_value_record;
+    fraction_denominator_display_style_shift_down : math_value_record;
+    fraction_numerator_gap_min                    : math_value_record;
+    fraction_num_display_style_gap_min            : math_value_record;
+    fraction_rule_thickness                       : math_value_record;
+    fraction_denominator_gap_min                  : math_value_record;
+    fraction_denom_display_style_gap_min          : math_value_record;
+    skewed_fraction_horizontal_gap                : math_value_record;
+    skewed_fraction_vertical_gap                  : math_value_record;
+    overbar_vertical_gap                          : math_value_record;
+    overbar_rule_thickness                        : math_value_record;
+    overbar_extra_ascender                        : math_value_record;
+    underbar_vertical_gap                         : math_value_record;
+    underbar_rule_thickness                       : math_value_record;
+    underbar_extra_descender                      : math_value_record;
+    radical_vertical_gap                          : math_value_record;
+    radical_display_style_vertical_gap            : math_value_record;
+    radical_rule_thickness                        : math_value_record;
+    radical_extra_ascender                        : math_value_record;
+    radical_kern_before_degree                    : math_value_record;
+    radical_kern_after_degree                     : math_value_record;
+    radical_degree_bottom_raise_percent           : int;
+  }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MathConstants} tables. *)
+
+type math_kern = math_value_record list * math_value_record list
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MathKern} tables. *)
+
+type math_kern_info_record =
+  {
+    top_right_math_kern    : math_kern option;
+    top_left_math_kern     : math_kern option;
+    bottom_right_math_kern : math_kern option;
+    bottom_left_math_kern  : math_kern option;
+  }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MathKernInfoRecord} tables. *)
+
+type math_glyph_info =
+  {
+    math_italics_correction    : (glyph_id * math_value_record) list;
+    math_top_accent_attachment : (glyph_id * math_value_record) list;
+    math_kern_info             : (glyph_id * math_kern_info_record) list;
+  }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MathGlyphInfo} tables. *)
+
+type glyph_part_record =
+  {
+    glyph_id_for_part      : glyph_id;
+    start_connector_length : int;
+    end_connector_length   : int;
+    full_advance           : int;
+    part_flags             : int;
+  }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}GlyphPartRecord} tables. *)
+
+type math_glyph_construction =
+  {
+    glyph_assembly                 : (math_value_record * glyph_part_record list) option;
+    math_glyph_variant_record_list : (glyph_id * int) list;
+  }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MathGlyphConstruction} tables. *)
+
+type math_variants =
+  {
+    min_connector_overlap : int;
+    vert_glyph_assoc      : (glyph_id * math_glyph_construction) list;
+    horiz_glyph_assoc     : (glyph_id * math_glyph_construction) list;
+  }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MathVariants} tables. *)
+
+type math =
+  {
+    math_constants  : math_constants;
+    math_glyph_info : math_glyph_info;
+    math_variants   : math_variants;
+  }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} tables. *)
+
+val math : decoder -> (math, error) result
+(** [math d] returns the whole information in the
+    {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} table of [d]. *)
+
 type cff_info
 
 type cff_top_dict =
@@ -539,3 +780,19 @@ type cff_top_dict =
 val cff_info : decoder -> (cff_info, error) result
 
 val cff_top_dict : cff_info -> (cff_top_dict option, error) result
+
+(*---------------------------------------------------------------------------
+   Copyright (c) 2017 Takashi Suwa
+
+   Permission to use, copy, modify, and/or distribute this software for any
+   purpose with or without fee is hereby granted, provided that the above
+   copyright notice and this permission notice appear in all copies.
+
+   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+   WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+   MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+   ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  ---------------------------------------------------------------------------*)

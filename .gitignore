@@ -9,3 +9,9 @@ tmp
 *.dat
 *.otf
 *.ttf
+*.ttx
+otftrip
+otftrip-local
+gsubtrip
+cfftrip
+mathtrip
