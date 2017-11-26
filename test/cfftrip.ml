@@ -3,6 +3,8 @@ open Result
 
 let pp = Format.fprintf
 
+type error = [ Otfm.error | `Msg of string ]
+
 
 let string_of_file inf =
   try
@@ -25,8 +27,20 @@ let string_of_file inf =
   with
   | Sys_error e -> (Error (`Msg e))
 
+
+let charstring topdict gid =
+  match Otfm.charstring topdict.Otfm.charstring gid with
+  | Ok(None)      -> Error(`Msg (Printf.sprintf "no CharString for GID %d" gid))
+  | Ok(Some(s))   -> Ok(s)
+  | Error(e)      -> Error(e :> error)
+
+
 let main fmt =
-  let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e in
+  let ( >>= ) x f =
+    match x with
+    | Ok(v)    -> f v
+    | Error(e) -> Error(e :> error)
+  in
   let filename = try Sys.argv.(1) with Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end in
   let src =
     match string_of_file filename with
@@ -47,6 +61,8 @@ let main fmt =
         pp fmt "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
         pp fmt "PaintType: %d\n" topdict.Otfm.paint_type;
         pp fmt "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
+        charstring topdict 30 >>= fun s ->
+        pp fmt "Raw CharString example: %S\n" s;
         match topdict.Otfm.cid_info with
         | None ->
             pp fmt "Not a CIDFont\n";
@@ -68,5 +84,6 @@ let main fmt =
 
 let () =
   match main Format.std_formatter with
-  | Ok()     -> ()
-  | Error(e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
+  | Ok()                    -> ()
+  | Error(#Otfm.error as e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
+  | Error(`Msg msg)         -> Format.eprintf "@[%s@]@." msg

@@ -800,6 +800,8 @@ val cff_info : decoder -> (cff_info, error) result
 
 val cff_top_dict : cff_info -> (cff_top_dict, error) result
 
+val charstring : charstring -> glyph_id -> (string option, error) result
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa
 

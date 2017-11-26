@@ -2537,7 +2537,7 @@ type dict = (cff_value list) DictMap.t
 
 type string_index = string array
 
-type cff_info = string * dict * string_index * int
+type cff_info = string * dict * string_index * decoder * int
 
 type cff_cid_info =
   {
@@ -2550,7 +2550,7 @@ type cff_cid_info =
     cid_count         : int;
   }
 
-type charstring = int
+type charstring = decoder * int
 
 type cff_top_dict =
   {
@@ -2772,7 +2772,7 @@ let cff_info d : cff_info ok =
     d_index "(dummy)" (fun i -> d_bytes (?@ i)) d >>= fun gsubr_index ->
       (* temporary; should be decoded *)
 
-    return (name, dictmap, stridx, offset_CFF)
+    return (name, dictmap, stridx, d, offset_CFF)
 
 
 let err_dict_key key =
@@ -2825,7 +2825,7 @@ let get_ros dictmap key =
   | None                                                     -> err `Invalid_ros
 
 
-let cff_top_dict ((_, dictmap, stridx, offset_CFF) : cff_info) =
+let cff_top_dict ((_, dictmap, stridx, d, offset_CFF) : cff_info) =
 (*
   get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
   get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
@@ -2879,5 +2879,11 @@ let cff_top_dict ((_, dictmap, stridx, offset_CFF) : cff_info) =
     font_bbox;
     stroke_width;
     cid_info;
-    charstring = offset_CFF + reloffset_charstring;
+    charstring = (d, offset_CFF + reloffset_charstring);
   }
+
+
+let charstring (d, offset_CharString_INDEX) (gid : glyph_id) =
+  seek_pos offset_CharString_INDEX d >>= fun () ->
+  d_index_access (fun len -> d_bytes (?@ len)) gid d >>= fun sopt ->
+  return sopt  (* temporary *)
