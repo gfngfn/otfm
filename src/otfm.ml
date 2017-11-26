@@ -2537,7 +2537,7 @@ type dict = (cff_value list) DictMap.t
 
 type string_index = string array
 
-type cff_info = string * dict * string_index
+type cff_info = string * dict * string_index * int
 
 type cff_cid_info =
   {
@@ -2647,6 +2647,30 @@ let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) :
     return arr
 
 
+let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
+  d_uint16 d >>= fun count ->
+  if iaccess < 0 || count <= iaccess then
+    return None
+  else
+    d_offsize d >>= fun offSize ->
+    let ofszint =
+      match offSize with
+      | OffSize1 -> 1
+      | OffSize2 -> 2
+      | OffSize3 -> 3
+      | OffSize4 -> 4
+    in
+    let offset_origin = (cur_pos d) + count * ofszint - 1 in
+    d_skip (iaccess * ofszint) d >>= fun () ->
+    d_cff_offset offSize d >>= fun reloffset_access ->
+    d_cff_offset offSize d >>= fun reloffset_next ->
+    let offset_access = offset_origin + (?@ reloffset_access) in
+    let data_length = reloffset_next -@ reloffset_access in
+    seek_pos offset_access d >>= fun () ->
+    dl data_length d >>= fun data ->
+    return (Some(data))
+
+
 let d_dict_element d : (int * dict_element) ok =
   d_uint8 d >>= function
     | b0  when b0 |> is_in_range 32 246 ->
@@ -2718,9 +2742,10 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
   loop_keyval DictMap.empty len d
 
 
-let cff_info d =
+let cff_info d : cff_info ok =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
+  let offset_CFF = cur_pos d in
   (* -- Header -- *)
     Format.fprintf fmtCFF "* Header\n";  (* for debug *)
     d_uint8 d              >>= fun major ->
@@ -2740,16 +2765,14 @@ let cff_info d =
 
   (* -- String INDEX -- *)
     Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
-    d_index "(dummy)" (fun i -> d_bytes (?@ i)) d >>= fun string_index ->
-(*
-    string_index |> Array.iteri (fun i -> Format.fprintf fmtCFF "string[%d] = '%s'\n" i);  (* for debug *)
-*)
+    d_index "(dummy)" (fun i -> d_bytes (?@ i)) d >>= fun stridx ->
 
   (* -- Global Subr INDEX -- *)
     Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
     d_index "(dummy)" (fun i -> d_bytes (?@ i)) d >>= fun gsubr_index ->
+      (* temporary; should be decoded *)
 
-    return (name, dictmap, string_index)
+    return (name, dictmap, stridx, offset_CFF)
 
 
 let err_dict_key key =
@@ -2802,7 +2825,7 @@ let get_ros dictmap key =
   | None                                                     -> err `Invalid_ros
 
 
-let cff_top_dict ((_, dictmap, stridx) : cff_info) =
+let cff_top_dict ((_, dictmap, stridx, offset_CFF) : cff_info) =
 (*
   get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
   get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
@@ -2824,7 +2847,7 @@ let cff_top_dict ((_, dictmap, stridx) : cff_info) =
 
   get_iquad_opt   dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
   get_integer_opt dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
-  get_integer     dictmap (ShortKey(17))             >>= fun offset_charstring ->
+  get_integer     dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
   let cidoptres =
     if DictMap.mem (LongKey(30)) dictmap then
     (* -- when the font is a CIDFont -- *)
@@ -2856,5 +2879,5 @@ let cff_top_dict ((_, dictmap, stridx) : cff_info) =
     font_bbox;
     stroke_width;
     cid_info;
-    charstring = offset_charstring;
+    charstring = offset_CFF + reloffset_charstring;
   }
