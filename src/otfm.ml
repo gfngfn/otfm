@@ -169,6 +169,7 @@ type error =
   | `Invalid_cff_not_an_element
   | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
+  | `Invalid_cff_missing_required_key
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
   | `Layered_ttc
@@ -242,6 +243,8 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ not@ an@ element@]"
 | `Invalid_cff_not_an_offsize(n) ->
     pp ppf "@[Invalid@ CFF@ table;@ not@ an@ offsize@ %d@]" n
+| `Invalid_cff_missing_required_key ->
+    pp ppf "@[Invalid@ CFF@ table;@ missing@ required@ key@ in@ a@ DICT@]"
 | `Invalid_cff_inconsistent_length ->
     pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
 | `Invalid_cff_invalid_first_offset ->
@@ -2734,39 +2737,57 @@ let cff_info d =
     return (Some((name, dictmap)))
 
 
-let get_integer dictmap key dflt =
-  try
-    match DictMap.find key dictmap with
-    | Integer(i) :: [] -> return i
-    | _                -> err `Invalid_cff_not_an_integer
-  with
-  | Not_found -> return dflt
+let get_integer_opt dictmap key dflt =
+    match DictMap.find_opt key dictmap with
+    | Some(Integer(i) :: []) -> return i
+    | Some(_)                -> err `Invalid_cff_not_an_integer
+    | None                   -> return dflt
 
 
-let get_boolean dictmap key dflt =
-  get_integer dictmap key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
+let get_integer dictmap key =
+  match DictMap.find_opt key dictmap with
+  | Some(Integer(i) :: []) -> return i
+  | Some(_)                -> err `Invalid_cff_not_an_integer
+  | None                   -> err `Invalid_cff_missing_required_key
 
 
-let get_iquad dictmap key dflt =
-  try
-    match dictmap |> DictMap.find key with
-    | Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: [] -> return (i1, i2, i3, i4)
-    | _                                                              -> err `Invalid_cff_not_a_quad
-  with
-  | Not_found -> return dflt
+let get_sid = get_integer
+
+
+let get_boolean_opt dictmap key dflt =
+  get_integer_opt dictmap key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
+
+
+let get_iquad_opt dictmap key dflt =
+  match dictmap |> DictMap.find_opt key with
+  | Some(Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: []) -> return (i1, i2, i3, i4)
+  | Some(_)                                                              -> err `Invalid_cff_not_a_quad
+  | None                                                                 -> return dflt
 
 
 let cff_top_dict = function
   | None               -> return None
   | Some((_, dictmap)) ->
-      get_boolean dictmap (LongKey(1)) false         >>= fun is_fixed_pitch ->
-      get_integer dictmap (LongKey(2)) 0             >>= fun italic_angle ->
-      get_integer dictmap (LongKey(3)) (-100)        >>= fun underline_position ->
-      get_integer dictmap (LongKey(4)) 50            >>= fun underline_thickness ->
-      get_integer dictmap (LongKey(5)) 0             >>= fun paint_type ->
-      get_integer dictmap (LongKey(6)) 2             >>= fun charstring_type ->
-      get_iquad   dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-      get_integer dictmap (LongKey(8)) 0             >>= fun stroke_width ->
+      get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
+      get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
+(*
+      get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
+*)
+      get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
+      get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
+      get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
+      get_boolean_opt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
+      get_integer_opt dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
+      get_integer_opt dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
+      get_integer_opt dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
+      get_integer_opt dictmap (LongKey(5) ) 0            >>= fun paint_type ->
+      get_integer_opt dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
+        (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
+(*
+      get_integer     dictmap (ShortKey(13))             >>= fun unique_id ->
+*)
+      get_iquad_opt   dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+      get_integer_opt dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
       return (Some{
         is_fixed_pitch;
         italic_angle;

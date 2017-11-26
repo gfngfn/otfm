@@ -214,6 +214,7 @@ type error =
   | `Invalid_cff_not_an_element
   | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
+  | `Invalid_cff_missing_required_key
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
   | `Layered_ttc
