@@ -2,6 +2,16 @@ _build
 tmp
 \.\#*
 \#*#
+*~
 *.native
 *.byte
 *.install
+*.dat
+*.otf
+*.ttf
+*.ttx
+otftrip
+otftrip-local
+gsubtrip
+cfftrip
+mathtrip
