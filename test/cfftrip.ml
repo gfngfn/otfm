@@ -1,7 +1,8 @@
 
 open Result
 
-let str = Format.sprintf
+let pp = Format.fprintf
+
 
 let string_of_file inf =
   try
@@ -19,12 +20,12 @@ let string_of_file inf =
       assert false
     with
     | Exit -> close ic; Ok (Buffer.contents b)
-    | Failure _ -> close ic; Error (`Msg (str "%s: input file too large" inf))
+    | Failure _ -> close ic; Error (`Msg (Printf.sprintf "%s: input file too large" inf))
     | Sys_error e -> close ic; (Error (`Msg e));
   with
   | Sys_error e -> (Error (`Msg e))
 
-let main () =
+let main fmt =
   let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e in
   let filename = try Sys.argv.(1) with Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end in
   let src =
@@ -41,14 +42,14 @@ let main () =
         | None          -> begin print_endline "none.\n"; Ok() end
         | Some(topdict) ->
             let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
-            Printf.printf "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
-            Printf.printf "IsFixedPitch: %B\n" topdict.Otfm.is_fixed_pitch;
-            Printf.printf "ItalicAngle: %d\n" topdict.Otfm.italic_angle;
-            Printf.printf "UnderlinePosition: %d\n" topdict.Otfm.underline_position;
-            Printf.printf "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
-            Printf.printf "PaintType: %d\n" topdict.Otfm.paint_type;
-            Printf.printf "CharstringType: %d\n" topdict.Otfm.charstring_type;
-            Printf.printf "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
+            pp fmt "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
+            pp fmt "IsFixedPitch: %B\n" topdict.Otfm.is_fixed_pitch;
+            pp fmt "ItalicAngle: %d\n" topdict.Otfm.italic_angle;
+            pp fmt "UnderlinePosition: %d\n" topdict.Otfm.underline_position;
+            pp fmt "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
+            pp fmt "PaintType: %d\n" topdict.Otfm.paint_type;
+            pp fmt "CharstringType: %d\n" topdict.Otfm.charstring_type;
+            pp fmt "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
             Ok()
       end
 
@@ -59,6 +60,6 @@ let main () =
       end
 
 let () =
-  match main () with
+  match main Format.std_formatter with
   | Ok()     -> ()
   | Error(e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e

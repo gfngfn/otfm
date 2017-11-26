@@ -766,15 +766,15 @@ type cff_info
 
 type cff_top_dict =
   {
-    is_fixed_pitch : bool;
-    italic_angle : int;
-    underline_position : int;
+    is_fixed_pitch      : bool;
+    italic_angle        : int;
+    underline_position  : int;
     underline_thickness : int;
-    paint_type : int;
-    charstring_type : int;
-    (* font_matrix : float * float * float * float; *)
-    font_bbox : int * int * int * int;
-    stroke_width : int;
+    paint_type          : int;
+    charstring_type     : int;
+    (* font_matrix         : float * float * float * float; *)
+    font_bbox           : int * int * int * int;
+    stroke_width        : int;
   }
 
 val cff_info : decoder -> (cff_info, error) result
