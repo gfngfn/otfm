@@ -169,9 +169,13 @@ type error =
   | `Invalid_cff_not_an_element
   | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
-  | `Invalid_cff_missing_required_key
+  | `Missing_required_dict_short_key  of int
+  | `Missing_required_dict_long_key   of int
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Invalid_charstring_type          of int
+  | `Invalid_sid                      of int
+  | `Invalid_ros
   | `Layered_ttc
 ]
 
@@ -243,12 +247,20 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ not@ an@ element@]"
 | `Invalid_cff_not_an_offsize(n) ->
     pp ppf "@[Invalid@ CFF@ table;@ not@ an@ offsize@ %d@]" n
-| `Invalid_cff_missing_required_key ->
-    pp ppf "@[Invalid@ CFF@ table;@ missing@ required@ key@ in@ a@ DICT@]"
+| `Missing_required_dict_short_key i ->
+    pp ppf "@[Missing@ required@ key@ '%d'@ in@ a@ DICT@]" i
+| `Missing_required_dict_long_key i ->
+    pp ppf "@[Missing@ required@ key@ '12 %d'@ in@ a@ DICT@]" i
 | `Invalid_cff_inconsistent_length ->
     pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
 | `Invalid_cff_invalid_first_offset ->
     pp ppf "@[Invalid@ CFF@ table;@ invalid@ first@ offset@]"
+| `Invalid_charstring_type csty ->
+    pp ppf "@[Invalid@ CharString@ type@ (%d)@]" csty
+| `Invalid_sid sid ->
+    pp ppf "@[Invalid@ SID@ (%d)@]" sid
+| `Invalid_ros ->
+    pp ppf "@[Invalid@ ROS@]"
 | `Layered_ttc ->
     pp ppf "@[Layered@ TTC@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
@@ -2489,7 +2501,7 @@ let base d =
   confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
   d_offset_opt offset_BASE d >>= fun offsetopt_HorizAxis ->
   d_offset_opt offset_BASE d >>= fun offsetopt_VertAxis ->
-  return ()
+  return ()  (* temporary *)
 
 
 (* -- CFF_ table -- *)
@@ -2521,19 +2533,37 @@ module DictMap = Map.Make
   end)
 
 
-type cff_info = (string * (cff_value list) DictMap.t) option
+type dict = (cff_value list) DictMap.t
+
+type string_index = string array
+
+type cff_info = string * dict * string_index
+
+type cff_cid_info =
+  {
+    registry          : string;
+    ordering          : string;
+    supplement        : int;
+    cid_font_version  : int;
+    cid_font_revision : int;
+    cid_font_type     : int;
+    cid_count         : int;
+  }
+
+type charstring = int
 
 type cff_top_dict =
   {
-    is_fixed_pitch : bool;
-    italic_angle : int;
-    underline_position : int;
+    is_fixed_pitch      : bool;
+    italic_angle        : int;
+    underline_position  : int;
     underline_thickness : int;
-    paint_type : int;
-    charstring_type : int;
+    paint_type          : int;
     (* font_matrix : float * float * float * float; *)
-    font_bbox : int * int * int * int;
-    stroke_width : int;
+    font_bbox           : int * int * int * int;
+    stroke_width        : int;
+    cid_info            : cff_cid_info option;
+    charstring          : charstring;
   }
 
 
@@ -2679,16 +2709,13 @@ let d_dict_keyval d : (int * cff_value list * cff_key) ok =
 
 let d_dict len d : ((cff_value list) DictMap.t) ok =
   let rec loop_keyval mapacc len d =
-    if len = 0 (* doubtful*) then return mapacc else
-    if len < 0 (* doubtful*) then err `Invalid_cff_inconsistent_length else
+    if len = 0 then return mapacc else
+    if len < 0 then err `Invalid_cff_inconsistent_length else
       d_dict_keyval d >>= fun (step, vlst, k) ->
-(*
-      Printf.printf "step: %d\n" step;  (*for debug *)
-*)
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
-    Format.fprintf fmtCFF "length = %d\n" len;  (* for debug *)
-    loop_keyval DictMap.empty len d
+  Format.fprintf fmtCFF "length = %d\n" len;  (* for debug *)
+  loop_keyval DictMap.empty len d
 
 
 let cff_info d =
@@ -2702,23 +2729,11 @@ let cff_info d =
     d_uint8 d              >>= fun hdrSize ->
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
-  (* -- Name INDEX (which should contain only one element) -- *)
 
+  (* -- Name INDEX (which should contain only one element) -- *)
     Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
     d_index_singleton (fun i -> d_bytes (?@ i)) d >>= fun name ->
-(*
-    begin
-      match namelst with
-      | []          -> return None
-      | _ :: _ :: _ -> err `Invalid_cff_not_a_singleton
-      | n :: []     -> return (Some(n))
-    end >>= fun nameopt ->
-    let () =
-      match nameopt with
-      | None       -> Format.fprintf fmtCFF "name = None\n"  (* for debug *)
-      | Some(name) -> Format.fprintf fmtCFF "name = '%s'\n" name  (* for debug *)
-    in
-*)
+
   (* -- Top DICT INDEX (which should contain only one DICT) -- *)
     Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
     d_index_singleton (fun i -> d_dict (?@ i)) d >>= fun dictmap ->
@@ -2734,7 +2749,22 @@ let cff_info d =
     Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
     d_index "(dummy)" (fun i -> d_bytes (?@ i)) d >>= fun gsubr_index ->
 
-    return (Some((name, dictmap)))
+    return (name, dictmap, string_index)
+
+
+let err_dict_key key =
+  match key with
+  | ShortKey(i) -> err (`Missing_required_dict_short_key(i))
+  | LongKey(i)  -> err (`Missing_required_dict_long_key(i))
+
+
+let get_string stridx sid =
+  let nStdString = 391 in
+  if sid < nStdString then
+    failwith "a standard string; remains to be supported."
+  else
+    try return stridx.(sid - nStdString) with
+    | Invalid_argument(_) -> err (`Invalid_sid(sid))
 
 
 let get_integer_opt dictmap key dflt =
@@ -2748,7 +2778,7 @@ let get_integer dictmap key =
   match DictMap.find_opt key dictmap with
   | Some(Integer(i) :: []) -> return i
   | Some(_)                -> err `Invalid_cff_not_an_integer
-  | None                   -> err `Invalid_cff_missing_required_key
+  | None                   -> err_dict_key key
 
 
 let get_sid = get_integer
@@ -2765,36 +2795,66 @@ let get_iquad_opt dictmap key dflt =
   | None                                                                 -> return dflt
 
 
-let cff_top_dict = function
-  | None               -> return None
-  | Some((_, dictmap)) ->
-      get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
-      get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
+let get_ros dictmap key =
+  match dictmap |> DictMap.find_opt key with
+  | Some(Integer(sid1) :: Integer(sid2) :: Integer(i) :: []) -> return (sid1, sid2, i)
+  | Some(_)                                                  -> err `Invalid_ros
+  | None                                                     -> err `Invalid_ros
+
+
+let cff_top_dict ((_, dictmap, stridx) : cff_info) =
 (*
-      get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
+  get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
+  get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
+  get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
 *)
-      get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
-      get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
-      get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
-      get_boolean_opt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
-      get_integer_opt dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
-      get_integer_opt dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
-      get_integer_opt dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
-      get_integer_opt dictmap (LongKey(5) ) 0            >>= fun paint_type ->
-      get_integer_opt dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
-        (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
-(*
-      get_integer     dictmap (ShortKey(13))             >>= fun unique_id ->
-*)
-      get_iquad_opt   dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-      get_integer_opt dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
+  get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
+  get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
+  get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
+  get_boolean_opt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
+  get_integer_opt dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
+  get_integer_opt dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
+  get_integer_opt dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
+  get_integer_opt dictmap (LongKey(5) ) 0            >>= fun paint_type ->
+  get_integer_opt dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
+  confirm (charstring_type = 2)
+    (`Invalid_charstring_type(charstring_type))      >>= fun () ->
+
+  (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
+
+  get_iquad_opt   dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+  get_integer_opt dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
+  get_integer     dictmap (ShortKey(17))             >>= fun offset_charstring ->
+  let cidoptres =
+    if DictMap.mem (LongKey(30)) dictmap then
+    (* -- when the font is a CIDFont -- *)
+      get_ros         dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
+      get_integer_opt dictmap (LongKey(31)) 0    >>= fun cid_font_version ->
+      get_integer_opt dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
+      get_integer_opt dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
+      get_integer_opt dictmap (LongKey(34)) 8720 >>= fun cid_count ->
+      get_string stridx sid_registry >>= fun registry ->
+      get_string stridx sid_ordering >>= fun ordering ->
       return (Some{
-        is_fixed_pitch;
-        italic_angle;
-        underline_position;
-        underline_thickness;
-        paint_type;
-        charstring_type;
-        font_bbox;
-        stroke_width;
+        registry; ordering; supplement;
+        cid_font_version;
+        cid_font_revision;
+        cid_font_type;
+        cid_count;
       })
+    else
+    (* -- when the font is not a CIDFont -- *)
+      return None
+  in
+  cidoptres >>= fun cid_info ->
+  return {
+    is_fixed_pitch;
+    italic_angle;
+    underline_position;
+    underline_thickness;
+    paint_type;
+    font_bbox;
+    stroke_width;
+    cid_info;
+    charstring = offset_charstring;
+  }

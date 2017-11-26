@@ -36,20 +36,27 @@ let main fmt =
   Otfm.decoder (`String(src)) >>= function
   | Otfm.SingleDecoder(d) ->
       begin
-      print_endline "finish initializing decoder";
-      Otfm.cff_info d >>= fun cffi ->
-      Otfm.cff_top_dict cffi >>= function
-        | None          -> begin print_endline "none.\n"; Ok() end
-        | Some(topdict) ->
-            let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
-            pp fmt "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
-            pp fmt "IsFixedPitch: %B\n" topdict.Otfm.is_fixed_pitch;
-            pp fmt "ItalicAngle: %d\n" topdict.Otfm.italic_angle;
-            pp fmt "UnderlinePosition: %d\n" topdict.Otfm.underline_position;
-            pp fmt "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
-            pp fmt "PaintType: %d\n" topdict.Otfm.paint_type;
-            pp fmt "CharstringType: %d\n" topdict.Otfm.charstring_type;
-            pp fmt "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
+        print_endline "finish initializing decoder";
+        Otfm.cff_info d >>= fun cffi ->
+        Otfm.cff_top_dict cffi >>= fun topdict ->
+        let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
+        pp fmt "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
+        pp fmt "IsFixedPitch: %B\n" topdict.Otfm.is_fixed_pitch;
+        pp fmt "ItalicAngle: %d\n" topdict.Otfm.italic_angle;
+        pp fmt "UnderlinePosition: %d\n" topdict.Otfm.underline_position;
+        pp fmt "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
+        pp fmt "PaintType: %d\n" topdict.Otfm.paint_type;
+        pp fmt "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
+        match topdict.Otfm.cid_info with
+        | None ->
+            pp fmt "Not a CIDFont\n";
+            Ok()
+
+        | Some(cidinfo) ->
+            pp fmt "CIDFont\n";
+            pp fmt "Registry: '%s'\n" cidinfo.Otfm.registry;
+            pp fmt "Ordering: '%s'\n" cidinfo.Otfm.ordering;
+            pp fmt "Supplement: %d\n" cidinfo.Otfm.supplement;
             Ok()
       end
 

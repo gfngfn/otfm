@@ -214,9 +214,13 @@ type error =
   | `Invalid_cff_not_an_element
   | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
-  | `Invalid_cff_missing_required_key
+  | `Missing_required_dict_long_key   of int
+  | `Missing_required_dict_short_key  of int
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Invalid_charstring_type          of int
+  | `Invalid_sid                      of int
+  | `Invalid_ros
   | `Layered_ttc
 ]
 (** The type for decoding errors.
@@ -765,6 +769,19 @@ val math : decoder -> (math, error) result
 
 type cff_info
 
+type cff_cid_info =
+  {
+    registry          : string;
+    ordering          : string;
+    supplement        : int;
+    cid_font_version  : int;
+    cid_font_revision : int;
+    cid_font_type     : int;
+    cid_count         : int;
+  }
+
+type charstring
+
 type cff_top_dict =
   {
     is_fixed_pitch      : bool;
@@ -772,15 +789,16 @@ type cff_top_dict =
     underline_position  : int;
     underline_thickness : int;
     paint_type          : int;
-    charstring_type     : int;
-    (* font_matrix         : float * float * float * float; *)
+    (* font_matrix : float * float * float * float; *)
     font_bbox           : int * int * int * int;
     stroke_width        : int;
+    cid_info            : cff_cid_info option;
+    charstring          : charstring;
   }
 
 val cff_info : decoder -> (cff_info, error) result
 
-val cff_top_dict : cff_info -> (cff_top_dict option, error) result
+val cff_top_dict : cff_info -> (cff_top_dict, error) result
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa
