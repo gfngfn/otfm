@@ -219,6 +219,7 @@ type error =
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
   | `Invalid_charstring_type          of int
+  | `Invalid_charstring
   | `Invalid_sid                      of int
   | `Invalid_ros
   | `Layered_ttc
@@ -800,7 +801,11 @@ val cff_info : decoder -> (cff_info, error) result
 
 val cff_top_dict : cff_info -> (cff_top_dict, error) result
 
-val charstring : charstring -> glyph_id -> (string option, error) result
+type charstring_element
+
+val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* temporary *)
+
+val charstring : charstring -> glyph_id -> ((charstring_element list) option, error) result  (* temporary *)
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa

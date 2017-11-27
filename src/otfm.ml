@@ -174,6 +174,7 @@ type error =
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
   | `Invalid_charstring_type          of int
+  | `Invalid_charstring
   | `Invalid_sid                      of int
   | `Invalid_ros
   | `Layered_ttc
@@ -257,6 +258,8 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ invalid@ first@ offset@]"
 | `Invalid_charstring_type csty ->
     pp ppf "@[Invalid@ CharString@ type@ (%d)@]" csty
+| `Invalid_charstring ->
+    pp ppf "@[Invalid@ CharString@]"
 | `Invalid_sid sid ->
     pp ppf "@[Invalid@ SID@ (%d)@]" sid
 | `Invalid_ros ->
@@ -389,6 +392,10 @@ let d_uint32_int d =
     let s0 = (b0 lsl 8) lor b1 in
     let s1 = (b2 lsl 8) lor b3 in
     return ((s0 lsl 16) lor s1)
+
+let d_int32 d =
+  d_uint32 d >>= fun i ->
+  return (if i > 0x7FFFFFFFl then Int32.sub i 0x10000000l else i)
 
 let d_time d =                       (* LONGDATETIME as a unix time stamp. *)
   if miss d 8 then err_eoi d else
@@ -2649,6 +2656,7 @@ let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) :
 
 let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
   d_uint16 d >>= fun count ->
+  Format.fprintf fmtCFF "count = %d\n" count;  (* for debug *)
   if iaccess < 0 || count <= iaccess then
     return None
   else
@@ -2660,7 +2668,8 @@ let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d :
       | OffSize3 -> 3
       | OffSize4 -> 4
     in
-    let offset_origin = (cur_pos d) + count * ofszint - 1 in
+    Format.fprintf fmtCFF "OffSize = %a\n" pp_offsize offSize;  (* for debug *)
+    let offset_origin = (cur_pos d) + (count + 1) * ofszint - 1 in
     d_skip (iaccess * ofszint) d >>= fun () ->
     d_cff_offset offSize d >>= fun reloffset_access ->
     d_cff_offset offSize d >>= fun reloffset_next ->
@@ -2883,7 +2892,76 @@ let cff_top_dict ((_, dictmap, stridx, d, offset_CFF) : cff_info) =
   }
 
 
+type charstring_element =
+  | Argument of int
+  | Operator of cff_key
+
+
+let pp_charstring_element fmt = function
+  | Argument(i)           -> Format.fprintf fmt "Argument(%d)" i
+  | Operator(ShortKey(i)) -> Format.fprintf fmt "Operator(%d)" i
+  | Operator(LongKey(i))  -> Format.fprintf fmt "Operator(12 %d)" i
+  
+
+let d_charstring_element d =
+  d_uint8 d >>= function
+  | b0  when b0 |> is_in_range 0 11 ->
+      return (1, Operator(ShortKey(b0)))
+
+  | 12 ->
+      d_uint8 d >>= fun b1 ->
+      return (2, Operator(LongKey(b1)))
+
+  | b0  when b0 |> is_in_range 13 18 ->
+      return (1, Operator(ShortKey(b0)))
+
+  | 19 ->
+      failwith "unsupported CharString element 19"
+
+  | 20 ->
+      failwith "unsupported CharString element 20"
+
+  | b0  when b0 |> is_in_range 21 27 ->
+      return (1, Operator(ShortKey(b0)))
+
+  | 28 ->
+      d_int16 d >>= fun i ->
+      return (3, Argument(i))
+
+  | b0  when b0 |> is_in_range 29 31 ->
+      return (1, Operator(ShortKey(b0)))
+
+  | b0  when b0 |> is_in_range 32 246 ->
+      return (1, Argument(b0 - 139))
+
+  | b0  when b0 |> is_in_range 247 250 ->
+      d_uint8 d >>= fun b1 ->
+      return (2, Argument((b0 - 247) * 256 + b1 + 108))
+
+  | b0  when b0 |> is_in_range 251 254 ->
+      d_uint8 d >>= fun b1 ->
+      return (2, Argument(- (b0 - 251) * 256 - b1 - 108))
+
+  | 255 ->
+      d_int32 d >>= fun i ->
+      return (5, Argument(?@ i))
+
+  | _ ->
+      assert false
+        (* -- uint8 value must be in [0 .. 255] -- *)
+
+
+let d_charstring len32 d : (charstring_element list) ok =
+  let rec aux len acc d =
+    if len = 0 then return (List.rev acc) else
+    if len < 0 then err `Invalid_charstring else
+    d_charstring_element d >>= fun (step, cselem) ->
+    aux (len - step) (cselem :: acc) d
+  in
+  aux (?@ len32) [] d
+
+
 let charstring (d, offset_CharString_INDEX) (gid : glyph_id) =
   seek_pos offset_CharString_INDEX d >>= fun () ->
-  d_index_access (fun len -> d_bytes (?@ len)) gid d >>= fun sopt ->
+  d_index_access d_charstring gid d >>= fun sopt ->
   return sopt  (* temporary *)
