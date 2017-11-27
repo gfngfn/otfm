@@ -2544,7 +2544,13 @@ type dict = (cff_value list) DictMap.t
 
 type string_index = string array
 
-type cff_info = string * dict * string_index * decoder * int
+type charstring_element =
+  | Argument of int
+  | Operator of cff_key
+
+type subroutine_index = (charstring_element list) array
+
+type cff_info = string * dict * string_index * subroutine_index * decoder * int
 
 type cff_cid_info =
   {
@@ -2557,7 +2563,7 @@ type cff_cid_info =
     cid_count         : int;
   }
 
-type charstring = decoder * int
+type charstring_info = decoder * subroutine_index * int
 
 type cff_top_dict =
   {
@@ -2570,7 +2576,7 @@ type cff_top_dict =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
-    charstring          : charstring;
+    charstring_info     : charstring_info;
   }
 
 
@@ -2751,152 +2757,6 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
   loop_keyval DictMap.empty len d
 
 
-let cff_info d : cff_info ok =
-  init_decoder d >>=
-  seek_required_table Tag.cff d >>= fun () ->
-  let offset_CFF = cur_pos d in
-  (* -- Header -- *)
-    Format.fprintf fmtCFF "* Header\n";  (* for debug *)
-    d_uint8 d              >>= fun major ->
-    d_uint8 d              >>= fun minor ->
-    Format.fprintf fmtCFF "version = %d.%d\n" major minor;  (* for debug *)
-    d_uint8 d              >>= fun hdrSize ->
-    d_offsize d            >>= fun offSizeGlobal ->
-    d_skip (hdrSize - 4) d >>= fun () ->
-
-  (* -- Name INDEX (which should contain only one element) -- *)
-    Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
-    d_index_singleton (fun i -> d_bytes (?@ i)) d >>= fun name ->
-
-  (* -- Top DICT INDEX (which should contain only one DICT) -- *)
-    Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
-    d_index_singleton (fun i -> d_dict (?@ i)) d >>= fun dictmap ->
-
-  (* -- String INDEX -- *)
-    Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
-    d_index "(dummy)" (fun i -> d_bytes (?@ i)) d >>= fun stridx ->
-
-  (* -- Global Subr INDEX -- *)
-    Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
-    d_index "(dummy)" (fun i -> d_bytes (?@ i)) d >>= fun gsubr_index ->
-      (* temporary; should be decoded *)
-
-    return (name, dictmap, stridx, d, offset_CFF)
-
-
-let err_dict_key key =
-  match key with
-  | ShortKey(i) -> err (`Missing_required_dict_short_key(i))
-  | LongKey(i)  -> err (`Missing_required_dict_long_key(i))
-
-
-let get_string stridx sid =
-  let nStdString = 391 in
-  if sid < nStdString then
-    failwith "a standard string; remains to be supported."
-  else
-    try return stridx.(sid - nStdString) with
-    | Invalid_argument(_) -> err (`Invalid_sid(sid))
-
-
-let get_integer_opt dictmap key dflt =
-    match DictMap.find_opt key dictmap with
-    | Some(Integer(i) :: []) -> return i
-    | Some(_)                -> err `Invalid_cff_not_an_integer
-    | None                   -> return dflt
-
-
-let get_integer dictmap key =
-  match DictMap.find_opt key dictmap with
-  | Some(Integer(i) :: []) -> return i
-  | Some(_)                -> err `Invalid_cff_not_an_integer
-  | None                   -> err_dict_key key
-
-
-let get_sid = get_integer
-
-
-let get_boolean_opt dictmap key dflt =
-  get_integer_opt dictmap key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
-
-
-let get_iquad_opt dictmap key dflt =
-  match dictmap |> DictMap.find_opt key with
-  | Some(Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: []) -> return (i1, i2, i3, i4)
-  | Some(_)                                                              -> err `Invalid_cff_not_a_quad
-  | None                                                                 -> return dflt
-
-
-let get_ros dictmap key =
-  match dictmap |> DictMap.find_opt key with
-  | Some(Integer(sid1) :: Integer(sid2) :: Integer(i) :: []) -> return (sid1, sid2, i)
-  | Some(_)                                                  -> err `Invalid_ros
-  | None                                                     -> err `Invalid_ros
-
-
-let cff_top_dict ((_, dictmap, stridx, d, offset_CFF) : cff_info) =
-(*
-  get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
-  get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
-  get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
-*)
-  get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
-  get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
-  get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
-  get_boolean_opt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
-  get_integer_opt dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
-  get_integer_opt dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
-  get_integer_opt dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
-  get_integer_opt dictmap (LongKey(5) ) 0            >>= fun paint_type ->
-  get_integer_opt dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
-  confirm (charstring_type = 2)
-    (`Invalid_charstring_type(charstring_type))      >>= fun () ->
-
-  (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
-
-  get_iquad_opt   dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-  get_integer_opt dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
-  get_integer     dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
-  let cidoptres =
-    if DictMap.mem (LongKey(30)) dictmap then
-    (* -- when the font is a CIDFont -- *)
-      get_ros         dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
-      get_integer_opt dictmap (LongKey(31)) 0    >>= fun cid_font_version ->
-      get_integer_opt dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
-      get_integer_opt dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
-      get_integer_opt dictmap (LongKey(34)) 8720 >>= fun cid_count ->
-      get_string stridx sid_registry >>= fun registry ->
-      get_string stridx sid_ordering >>= fun ordering ->
-      return (Some{
-        registry; ordering; supplement;
-        cid_font_version;
-        cid_font_revision;
-        cid_font_type;
-        cid_count;
-      })
-    else
-    (* -- when the font is not a CIDFont -- *)
-      return None
-  in
-  cidoptres >>= fun cid_info ->
-  return {
-    is_fixed_pitch;
-    italic_angle;
-    underline_position;
-    underline_thickness;
-    paint_type;
-    font_bbox;
-    stroke_width;
-    cid_info;
-    charstring = (d, offset_CFF + reloffset_charstring);
-  }
-
-
-type charstring_element =
-  | Argument of int
-  | Operator of cff_key
-
-
 let pp_charstring_element fmt = function
   | Argument(i)           -> Format.fprintf fmt "  Argument(%d)" i
   | Operator(ShortKey(i)) -> Format.fprintf fmt "Operator(%d)" i
@@ -2959,6 +2819,147 @@ let d_charstring len32 d : (charstring_element list) ok =
     aux (len - step) (cselem :: acc) d
   in
   aux (?@ len32) [] d
+
+
+let cff_info d : cff_info ok =
+  init_decoder d >>=
+  seek_required_table Tag.cff d >>= fun () ->
+  let offset_CFF = cur_pos d in
+  (* -- Header -- *)
+    Format.fprintf fmtCFF "* Header\n";  (* for debug *)
+    d_uint8 d              >>= fun major ->
+    d_uint8 d              >>= fun minor ->
+    Format.fprintf fmtCFF "version = %d.%d\n" major minor;  (* for debug *)
+    d_uint8 d              >>= fun hdrSize ->
+    d_offsize d            >>= fun offSizeGlobal ->
+    d_skip (hdrSize - 4) d >>= fun () ->
+
+  (* -- Name INDEX (which should contain only one element) -- *)
+    Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
+    d_index_singleton (fun len32 -> d_bytes (?@ len32)) d >>= fun name ->
+
+  (* -- Top DICT INDEX (which should contain only one DICT) -- *)
+    Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
+    d_index_singleton (fun len32 -> d_dict (?@ len32)) d >>= fun dictmap ->
+
+  (* -- String INDEX -- *)
+    Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
+    d_index "(dummy)" (fun len32 -> d_bytes (?@ len32)) d >>= fun stridx ->
+
+  (* -- Global Subr INDEX -- *)
+    Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
+    d_index [] d_charstring d >>= fun gsubridx ->
+      (* temporary; should be decoded *)
+
+    return (name, dictmap, stridx, gsubridx, d, offset_CFF)
+
+
+let err_dict_key key =
+  match key with
+  | ShortKey(i) -> err (`Missing_required_dict_short_key(i))
+  | LongKey(i)  -> err (`Missing_required_dict_long_key(i))
+
+
+let get_string stridx sid =
+  let nStdString = 391 in
+  if sid < nStdString then
+    failwith "a standard string; remains to be supported."
+  else
+    try return stridx.(sid - nStdString) with
+    | Invalid_argument(_) -> err (`Invalid_sid(sid))
+
+
+let get_integer_opt dictmap key dflt =
+    match DictMap.find_opt key dictmap with
+    | Some(Integer(i) :: []) -> return i
+    | Some(_)                -> err `Invalid_cff_not_an_integer
+    | None                   -> return dflt
+
+
+let get_integer dictmap key =
+  match DictMap.find_opt key dictmap with
+  | Some(Integer(i) :: []) -> return i
+  | Some(_)                -> err `Invalid_cff_not_an_integer
+  | None                   -> err_dict_key key
+
+
+let get_sid = get_integer
+
+
+let get_boolean_opt dictmap key dflt =
+  get_integer_opt dictmap key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
+
+
+let get_iquad_opt dictmap key dflt =
+  match dictmap |> DictMap.find_opt key with
+  | Some(Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: []) -> return (i1, i2, i3, i4)
+  | Some(_)                                                              -> err `Invalid_cff_not_a_quad
+  | None                                                                 -> return dflt
+
+
+let get_ros dictmap key =
+  match dictmap |> DictMap.find_opt key with
+  | Some(Integer(sid1) :: Integer(sid2) :: Integer(i) :: []) -> return (sid1, sid2, i)
+  | Some(_)                                                  -> err `Invalid_ros
+  | None                                                     -> err `Invalid_ros
+
+
+let cff_top_dict ((_, dictmap, stridx, gsubridx, d, offset_CFF) : cff_info) =
+(*
+  get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
+  get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
+  get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
+*)
+  get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
+  get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
+  get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
+  get_boolean_opt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
+  get_integer_opt dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
+  get_integer_opt dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
+  get_integer_opt dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
+  get_integer_opt dictmap (LongKey(5) ) 0            >>= fun paint_type ->
+  get_integer_opt dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
+  confirm (charstring_type = 2)
+    (`Invalid_charstring_type(charstring_type))      >>= fun () ->
+
+  (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
+
+  get_iquad_opt   dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+  get_integer_opt dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
+  get_integer     dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
+  let cidoptres =
+    if DictMap.mem (LongKey(30)) dictmap then
+    (* -- when the font is a CIDFont -- *)
+      get_ros         dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
+      get_integer_opt dictmap (LongKey(31)) 0    >>= fun cid_font_version ->
+      get_integer_opt dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
+      get_integer_opt dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
+      get_integer_opt dictmap (LongKey(34)) 8720 >>= fun cid_count ->
+      get_string stridx sid_registry >>= fun registry ->
+      get_string stridx sid_ordering >>= fun ordering ->
+      return (Some{
+        registry; ordering; supplement;
+        cid_font_version;
+        cid_font_revision;
+        cid_font_type;
+        cid_count;
+      })
+    else
+    (* -- when the font is not a CIDFont -- *)
+      return None
+  in
+  cidoptres >>= fun cid_info ->
+  return {
+    is_fixed_pitch;
+    italic_angle;
+    underline_position;
+    underline_thickness;
+    paint_type;
+    font_bbox;
+    stroke_width;
+    cid_info;
+    charstring_info = (d, gsubridx, offset_CFF + reloffset_charstring);
+  }
 
 
 let pop (stk : int Stack.t) : int ok =
@@ -3111,8 +3112,24 @@ let pp_parsed_charstring fmt = function
   | _                       -> pp fmt "<other>"
 
 
-let parse_progress (uncleared : bool) (stk : int Stack.t) (cselem : charstring_element) =
+let access_subroutine idx i =
+  let len = Array.length idx in
+  let bias =
+    if len < 1240 then 107 else
+      if len < 33900 then 1131 else
+        32768
+  in
+  try return idx.(bias + i) with
+  | Invalid_argument(_) -> err `Invalid_charstring
+
+
+let rec parse_progress (gsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
   Format.fprintf fmtCFF "%a\n" pp_charstring_element cselem;  (* for debug *)
+  let uncleared =
+    match woptoptprev with
+    | None    -> true
+    | Some(_) -> false
+  in
     match cselem with
     | Argument(i) ->
         stk |> Stack.push i; return (None, [])
@@ -3245,6 +3262,11 @@ let parse_progress (uncleared : bool) (stk : int Stack.t) (cselem : charstring_e
         let dy1opt = pop_opt stk in
         return (None, [HHCurveTo(dy1opt, retlst)])
 
+    | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
+        pop stk >>= fun i ->
+        access_subroutine gsubridx i >>= fun rawcs ->
+        parse_charstring gsubridx (woptoptprev, []) rawcs
+
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
           if is_odd_length stk then
@@ -3284,31 +3306,25 @@ let parse_progress (uncleared : bool) (stk : int Stack.t) (cselem : charstring_e
         failwith (Printf.sprintf "unsupported operator '12 %d'" i)
 
 
-let parse_charstring (cs : charstring_element list) : (int option * parsed_charstring list) ok =
+and parse_charstring (gsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
   let stk : int Stack.t = Stack.create () in
   cs |> List.fold_left (fun res cselem ->
     res >>= fun (woptoptprev, acc) ->
-    let uncleared =
-      match woptoptprev with
-      | None    -> true
-      | Some(_) -> false
-    in
-    parse_progress uncleared stk cselem >>= fun (woptopt, parsed) ->
+    parse_progress gsubridx woptoptprev stk cselem >>= fun (woptopt, parsed) ->
     let accnew = List.rev_append parsed acc in
     match woptopt with
     | None    -> return (woptoptprev, accnew)
     | Some(_) -> return (woptopt, accnew)
-  ) (return (None, [])) >>= function
-  | (None, acc)       -> err `Invalid_charstring
-  | (Some(wopt), acc) -> return (wopt, List.rev acc)
+  ) (return init)
 
 
-let charstring (d, offset_CharString_INDEX) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
+let charstring ((d, gsubridx, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
   seek_pos offset_CharString_INDEX d >>= fun () ->
   d_index_access d_charstring gid d >>= function
   | None ->
       return None
 
   | Some(cs) ->
-      parse_charstring cs >>= fun ret ->
-      return (Some(ret))
+      parse_charstring gsubridx (None, []) cs >>= function
+      | (None, acc)       -> err `Invalid_charstring
+      | (Some(wopt), acc) -> return (Some((wopt, List.rev acc)))

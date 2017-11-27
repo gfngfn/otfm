@@ -29,7 +29,7 @@ let string_of_file inf =
 
 
 let charstring topdict gid =
-  match Otfm.charstring topdict.Otfm.charstring gid with
+  match Otfm.charstring topdict.Otfm.charstring_info gid with
   | Ok(None)      -> Error(`Msg (Printf.sprintf "no CharString for GID %d" gid))
   | Ok(Some(s))   -> Ok(s)
   | Error(e)      -> Error(e :> error)

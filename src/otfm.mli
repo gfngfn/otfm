@@ -781,7 +781,7 @@ type cff_cid_info =
     cid_count         : int;
   }
 
-type charstring
+type charstring_info
 
 type cff_top_dict =
   {
@@ -794,7 +794,7 @@ type cff_top_dict =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
-    charstring          : charstring;
+    charstring_info     : charstring_info;
   }
 
 val cff_info : decoder -> (cff_info, error) result
@@ -861,7 +861,7 @@ val pp_parsed_charstring : Format.formatter -> parsed_charstring -> unit
 (*
 val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* temporary *)
 *)
-val charstring : charstring -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
+val charstring : charstring_info -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa
