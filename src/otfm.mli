@@ -794,6 +794,8 @@ type cff_top_dict =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
+    default_width_x     : int;
+    nominal_width_x     : int;
     charstring_info     : charstring_info;
   }
 

@@ -2563,7 +2563,7 @@ type cff_cid_info =
     cid_count         : int;
   }
 
-type charstring_info = decoder * subroutine_index * int
+type charstring_info = decoder * subroutine_index * subroutine_index * int
 
 type cff_top_dict =
   {
@@ -2576,6 +2576,8 @@ type cff_top_dict =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
+    default_width_x     : int;
+    nominal_width_x     : int;
     charstring_info     : charstring_info;
   }
 
@@ -2883,6 +2885,12 @@ let get_integer dictmap key =
   | None                   -> err_dict_key key
 
 
+let get_integer_pair dictmap key =
+  match DictMap.find_opt key dictmap with
+  | Some(Integer(i1) :: Integer(i2) :: []) -> return (i1, i2)
+  | Some(_)                                -> err `Invalid_cff_not_an_integer
+  | None                                   -> err_dict_key key
+
 let get_sid = get_integer
 
 
@@ -2924,9 +2932,10 @@ let cff_top_dict ((_, dictmap, stridx, gsubridx, d, offset_CFF) : cff_info) =
 
   (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
 
-  get_iquad_opt   dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-  get_integer_opt dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
-  get_integer     dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
+  get_iquad_opt    dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+  get_integer_opt  dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
+  get_integer      dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
+  get_integer_pair dictmap (ShortKey(18))             >>= fun (size_private, reloffset_private) ->
   let cidoptres =
     if DictMap.mem (LongKey(30)) dictmap then
     (* -- when the font is a CIDFont -- *)
@@ -2949,6 +2958,20 @@ let cff_top_dict ((_, dictmap, stridx, gsubridx, d, offset_CFF) : cff_info) =
       return None
   in
   cidoptres >>= fun cid_info ->
+
+(* -- Private DICT -- *)
+  let offset_private = offset_CFF + reloffset_private in
+  seek_pos offset_private d >>= fun () ->
+  d_dict size_private d >>= fun dictmap_private ->
+  get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_subrs ->
+  get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
+  get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
+
+(* -- Local Subr INDEX -- *)
+  seek_pos (offset_private + selfoffset_subrs) d >>= fun () ->
+  Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
+  d_index [] d_charstring d >>= fun subridx ->
+
   return {
     is_fixed_pitch;
     italic_angle;
@@ -2958,7 +2981,9 @@ let cff_top_dict ((_, dictmap, stridx, gsubridx, d, offset_CFF) : cff_info) =
     font_bbox;
     stroke_width;
     cid_info;
-    charstring_info = (d, gsubridx, offset_CFF + reloffset_charstring);
+    default_width_x;
+    nominal_width_x;
+    charstring_info = (d, gsubridx, subridx, offset_CFF + reloffset_charstring);
   }
 
 
@@ -3123,7 +3148,7 @@ let access_subroutine idx i =
   | Invalid_argument(_) -> err `Invalid_charstring
 
 
-let rec parse_progress (gsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
+let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
   Format.fprintf fmtCFF "%a\n" pp_charstring_element cselem;  (* for debug *)
   let uncleared =
     match woptoptprev with
@@ -3204,7 +3229,9 @@ let rec parse_progress (gsubridx : subroutine_index) (woptoptprev : (int option)
         return (None, [RRCurveTo(bezierlst)])
 
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
-        failwith "unsupported callsubr (10)"
+        pop stk >>= fun i ->
+        access_subroutine lsubridx i >>= fun rawcs ->
+        parse_charstring gsubridx lsubridx (woptoptprev, []) rawcs
 
     | Operator(ShortKey(14)) ->  (* -- endchar (14) -- *)
         let lst = pop_all stk in
@@ -3265,7 +3292,7 @@ let rec parse_progress (gsubridx : subroutine_index) (woptoptprev : (int option)
     | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
         pop stk >>= fun i ->
         access_subroutine gsubridx i >>= fun rawcs ->
-        parse_charstring gsubridx (woptoptprev, []) rawcs
+        parse_charstring gsubridx lsubridx (woptoptprev, []) rawcs
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -3306,11 +3333,11 @@ let rec parse_progress (gsubridx : subroutine_index) (woptoptprev : (int option)
         failwith (Printf.sprintf "unsupported operator '12 %d'" i)
 
 
-and parse_charstring (gsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
+and parse_charstring (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
   let stk : int Stack.t = Stack.create () in
   cs |> List.fold_left (fun res cselem ->
     res >>= fun (woptoptprev, acc) ->
-    parse_progress gsubridx woptoptprev stk cselem >>= fun (woptopt, parsed) ->
+    parse_progress gsubridx lsubridx woptoptprev stk cselem >>= fun (woptopt, parsed) ->
     let accnew = List.rev_append parsed acc in
     match woptopt with
     | None    -> return (woptoptprev, accnew)
@@ -3318,13 +3345,13 @@ and parse_charstring (gsubridx : subroutine_index) (init : (int option) option *
   ) (return init)
 
 
-let charstring ((d, gsubridx, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
+let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
   seek_pos offset_CharString_INDEX d >>= fun () ->
   d_index_access d_charstring gid d >>= function
   | None ->
       return None
 
   | Some(cs) ->
-      parse_charstring gsubridx (None, []) cs >>= function
+      parse_charstring gsubridx lsubridx (None, []) cs >>= function
       | (None, acc)       -> err `Invalid_charstring
       | (Some(wopt), acc) -> return (Some((wopt, List.rev acc)))
