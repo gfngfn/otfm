@@ -2662,6 +2662,42 @@ let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) :
     return arr
 
 
+let d_cff_real d =
+  Format.fprintf fmtCFF "d_cff_real\n";  (* for debug *)
+  let to_float lst =
+    float_of_string (String.concat "" lst)
+  in
+  let nibble = function
+    | d  when d |> is_in_range 0 9 -> return (string_of_int d)
+    | 10                           -> return "."
+    | 11                           -> return "e"
+    | 12                           -> return "e-"
+    | 13                           -> err `Invalid_cff_not_an_element
+    | 14                           -> return "-"
+    | 15                           -> return ""
+    | _                            -> err `Invalid_cff_not_an_element
+  in
+  let rec aux step acc =
+    d_uint8 d >>= fun raw ->
+    let q1 = raw / 16 in
+    let q2 = raw mod 16 in
+    if q1 = 15 then
+      if q2 = 15 then
+        return (step + 1, to_float (List.rev acc))
+      else
+        err `Invalid_cff_not_an_element
+    else
+      if q2 = 15 then
+        nibble q1 >>= fun nb1 ->
+        return (step + 1, to_float (List.rev (nb1 :: acc)))
+      else
+        nibble q2 >>= fun nb2 ->
+        nibble q1 >>= fun nb1 ->
+        aux (step + 1) (nb2 :: nb1 :: acc)
+  in
+  aux 0 []
+
+
 let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
   d_uint16 d >>= fun count ->
   Format.fprintf fmtCFF "count = %d\n" count;  (* for debug *)
@@ -2690,16 +2726,15 @@ let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d :
 
 let d_dict_element d : (int * dict_element) ok =
   d_uint8 d >>= function
-    | b0  when b0 |> is_in_range 32 246 ->
-        return (1, Value(Integer(b0 - 139)))
+    | k0  when k0 |> is_in_range 0 11 ->
+        return (1, Key(ShortKey(k0)))
 
-    | b0  when b0 |> is_in_range 247 250 ->
-        d_uint8 d >>= fun b1 ->
-        return (2, Value(Integer((b0 - 247) * 256 + b1 + 108)))
+    | 12 ->
+        d_uint8 d >>= fun k1 ->
+        return (2, Key(LongKey(k1)))
 
-    | b0  when b0 |> is_in_range 251 254 ->
-        d_uint8 d >>= fun b1 ->
-        return (2, Value(Integer(-(b0 - 251) * 256 - b1 - 108)))
+    | k0  when k0 |> is_in_range 13 21 ->
+        return (1, Key(ShortKey(k0)))
 
     | 28 ->
         d_uint8 d >>= fun b1 ->
@@ -2714,17 +2749,19 @@ let d_dict_element d : (int * dict_element) ok =
         return (5, Value(Integer((b1 lsl 24) lor (b2 lsl 16) lor (b3 lsl 8) lor b4)))
 
     | 30 ->
-        failwith "a real number operand; remains to be implemented."
+        d_cff_real d >>= fun (step, real) ->
+        return (1 + step, Value(Real(real)))
 
-    | k0  when k0 |> is_in_range 0 11 ->
-        return (1, Key(ShortKey(k0)))
+    | b0  when b0 |> is_in_range 32 246 ->
+        return (1, Value(Integer(b0 - 139)))
 
-    | k0  when k0 |> is_in_range 13 21 ->
-        return (1, Key(ShortKey(k0)))
+    | b0  when b0 |> is_in_range 247 250 ->
+        d_uint8 d >>= fun b1 ->
+        return (2, Value(Integer((b0 - 247) * 256 + b1 + 108)))
 
-    | 12 ->
-        d_uint8 d >>= fun k1 ->
-        return (2, Key(LongKey(k1)))
+    | b0  when b0 |> is_in_range 251 254 ->
+        d_uint8 d >>= fun b1 ->
+        return (2, Value(Integer(-(b0 - 251) * 256 - b1 - 108)))
 
     | _ ->
         err `Invalid_cff_not_an_element
@@ -3233,6 +3270,9 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         access_subroutine lsubridx i >>= fun rawcs ->
         parse_charstring gsubridx lsubridx (woptoptprev, []) rawcs
 
+    | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
+        return (Some(None), [])
+
     | Operator(ShortKey(14)) ->  (* -- endchar (14) -- *)
         let lst = pop_all stk in
         begin
@@ -3245,6 +3285,22 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
             match lst with
             | [] -> return (None, [EndChar])
             | _  -> err `Invalid_charstring
+        end
+
+    | Operator(ShortKey(18)) ->  (* -- hstemhm (18) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | [] ->
+              err `Invalid_charstring
+
+          | (y, dy) :: csptlst ->
+              let ret = [HStemHM(y, dy, csptlst)] in
+              if uncleared then
+                let wopt = pop_opt stk in
+                return (Some(wopt), ret)
+              else
+                return (None, ret)
         end
 
     | Operator(ShortKey(21)) ->  (* -- rmoveto (21) -- *)
@@ -3266,6 +3322,22 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         else
           return (None, ret)
 
+    | Operator(ShortKey(23)) ->  (* -- vstemhm (23) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | [] ->
+              err `Invalid_charstring
+
+          | (x, dx) :: csptlst ->
+              let ret = [VStemHM(x, dx, csptlst)] in
+              if uncleared then
+                let wopt = pop_opt stk in
+                return (Some(wopt), ret)
+              else
+                return (None, ret)
+        end
+
     | Operator(ShortKey(24)) ->  (* -- rcurveline (24) -- *)
         pop stk >>= fun dyd ->
         pop stk >>= fun dxd ->
@@ -3282,6 +3354,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         pop stk >>= fun dxb ->
         let pairlst = pop_iter pop_pair_opt stk in
         return (None, [RLineTo(pairlst); RRCurveTo([((dxb, dyb), (dxc, dyc), (dxd, dyd))])])
+
+    | Operator(ShortKey(26)) ->  (* -- vvcurveto (26) --*)
+        let tuplelst = pop_iter pop_4_opt stk in
+        let retlst = tuplelst |> List.map (fun (dya, dxb, dyb, dyc) -> (dya, (dxb, dyb), dyc)) in
+        let dx1opt = pop_opt stk in
+        return (None, [VVCurveTo(dx1opt, retlst)])
 
     | Operator(ShortKey(27)) ->  (* -- hhcurveto (27) -- *)
         let tuplelst = pop_iter pop_4_opt stk in
