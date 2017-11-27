@@ -2898,7 +2898,7 @@ type charstring_element =
 
 
 let pp_charstring_element fmt = function
-  | Argument(i)           -> Format.fprintf fmt "Argument(%d)" i
+  | Argument(i)           -> Format.fprintf fmt "  Argument(%d)" i
   | Operator(ShortKey(i)) -> Format.fprintf fmt "Operator(%d)" i
   | Operator(LongKey(i))  -> Format.fprintf fmt "Operator(12 %d)" i
   
@@ -2961,7 +2961,354 @@ let d_charstring len32 d : (charstring_element list) ok =
   aux (?@ len32) [] d
 
 
-let charstring (d, offset_CharString_INDEX) (gid : glyph_id) =
+let pop (stk : int Stack.t) : int ok =
+  try return (Stack.pop stk) with
+  | Stack.Empty -> err `Invalid_charstring
+
+
+let pop_opt (stk : int Stack.t) : int option =
+  try Some(Stack.pop stk) with
+  | Stack.Empty -> None
+
+
+let pop_all (stk : int Stack.t) : int list =
+  let rec aux acc =
+    if Stack.is_empty stk then acc else
+      let i = Stack.pop stk in
+        aux (i :: acc)
+  in
+    aux []
+
+
+let pop_pair_opt (stk : int Stack.t) : (int * int) option =
+  if Stack.length stk < 2 then None else
+    let y = Stack.pop stk in
+    let x = Stack.pop stk in
+      Some((x, y))
+  
+
+let pop_4_opt (stk : int Stack.t) : (int * int * int * int) option =
+  if Stack.length stk < 6 then None else
+    let d4 = Stack.pop stk in
+    let d3 = Stack.pop stk in
+    let d2 = Stack.pop stk in
+    let d1 = Stack.pop stk in
+      Some((d1, d2, d3, d4))
+
+
+let pop_6_opt (stk : int Stack.t) : (int * int * int * int * int * int) option =
+  if Stack.length stk < 6 then None else
+    let d6 = Stack.pop stk in
+    let d5 = Stack.pop stk in
+    let d4 = Stack.pop stk in
+    let d3 = Stack.pop stk in
+    let d2 = Stack.pop stk in
+    let d1 = Stack.pop stk in
+      Some((d1, d2, d3, d4, d5, d6))
+
+
+let pop_8_opt (stk : int Stack.t) : (int * int * int * int * int * int * int * int) option =
+  if Stack.length stk < 6 then None else
+    let d8 = Stack.pop stk in
+    let d7 = Stack.pop stk in
+    let d6 = Stack.pop stk in
+    let d5 = Stack.pop stk in
+    let d4 = Stack.pop stk in
+    let d3 = Stack.pop stk in
+    let d2 = Stack.pop stk in
+    let d1 = Stack.pop stk in
+      Some((d1, d2, d3, d4, d5, d6, d7, d8))
+  
+
+let pop_iter (type a) (popf : int Stack.t -> a option) (stk : int Stack.t) : (a list) =
+  let rec aux acc =
+    let retopt = popf stk in
+    match retopt with
+    | None      -> acc
+    | Some(ret) -> aux (ret :: acc)
+  in
+  aux []
+
+
+let is_odd_length stk =
+  let len = Stack.length stk in
+    len mod 2 = 1
+
+
+let make_bezier (dxa, dya, dxb, dyb, dxc, dyc) = ((dxa, dya), (dxb, dyb), (dxc, dyc))
+
+
+type csx = int
+
+type csy = int
+
+type cspoint = csx * csy
+
+type parsed_charstring =
+  | HStem of int * int * cspoint list
+      (* -- hstem (1) -- *)
+  | VStem of int * int * cspoint list
+      (* -- vstem (3) -- *)
+  | VMoveTo of int
+      (* -- vmoveto (4) -- *)
+  | RLineTo of cspoint list
+      (* -- rlineto (5) -- *)
+  | HLineTo of int list
+      (* -- hlineto (6) -- *)
+  | VLineTo of int list
+      (* -- vlineto (7) -- *)
+  | RRCurveTo of (cspoint * cspoint * cspoint) list
+      (* -- rrcurveto (8) *)
+  | EndChar
+      (* -- endchar (14) -- *)
+  | HStemHM of int * int * cspoint list
+      (* -- hstemhm (18) -- *)
+(*
+  | HintMask
+  | CntrMask
+*)
+  | RMoveTo of cspoint
+      (* -- rmoveto (21) -- *)
+  | HMoveTo of int
+      (* -- hmoveto (22) -- )*)
+  | VStemHM of int * int * cspoint list
+      (* -- vstemhm (23) -- *)
+  | VVCurveTo of csx option * (csy * cspoint * csy) list
+      (* -- vvcurveto (26) -- *)
+  | HHCurveTo of csy option * (csx * cspoint * csx) list
+      (* -- hhcurveto (27) -- *)
+  | VHCurveTo1 of int * int * int * int * (int * int * int * int * int * int * int * int) list * int option
+  | VHCurveTo2 of (int * int * int * int * int * int * int * int) list * int option
+      (* -- vhcurveto (30) -- *)
+  | HVCurveTo1 of int * int * int * int * (int * int * int * int * int * int * int * int) list * int option
+  | HVCurveTo2 of (int * int * int * int * int * int * int * int) list * int option
+      (* -- hvcurveto (31) -- *)
+  | Flex of cspoint * cspoint * cspoint * cspoint * int
+      (* -- flex (12 35) -- *)
+  | HFlex of int * cspoint * int * int * int * int
+      (* -- hflex (12 34) -- *)
+  | HFlex1 of cspoint * cspoint * int * int * int * int
+      (* -- hflex1 (12 36) -- *)
+  | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
+      (* -- flex1 (12 37) -- *)
+
+
+let pp_parsed_charstring fmt = function
+  | HStem(y, dy, csptlst)   -> pp fmt "HStem(%d, %d, ...)" y dy
+  | VStem(x, dx, csptlst)   -> pp fmt "VStem(%d, %d, ...)" x dx
+  | VMoveTo(dy1)            -> pp fmt "VMoveTo(%d)" dy1
+  | RLineTo(csptlst)        -> pp fmt "RLineTo(...)"
+  | HLineTo(lst)            -> pp fmt "HLineTo(...)"
+  | VLineTo(lst)            -> pp fmt "VLineTo(...)"
+  | RRCurveTo(bezierlst)    -> pp fmt "RRCurveTo(...)"
+  | EndChar                 -> pp fmt "EndChar"
+  | HStemHM(y, dy, csptlst) -> pp fmt "HStemHM(%d, %d, ...)" y dy
+  | RMoveTo((dx1, dy1))     -> pp fmt "RMoveTo(%d, %d)" dx1 dy1
+  | HMoveTo(dx1)            -> pp fmt "HMoveTo(%d)" dx1
+  | VStemHM(x, dx, csptlst) -> pp fmt "VStemHM(%d, %d, ...)" x dx
+  | VVCurveTo(_, _)         -> pp fmt "VVCurveTo(_, ...)"
+  | HHCurveTo(_, _)         -> pp fmt "HHCurveTo(_, ...)"
+  | _                       -> pp fmt "<other>"
+
+
+let parse_progress (uncleared : bool) (stk : int Stack.t) (cselem : charstring_element) =
+  Format.fprintf fmtCFF "%a\n" pp_charstring_element cselem;  (* for debug *)
+    match cselem with
+    | Argument(i) ->
+        stk |> Stack.push i; return (None, [])
+
+    | Operator(ShortKey(1)) ->  (* -- hstem (1) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | [] ->
+              err `Invalid_charstring
+
+          | (y, dy) :: csptlst ->
+              let ret = [HStem(y, dy, csptlst)] in
+              if uncleared then
+                let wopt = pop_opt stk in
+                return (Some(wopt), ret)
+              else
+                return (None, ret)
+        end
+
+    | Operator(ShortKey(3)) ->  (* -- vstem (3) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | [] ->
+              err `Invalid_charstring
+
+          | (x, dx) :: csptlst ->
+              let ret = [VStem(x, dx, csptlst)] in
+              if uncleared then
+                let wopt = pop_opt stk in
+                return (Some(wopt), ret)
+              else
+                return (None, ret)
+        end
+
+    | Operator(ShortKey(4)) ->  (* -- vmoveto (4) -- *)
+        pop stk >>= fun arg ->
+        if uncleared then
+          let wopt = pop_opt stk in
+          return (Some(wopt), [VMoveTo(arg)])
+        else
+          return (None, [VMoveTo(arg)])
+
+    | Operator(ShortKey(5)) ->  (* -- rlineto (5) -- *)
+        let csptlst = pop_iter pop_pair_opt stk in
+        return (None, [RLineTo(csptlst)])
+
+    | Operator(ShortKey(6)) ->  (* -- hlineto (6) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        let lastopt = pop_opt stk in
+        let flatlst = pairlst |> List.map (fun (a, b) -> [a; b]) |> List.concat in
+        begin
+          match lastopt with
+          | None       -> return (None, [HLineTo(flatlst)])
+          | Some(last) -> return (None, [HLineTo(List.append flatlst [last])])
+        end
+
+    | Operator(ShortKey(7)) ->  (* -- vlineto (7) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        let lastopt = pop_opt stk in
+        let flatlst = pairlst |> List.map (fun (a, b) -> [a; b]) |> List.concat in
+        begin
+          match lastopt with
+          | None       -> return (None, [VLineTo(flatlst)])
+          | Some(last) -> return (None, [VLineTo(List.append flatlst [last])])
+        end
+
+    | Operator(ShortKey(8)) ->  (* -- rrcurveto (8) -- *)
+        let tuplelst = pop_iter pop_6_opt stk in
+        let bezierlst = tuplelst |> List.map make_bezier in
+        return (None, [RRCurveTo(bezierlst)])
+
+    | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
+        failwith "unsupported callsubr (10)"
+
+    | Operator(ShortKey(14)) ->  (* -- endchar (14) -- *)
+        let lst = pop_all stk in
+        begin
+          if uncleared then
+            match lst with
+            | w :: [] -> return (Some(Some(w)), [EndChar])
+            | []      -> return (Some(None), [EndChar])
+            | _       -> err `Invalid_charstring
+          else
+            match lst with
+            | [] -> return (None, [EndChar])
+            | _  -> err `Invalid_charstring
+        end
+
+    | Operator(ShortKey(21)) ->  (* -- rmoveto (21) -- *)
+        pop stk >>= fun dx1 ->
+        pop stk >>= fun dy1 ->
+        let ret = [RMoveTo((dx1, dy1))] in
+        if uncleared then
+          let wopt = pop_opt stk in
+          return (Some(wopt), ret)
+        else
+          return (None, ret)
+
+    | Operator(ShortKey(22)) ->  (* -- hmoveto (22) -- *)
+        pop stk >>= fun arg ->
+        let ret = [HMoveTo(arg)] in
+        if uncleared then
+          let wopt = pop_opt stk in
+          return (Some(wopt), ret)
+        else
+          return (None, ret)
+
+    | Operator(ShortKey(24)) ->  (* -- rcurveline (24) -- *)
+        pop stk >>= fun dyd ->
+        pop stk >>= fun dxd ->
+        let tuplelst = pop_iter pop_6_opt stk in
+        let bezierlst = tuplelst |> List.map make_bezier in
+        return (None, [RRCurveTo(bezierlst); RLineTo([(dxd, dyd)])])
+
+    | Operator(ShortKey(25)) ->  (* -- rlinecurve (25) -- *)
+        pop stk >>= fun dyd ->
+        pop stk >>= fun dxd ->
+        pop stk >>= fun dyc ->
+        pop stk >>= fun dxc ->
+        pop stk >>= fun dyb ->
+        pop stk >>= fun dxb ->
+        let pairlst = pop_iter pop_pair_opt stk in
+        return (None, [RLineTo(pairlst); RRCurveTo([((dxb, dyb), (dxc, dyc), (dxd, dyd))])])
+
+    | Operator(ShortKey(27)) ->  (* -- hhcurveto (27) -- *)
+        let tuplelst = pop_iter pop_4_opt stk in
+        let retlst = tuplelst |> List.map (fun (dxa, dxb, dyb, dxc) -> (dxa, (dxb, dyb), dxc)) in
+        let dy1opt = pop_opt stk in
+        return (None, [HHCurveTo(dy1opt, retlst)])
+
+    | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
+        begin
+          if is_odd_length stk then
+            pop stk >>= fun dxf ->
+            return (Some(dxf))
+          else
+            return None
+        end >>= fun dxfopt ->
+      let tuplelst = pop_iter pop_8_opt stk in
+      let opt = pop_4_opt stk in
+      begin
+        match opt with
+        | None                       -> return (None, [VHCurveTo2(tuplelst, dxfopt)])
+        | Some((dy1, dx2, dy2, dx3)) -> return (None, [VHCurveTo1(dy1, dx2, dy2, dx3, tuplelst, dxfopt)])
+      end
+
+    | Operator(ShortKey(31)) ->  (* -- hvcurveto (31) -- *)
+        begin
+          if is_odd_length stk then
+            pop stk >>= fun dxf ->
+            return (Some(dxf))
+          else
+            return None
+        end >>= fun dxfopt ->
+          let tuplelst = pop_iter pop_8_opt stk in
+          let opt = pop_4_opt stk in
+          begin
+            match opt with
+            | None                       -> return (None, [HVCurveTo2(tuplelst, dxfopt)])
+            | Some((dx1, dy1, dy2, dy3)) -> return (None, [HVCurveTo1(dx1, dy1, dy2, dy3, tuplelst, dxfopt)])
+          end
+
+    | Operator(ShortKey(i)) ->
+        failwith (Printf.sprintf "unsupported operator '%d'" i)
+
+    | Operator(LongKey(i)) ->
+        failwith (Printf.sprintf "unsupported operator '12 %d'" i)
+
+
+let parse_charstring (cs : charstring_element list) : (int option * parsed_charstring list) ok =
+  let stk : int Stack.t = Stack.create () in
+  cs |> List.fold_left (fun res cselem ->
+    res >>= fun (woptoptprev, acc) ->
+    let uncleared =
+      match woptoptprev with
+      | None    -> true
+      | Some(_) -> false
+    in
+    parse_progress uncleared stk cselem >>= fun (woptopt, parsed) ->
+    let accnew = List.rev_append parsed acc in
+    match woptopt with
+    | None    -> return (woptoptprev, accnew)
+    | Some(_) -> return (woptopt, accnew)
+  ) (return (None, [])) >>= function
+  | (None, acc)       -> err `Invalid_charstring
+  | (Some(wopt), acc) -> return (wopt, List.rev acc)
+
+
+let charstring (d, offset_CharString_INDEX) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
   seek_pos offset_CharString_INDEX d >>= fun () ->
-  d_index_access d_charstring gid d >>= fun sopt ->
-  return sopt  (* temporary *)
+  d_index_access d_charstring gid d >>= function
+  | None ->
+      return None
+
+  | Some(cs) ->
+      parse_charstring cs >>= fun ret ->
+      return (Some(ret))

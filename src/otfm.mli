@@ -803,9 +803,65 @@ val cff_top_dict : cff_info -> (cff_top_dict, error) result
 
 type charstring_element
 
-val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* temporary *)
+type csx = int
 
-val charstring : charstring -> glyph_id -> ((charstring_element list) option, error) result  (* temporary *)
+type csy = int
+
+type cspoint = csx * csy
+
+type parsed_charstring =
+  | HStem of int * int * cspoint list
+      (* -- hstem (1) -- *)
+  | VStem of int * int * cspoint list
+      (* -- vstem (3) -- *)
+  | VMoveTo of int
+      (* -- vmoveto (4) -- *)
+  | RLineTo of cspoint list
+      (* -- rlineto (5) -- *)
+  | HLineTo of int list
+      (* -- hlineto (6) -- *)
+  | VLineTo of int list
+      (* -- vlineto (7) -- *)
+  | RRCurveTo of (cspoint * cspoint * cspoint) list
+      (* -- rrcurveto (8) *)
+  | EndChar
+      (* -- endchar (14) -- *)
+  | HStemHM of int * int * cspoint list
+      (* -- hstemhm (18) -- *)
+(*
+  | HintMask
+  | CntrMask
+*)
+  | RMoveTo of cspoint
+      (* -- rmoveto (21) -- *)
+  | HMoveTo of int
+      (* -- hmoveto (22) -- )*)
+  | VStemHM of int * int * cspoint list
+      (* -- vstemhm (23) -- *)
+  | VVCurveTo of csx option * (csy * cspoint * csy) list
+      (* -- vvcurveto (26) -- *)
+  | HHCurveTo of csy option * (csx * cspoint * csx) list
+      (* -- hhcurveto (27) -- *)
+  | VHCurveTo1 of int * int * int * int * (int * int * int * int * int * int * int * int) list * int option
+  | VHCurveTo2 of (int * int * int * int * int * int * int * int) list * int option
+      (* -- vhcurveto (30) -- *)
+  | HVCurveTo1 of int * int * int * int * (int * int * int * int * int * int * int * int) list * int option
+  | HVCurveTo2 of (int * int * int * int * int * int * int * int) list * int option
+      (* -- hvcurveto (31) -- *)
+  | Flex of cspoint * cspoint * cspoint * cspoint * int
+      (* -- flex (12 35) -- *)
+  | HFlex of int * cspoint * int * int * int * int
+      (* -- hflex (12 34) -- *)
+  | HFlex1 of cspoint * cspoint * int * int * int * int
+      (* -- hflex1 (12 36) -- *)
+  | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
+      (* -- flex1 (12 37) -- *)
+
+val pp_parsed_charstring : Format.formatter -> parsed_charstring -> unit
+(*
+val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* temporary *)
+*)
+val charstring : charstring -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa

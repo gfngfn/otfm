@@ -61,9 +61,9 @@ let main fmt =
         pp fmt "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
         pp fmt "PaintType: %d\n" topdict.Otfm.paint_type;
         pp fmt "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
-        charstring topdict 30 >>= fun cs ->
+        charstring topdict 30 >>= fun (w, pcs) ->
         pp fmt "Raw CharString example:\n";
-        cs |> List.iter (fun cselem -> Otfm.pp_charstring_element fmt cselem; pp fmt ",@ ");
+        pcs |> List.iter (fun pcselem -> Otfm.pp_parsed_charstring fmt pcselem; pp fmt ",@ ");
         match topdict.Otfm.cid_info with
         | None ->
             pp fmt "Not a CIDFont\n";
