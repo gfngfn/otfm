@@ -811,6 +811,8 @@ type csy = int
 
 type cspoint = csx * csy
 
+type stem_argument = string  (* temporary *)
+
 type parsed_charstring =
   | HStem of int * int * cspoint list
       (* -- hstem (1) -- *)
@@ -830,10 +832,10 @@ type parsed_charstring =
       (* -- endchar (14) -- *)
   | HStemHM of int * int * cspoint list
       (* -- hstemhm (18) -- *)
-(*
-  | HintMask
-  | CntrMask
-*)
+  | HintMask of stem_argument
+      (* -- hintmask (19) -- *)
+  | CntrMask of stem_argument
+      (* -- cntrmask (20) -- *)
   | RMoveTo of cspoint
       (* -- rmoveto (21) -- *)
   | HMoveTo of int

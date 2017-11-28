@@ -2544,9 +2544,13 @@ type dict = (cff_value list) DictMap.t
 
 type string_index = string array
 
+type stem_argument = string  (* temporary *)
+
 type charstring_element =
-  | Argument of int
-  | Operator of cff_key
+  | Argument         of int
+  | Operator         of cff_key
+  | HintMaskOperator of stem_argument
+  | CntrMaskOperator of stem_argument
 
 type subroutine_index = (charstring_element list) array
 
@@ -2800,50 +2804,70 @@ let pp_charstring_element fmt = function
   | Argument(i)           -> Format.fprintf fmt "  Argument(%d)" i
   | Operator(ShortKey(i)) -> Format.fprintf fmt "Operator(%d)" i
   | Operator(LongKey(i))  -> Format.fprintf fmt "Operator(12 %d)" i
-  
+  | HintMaskOperator(arg) -> Format.fprintf fmt "HintMaskOperator(...)"
+  | CntrMaskOperator(arg) -> Format.fprintf fmt "CntrMaskOperator(...)"
 
-let d_charstring_element d =
+
+let d_stem_argument numstem d : (int * stem_argument) ok =
+  let arglen =
+    if numstem mod 8 = 0 then
+      numstem / 8
+    else
+      numstem / 8 + 1
+  in
+  d_bytes arglen d >>= fun arg ->
+  return (arglen, arg)
+
+
+let d_charstring_element numstem d =
+  let return_normal (step, cselem) = return (step, numstem, cselem) in
+  let return_succ   (step, cselem) = return (step, numstem + 1, cselem) in
   d_uint8 d >>= function
+  | ( 1 | 3 | 18 | 23) as b0 ->  (* -- stem operators -- *)
+      return_succ (1, Operator(ShortKey(b0)))
+
   | b0  when b0 |> is_in_range 0 11 ->
-      return (1, Operator(ShortKey(b0)))
+      return_normal (1, Operator(ShortKey(b0)))
 
   | 12 ->
       d_uint8 d >>= fun b1 ->
-      return (2, Operator(LongKey(b1)))
+      return_normal (2, Operator(LongKey(b1)))
 
   | b0  when b0 |> is_in_range 13 18 ->
-      return (1, Operator(ShortKey(b0)))
+      return_normal (1, Operator(ShortKey(b0)))
 
   | 19 ->
-      failwith "unsupported CharString element 19"
+      d_stem_argument numstem d >>= fun (step, arg) ->
+      return_normal (1 + step, HintMaskOperator(arg))
 
   | 20 ->
-      failwith "unsupported CharString element 20"
+      d_stem_argument numstem d >>= fun (step, arg) ->
+      return_normal (1 + step, CntrMaskOperator(arg))
 
   | b0  when b0 |> is_in_range 21 27 ->
-      return (1, Operator(ShortKey(b0)))
+      return_normal (1, Operator(ShortKey(b0)))
 
   | 28 ->
       d_int16 d >>= fun i ->
-      return (3, Argument(i))
+      return_normal (3, Argument(i))
 
   | b0  when b0 |> is_in_range 29 31 ->
-      return (1, Operator(ShortKey(b0)))
+      return_normal (1, Operator(ShortKey(b0)))
 
   | b0  when b0 |> is_in_range 32 246 ->
-      return (1, Argument(b0 - 139))
+      return_normal (1, Argument(b0 - 139))
 
   | b0  when b0 |> is_in_range 247 250 ->
       d_uint8 d >>= fun b1 ->
-      return (2, Argument((b0 - 247) * 256 + b1 + 108))
+      return_normal (2, Argument((b0 - 247) * 256 + b1 + 108))
 
   | b0  when b0 |> is_in_range 251 254 ->
       d_uint8 d >>= fun b1 ->
-      return (2, Argument(- (b0 - 251) * 256 - b1 - 108))
+      return_normal (2, Argument(- (b0 - 251) * 256 - b1 - 108))
 
   | 255 ->
       d_int32 d >>= fun i ->
-      return (5, Argument(?@ i))
+      return_normal (5, Argument(?@ i))
 
   | _ ->
       assert false
@@ -2851,13 +2875,13 @@ let d_charstring_element d =
 
 
 let d_charstring len32 d : (charstring_element list) ok =
-  let rec aux len acc d =
+  let rec aux numstem len acc d =
     if len = 0 then return (List.rev acc) else
     if len < 0 then err `Invalid_charstring else
-    d_charstring_element d >>= fun (step, cselem) ->
-    aux (len - step) (cselem :: acc) d
+    d_charstring_element numstem d >>= fun (step, numstemnew, cselem) ->
+    aux numstemnew (len - step) (cselem :: acc) d
   in
-  aux (?@ len32) [] d
+  aux 0 (?@ len32) [] d
 
 
 let cff_info d : cff_info ok =
@@ -3051,7 +3075,7 @@ let pop_pair_opt (stk : int Stack.t) : (int * int) option =
   
 
 let pop_4_opt (stk : int Stack.t) : (int * int * int * int) option =
-  if Stack.length stk < 6 then None else
+  if Stack.length stk < 4 then None else
     let d4 = Stack.pop stk in
     let d3 = Stack.pop stk in
     let d2 = Stack.pop stk in
@@ -3071,7 +3095,7 @@ let pop_6_opt (stk : int Stack.t) : (int * int * int * int * int * int) option =
 
 
 let pop_8_opt (stk : int Stack.t) : (int * int * int * int * int * int * int * int) option =
-  if Stack.length stk < 6 then None else
+  if Stack.length stk < 8 then None else
     let d8 = Stack.pop stk in
     let d7 = Stack.pop stk in
     let d6 = Stack.pop stk in
@@ -3126,10 +3150,10 @@ type parsed_charstring =
       (* -- endchar (14) -- *)
   | HStemHM of int * int * cspoint list
       (* -- hstemhm (18) -- *)
-(*
-  | HintMask
-  | CntrMask
-*)
+  | HintMask of stem_argument
+      (* -- hintmask (19) -- *)
+  | CntrMask of stem_argument
+      (* -- cntrmask (20) -- *)
   | RMoveTo of cspoint
       (* -- rmoveto (21) -- *)
   | HMoveTo of int
@@ -3186,15 +3210,17 @@ let access_subroutine idx i =
 
 
 let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
-  Format.fprintf fmtCFF "%a\n" pp_charstring_element cselem;  (* for debug *)
   let uncleared =
     match woptoptprev with
-    | None    -> true
-    | Some(_) -> false
+    | None    -> Format.fprintf fmtCFF "X "; true
+    | Some(_) -> Format.fprintf fmtCFF "O "; false
   in
+  Format.fprintf fmtCFF "%a\n" pp_charstring_element cselem;  (* for debug *)
+  let return_with_width wopt ret = return (Some(wopt), ret) in
+  let return_cleared ret         = return (woptoptprev, ret) in
     match cselem with
     | Argument(i) ->
-        stk |> Stack.push i; return (None, [])
+        stk |> Stack.push i; return_cleared []
 
     | Operator(ShortKey(1)) ->  (* -- hstem (1) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
@@ -3207,9 +3233,9 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
               let ret = [HStem(y, dy, csptlst)] in
               if uncleared then
                 let wopt = pop_opt stk in
-                return (Some(wopt), ret)
+                return_with_width wopt ret
               else
-                return (None, ret)
+                return_cleared ret
         end
 
     | Operator(ShortKey(3)) ->  (* -- vstem (3) -- *)
@@ -3223,22 +3249,22 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
               let ret = [VStem(x, dx, csptlst)] in
               if uncleared then
                 let wopt = pop_opt stk in
-                return (Some(wopt), ret)
+                return_with_width wopt ret
               else
-                return (None, ret)
+                return_cleared ret
         end
 
     | Operator(ShortKey(4)) ->  (* -- vmoveto (4) -- *)
         pop stk >>= fun arg ->
         if uncleared then
           let wopt = pop_opt stk in
-          return (Some(wopt), [VMoveTo(arg)])
+          return_with_width wopt [VMoveTo(arg)]
         else
-          return (None, [VMoveTo(arg)])
+          return_cleared [VMoveTo(arg)]
 
     | Operator(ShortKey(5)) ->  (* -- rlineto (5) -- *)
         let csptlst = pop_iter pop_pair_opt stk in
-        return (None, [RLineTo(csptlst)])
+        return_cleared [RLineTo(csptlst)]
 
     | Operator(ShortKey(6)) ->  (* -- hlineto (6) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
@@ -3246,8 +3272,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         let flatlst = pairlst |> List.map (fun (a, b) -> [a; b]) |> List.concat in
         begin
           match lastopt with
-          | None       -> return (None, [HLineTo(flatlst)])
-          | Some(last) -> return (None, [HLineTo(List.append flatlst [last])])
+          | None       -> return_cleared [HLineTo(flatlst)]
+          | Some(last) -> return_cleared [HLineTo(List.append flatlst [last])]
         end
 
     | Operator(ShortKey(7)) ->  (* -- vlineto (7) -- *)
@@ -3256,14 +3282,14 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         let flatlst = pairlst |> List.map (fun (a, b) -> [a; b]) |> List.concat in
         begin
           match lastopt with
-          | None       -> return (None, [VLineTo(flatlst)])
-          | Some(last) -> return (None, [VLineTo(List.append flatlst [last])])
+          | None       -> return_cleared [VLineTo(flatlst)]
+          | Some(last) -> return_cleared [VLineTo(List.append flatlst [last])]
         end
 
     | Operator(ShortKey(8)) ->  (* -- rrcurveto (8) -- *)
         let tuplelst = pop_iter pop_6_opt stk in
         let bezierlst = tuplelst |> List.map make_bezier in
-        return (None, [RRCurveTo(bezierlst)])
+        return_cleared [RRCurveTo(bezierlst)]
 
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
         pop stk >>= fun i ->
@@ -3271,20 +3297,26 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         parse_charstring gsubridx lsubridx (woptoptprev, []) rawcs
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
-        return (Some(None), [])
+        return_cleared []
 
     | Operator(ShortKey(14)) ->  (* -- endchar (14) -- *)
         let lst = pop_all stk in
         begin
           if uncleared then
             match lst with
-            | w :: [] -> return (Some(Some(w)), [EndChar])
-            | []      -> return (Some(None), [EndChar])
-            | _       -> err `Invalid_charstring
+            | w :: [] -> return_with_width (Some(w)) [EndChar]
+            | []      -> return_with_width None [EndChar]
+            | _       ->
+                Format.fprintf fmtCFF "remain1\n";  (* for debug *)
+                err `Invalid_charstring
           else
             match lst with
-            | [] -> return (None, [EndChar])
-            | _  -> err `Invalid_charstring
+            | [] -> return_cleared [EndChar]
+            | _  ->
+                Format.fprintf fmtCFF "remain2\n";  (* for debug *)
+                lst |> List.iter (Format.fprintf fmtCFF "%d,@ ");
+                Format.fprintf fmtCFF "\n";
+                err `Invalid_charstring
         end
 
     | Operator(ShortKey(18)) ->  (* -- hstemhm (18) -- *)
@@ -3298,10 +3330,26 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
               let ret = [HStemHM(y, dy, csptlst)] in
               if uncleared then
                 let wopt = pop_opt stk in
-                return (Some(wopt), ret)
+                return_with_width wopt ret
               else
-                return (None, ret)
+                return_cleared ret
         end
+
+    | HintMaskOperator(arg) ->
+        let ret = [HintMask(arg)] in
+        if uncleared then
+          let wopt = pop_opt stk in
+          return_with_width wopt ret
+        else
+          return_cleared ret
+
+    | CntrMaskOperator(arg) ->
+        let ret = [CntrMask(arg)] in
+        if uncleared then
+          let wopt = pop_opt stk in
+          return_with_width wopt ret
+        else
+          return_cleared ret
 
     | Operator(ShortKey(21)) ->  (* -- rmoveto (21) -- *)
         pop stk >>= fun dx1 ->
@@ -3309,18 +3357,18 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         let ret = [RMoveTo((dx1, dy1))] in
         if uncleared then
           let wopt = pop_opt stk in
-          return (Some(wopt), ret)
+          return_with_width wopt ret
         else
-          return (None, ret)
+          return_cleared ret
 
     | Operator(ShortKey(22)) ->  (* -- hmoveto (22) -- *)
         pop stk >>= fun arg ->
         let ret = [HMoveTo(arg)] in
         if uncleared then
           let wopt = pop_opt stk in
-          return (Some(wopt), ret)
+          return_with_width wopt ret
         else
-          return (None, ret)
+          return_cleared ret
 
     | Operator(ShortKey(23)) ->  (* -- vstemhm (23) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
@@ -3333,9 +3381,9 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
               let ret = [VStemHM(x, dx, csptlst)] in
               if uncleared then
                 let wopt = pop_opt stk in
-                return (Some(wopt), ret)
+                return_with_width wopt ret
               else
-                return (None, ret)
+                return_cleared ret
         end
 
     | Operator(ShortKey(24)) ->  (* -- rcurveline (24) -- *)
@@ -3343,7 +3391,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         pop stk >>= fun dxd ->
         let tuplelst = pop_iter pop_6_opt stk in
         let bezierlst = tuplelst |> List.map make_bezier in
-        return (None, [RRCurveTo(bezierlst); RLineTo([(dxd, dyd)])])
+        return_cleared [RRCurveTo(bezierlst); RLineTo([(dxd, dyd)])]
 
     | Operator(ShortKey(25)) ->  (* -- rlinecurve (25) -- *)
         pop stk >>= fun dyd ->
@@ -3353,19 +3401,19 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         pop stk >>= fun dyb ->
         pop stk >>= fun dxb ->
         let pairlst = pop_iter pop_pair_opt stk in
-        return (None, [RLineTo(pairlst); RRCurveTo([((dxb, dyb), (dxc, dyc), (dxd, dyd))])])
+        return_cleared [RLineTo(pairlst); RRCurveTo([((dxb, dyb), (dxc, dyc), (dxd, dyd))])]
 
     | Operator(ShortKey(26)) ->  (* -- vvcurveto (26) --*)
         let tuplelst = pop_iter pop_4_opt stk in
         let retlst = tuplelst |> List.map (fun (dya, dxb, dyb, dyc) -> (dya, (dxb, dyb), dyc)) in
         let dx1opt = pop_opt stk in
-        return (None, [VVCurveTo(dx1opt, retlst)])
+        return_cleared [VVCurveTo(dx1opt, retlst)]
 
     | Operator(ShortKey(27)) ->  (* -- hhcurveto (27) -- *)
         let tuplelst = pop_iter pop_4_opt stk in
         let retlst = tuplelst |> List.map (fun (dxa, dxb, dyb, dxc) -> (dxa, (dxb, dyb), dxc)) in
         let dy1opt = pop_opt stk in
-        return (None, [HHCurveTo(dy1opt, retlst)])
+        return_cleared [HHCurveTo(dy1opt, retlst)]
 
     | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
         pop stk >>= fun i ->
@@ -3384,8 +3432,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
       let opt = pop_4_opt stk in
       begin
         match opt with
-        | None                       -> return (None, [VHCurveTo2(tuplelst, dxfopt)])
-        | Some((dy1, dx2, dy2, dx3)) -> return (None, [VHCurveTo1(dy1, dx2, dy2, dx3, tuplelst, dxfopt)])
+        | None                       -> return_cleared [VHCurveTo2(tuplelst, dxfopt)]
+        | Some((dy1, dx2, dy2, dx3)) -> return_cleared [VHCurveTo1(dy1, dx2, dy2, dx3, tuplelst, dxfopt)]
       end
 
     | Operator(ShortKey(31)) ->  (* -- hvcurveto (31) -- *)
@@ -3400,8 +3448,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
           let opt = pop_4_opt stk in
           begin
             match opt with
-            | None                       -> return (None, [HVCurveTo2(tuplelst, dxfopt)])
-            | Some((dx1, dy1, dy2, dy3)) -> return (None, [HVCurveTo1(dx1, dy1, dy2, dy3, tuplelst, dxfopt)])
+            | None                       -> return_cleared [HVCurveTo2(tuplelst, dxfopt)]
+            | Some((dx1, dy1, dy2, dy3)) -> return_cleared [HVCurveTo1(dx1, dy1, dy2, dy3, tuplelst, dxfopt)]
           end
 
     | Operator(ShortKey(i)) ->
