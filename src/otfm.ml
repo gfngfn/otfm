@@ -3167,8 +3167,10 @@ type parsed_charstring =
       (* -- vlineto (7) -- *)
   | RRCurveTo of (cspoint * cspoint * cspoint) list
       (* -- rrcurveto (8) *)
+(*
   | EndChar
       (* -- endchar (14) -- *)
+*)
   | HStemHM of int * int * cspoint list
       (* -- hstemhm (18) -- *)
   | HintMask of stem_argument
@@ -3185,12 +3187,11 @@ type parsed_charstring =
       (* -- vvcurveto (26) -- *)
   | HHCurveTo of csy option * (csx * cspoint * csx) list
       (* -- hhcurveto (27) -- *)
-  | VHCurveTo1 of int * int * int * int * (int * int * int * int * int * int * int * int) list * int option
-  | VHCurveTo2 of (int * int * int * int * int * int * int * int) list * int option
+  | VHCurveTo of (int * cspoint * int) list * int option
       (* -- vhcurveto (30) -- *)
-  | HVCurveTo1 of int * int * int * int * (int * int * int * int * int * int * int * int) list * int option
-  | HVCurveTo2 of (int * int * int * int * int * int * int * int) list * int option
+  | HVCurveTo of (int * cspoint * int) list * int option
       (* -- hvcurveto (31) -- *)
+(*
   | Flex of cspoint * cspoint * cspoint * cspoint * int
       (* -- flex (12 35) -- *)
   | HFlex of int * cspoint * int * int * int * int
@@ -3199,6 +3200,7 @@ type parsed_charstring =
       (* -- hflex1 (12 36) -- *)
   | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
       (* -- flex1 (12 37) -- *)
+*)
 
 
 let pp_parsed_charstring fmt = function
@@ -3209,7 +3211,6 @@ let pp_parsed_charstring fmt = function
   | HLineTo(lst)            -> pp fmt "HLineTo(...)"
   | VLineTo(lst)            -> pp fmt "VLineTo(...)"
   | RRCurveTo(bezierlst)    -> pp fmt "RRCurveTo(...)"
-  | EndChar                 -> pp fmt "EndChar"
   | HStemHM(y, dy, csptlst) -> pp fmt "HStemHM(%d, %d, ...)" y dy
   | RMoveTo((dx1, dy1))     -> pp fmt "RMoveTo(%d, %d)" dx1 dy1
   | HMoveTo(dx1)            -> pp fmt "HMoveTo(%d)" dx1
@@ -3243,7 +3244,9 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Some(_) -> return (woptoptprev, ret)
   in
 
-  let return_cleared ret = return (woptoptprev, ret) in
+  let return_cleared ret =
+    return (woptoptprev, ret)
+  in
 
     match cselem with
     | Argument(i) ->
@@ -3313,8 +3316,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
           | None ->
               begin
                 match lst with
-                | w :: [] -> return (Some(Some(w)), [EndChar])
-                | []      -> return (Some(None), [EndChar])
+                | w :: [] -> return (Some(Some(w)), [])
+                | []      -> return (Some(None), [])
                 | _       ->
                     Format.fprintf fmtCFF "remain1\n";  (* for debug *)
                     err `Invalid_charstring
@@ -3323,7 +3326,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
           | Some(_) ->
               begin
                 match lst with
-                | [] -> return_cleared [EndChar]
+                | [] -> return_cleared []
                 | _  ->
                     Format.fprintf fmtCFF "remain2\n";  (* for debug *)
                     lst |> List.iter (Format.fprintf fmtCFF "%d,@ ");  (* for debug *)
@@ -3404,14 +3407,11 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
             return (Some(dxf))
           else
             return None
-        end >>= fun dxfopt ->
-      let tuplelst = pop_iter pop_8_opt stk in
-      let opt = pop_4_opt stk in
-      begin
-        match opt with
-        | None                       -> return_cleared [VHCurveTo2(tuplelst, dxfopt)]
-        | Some((dy1, dx2, dy2, dx3)) -> return_cleared [VHCurveTo1(dy1, dx2, dy2, dx3, tuplelst, dxfopt)]
-      end
+        end >>= fun lastopt ->
+      let tuplelst = pop_iter pop_4_opt stk in
+      let retlst = tuplelst |> List.map (fun (d1, d2, d3, d4) -> (d1, (d2, d3), d4)) in
+      return_cleared [VHCurveTo(retlst, lastopt)]
+
 
     | Operator(ShortKey(31)) ->  (* -- hvcurveto (31) -- *)
         begin
@@ -3420,14 +3420,10 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
             return (Some(dxf))
           else
             return None
-        end >>= fun dxfopt ->
-          let tuplelst = pop_iter pop_8_opt stk in
-          let opt = pop_4_opt stk in
-          begin
-            match opt with
-            | None                       -> return_cleared [HVCurveTo2(tuplelst, dxfopt)]
-            | Some((dx1, dy1, dy2, dy3)) -> return_cleared [HVCurveTo1(dx1, dy1, dy2, dy3, tuplelst, dxfopt)]
-          end
+        end >>= fun lastopt ->
+        let tuplelst = pop_iter pop_4_opt stk in
+        let retlst = tuplelst |> List.map (fun (d1, d2, d3, d4) -> (d1, (d2, d3), d4)) in
+        return_cleared [HVCurveTo(retlst, lastopt)]
 
     | Operator(ShortKey(i)) ->
         err `Invalid_charstring
@@ -3458,3 +3454,171 @@ let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_in
       parse_charstring stk gsubridx lsubridx (None, []) cs >>= function
       | (None, acc)       -> err `Invalid_charstring
       | (Some(wopt), acc) -> return (Some((wopt, List.rev acc)))
+
+
+type path_element =
+  | LineTo   of cspoint
+  | BezierTo of cspoint * cspoint * cspoint
+
+
+let ( +@ ) (x, y) (dx, dy) = (x + dx, y + dy)
+
+let ( +@- ) (x, y) dx = (x + dx, y)
+
+let ( +@| ) (x, y) dy = (x, y + dy)
+
+
+let line_parity is_horizontal_init lst curv =
+  let rec aux acc is_horizontal lst curv =
+    match lst with
+    | [] ->
+        (curv, List.rev acc)
+
+    | dt :: tail ->
+        if is_horizontal then
+          let curvnew = curv +@- dt in
+          aux (LineTo(curvnew) :: acc) (not is_horizontal) tail curvnew
+        else
+          let curvnew = curv +@| dt in
+          aux (LineTo(curvnew) :: acc) (not is_horizontal) tail curvnew
+  in
+  aux [] is_horizontal_init lst curv
+
+
+let curve_parity is_horizontal_init lst (dtD, dvE, dsF) dtFopt curv =
+  let rec aux acc is_horizontal lst curv =
+    match lst with
+    | [] ->
+        if is_horizontal then
+          let vD = curv +@- dtD in
+          let vE = vD +@ dvE in
+          let vF =
+            match dtFopt with
+            | None      -> vE +@| dsF
+            | Some(dtF) -> vE +@ (dtF, dsF)
+          in
+            (vF, List.rev (BezierTo(vD, vE, vF) :: acc))
+        else
+          let vD = curv +@| dtD in
+          let vE = vD +@ dvE in
+          let vF =
+            match dtFopt with
+            | None      -> vE +@- dsF
+            | Some(dtF) -> vE +@ (dsF, dtF)
+          in
+            (vF, List.rev (BezierTo(vD, vE, vF) :: acc))
+
+    | (dtA, dvB, dsC) :: tail ->
+        if is_horizontal then
+          let vA = curv +@- dtA in
+          let vB = vA +@ dvB in
+          let vC = vB +@| dsC in
+            aux (BezierTo(vA, vB, vC) :: acc) (not is_horizontal) tail vC
+        else
+          let vA = curv +@| dtA in
+          let vB = vA +@ dvB in
+          let vC = vB +@- dsC in
+            aux (BezierTo(vA, vB, vC) :: acc) (not is_horizontal) tail vC
+          
+  in
+  aux [] is_horizontal_init lst curv
+        
+  
+
+let charstring_absolute csinfo gid =
+  charstring csinfo gid >>= function
+  | None ->
+      return None
+
+  | Some((_, pcs)) ->
+      let (lastv, acc) =
+        pcs |> List.fold_left (fun (curv, acc) pcselem ->
+          match pcselem with
+          | HintMask(_)
+          | CntrMask(_)
+          | HStem(_, _, _)
+          | VStem(_, _, _)
+          | HStemHM(_, _, _)
+          | VStemHM(_, _, _)
+              -> (curv, acc)
+
+          | VMoveTo(dy) -> (curv +@| dy, acc)
+
+          | HMoveTo(dx) -> (curv +@- dx, acc)
+
+          | RMoveTo(dv) -> (curv +@ dv, acc)
+
+          | RLineTo(csptlst) ->
+              csptlst |> List.fold_left (fun (curv, acc) dv ->
+                (curv +@ dv, LineTo(curv +@ dv) :: acc)
+              ) (curv, acc)
+
+          | HLineTo(lst) -> line_parity true lst curv
+
+          | VLineTo(lst) -> line_parity false lst curv
+
+          | RRCurveTo(tricsptlst) ->
+              tricsptlst |> List.fold_left (fun (curv, acc) (dvA, dvB, dvC) ->
+                let vA = curv +@ dvA in
+                let vB = vA +@ dvB in
+                let vC = vB +@ dvC in
+                  (vC, BezierTo(vA, vB, vC) :: acc)
+              ) (curv, acc)
+
+          | VVCurveTo(dx1opt, (dy1, dv2, dy3) :: vvlst) ->
+              let v1 =
+                match dx1opt with
+                | None      -> curv +@| dy1
+                | Some(dx1) -> curv +@ (dx1, dy1)
+              in
+              let v2 = v1 +@ dv2 in
+              let v3 = v2 +@| dy3 in
+              vvlst |> List.fold_left (fun (curv, acc) (dyA, dvB, dyC) ->
+                let vA = curv +@| dyA in
+                let vB = vA +@ dvB in
+                let vC = vB +@| dyC in
+                (vC, BezierTo(vA, vB, vC) :: acc)
+              ) (curv, BezierTo(v1, v2, v3) :: acc)
+              
+          | VVCurveTo(_, []) ->
+              assert false
+
+          | HHCurveTo(dy1opt, (dx1, dv2, dx3) :: hhlst) ->
+              let v1 =
+                match dy1opt with
+                | None      -> curv +@- dx1
+                | Some(dy1) -> curv +@ (dx1, dy1)
+              in
+              let v2 = v1 +@ dv2 in
+              let v3 = v2 +@- dx3 in
+              hhlst |> List.fold_left (fun (curv, acc) (dxA, dvB, dxC) ->
+                let vA = curv +@- dxA in
+                let vB = vA +@ dvB in
+                let vC = vB +@- dxC in
+                (vC, BezierTo(vA, vB, vC) :: acc)
+              ) (curv, BezierTo(v1, v2, v3) :: acc)
+
+          | HHCurveTo(_, []) ->
+              assert false
+
+          | HVCurveTo(hvlst, lastopt) ->
+              begin
+                match List.rev hvlst with
+                | []              -> assert false
+                | last :: revmain ->
+                    let hvlstmain = List.rev revmain in
+                    curve_parity true hvlstmain last lastopt curv
+              end
+                  
+          | VHCurveTo(vhlst, lastopt) ->
+              begin
+                match List.rev vhlst with
+                | []              -> assert false
+                | last :: revmain ->
+                    let vhlstmain = List.rev revmain in
+                    curve_parity false vhlstmain last lastopt curv
+              end
+                   
+       ) ((0, 0), [])
+      in
+      return (Some(List.rev acc))

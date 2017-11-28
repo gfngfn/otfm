@@ -825,8 +825,10 @@ type parsed_charstring =
       (* -- vlineto (7) -- *)
   | RRCurveTo of (cspoint * cspoint * cspoint) list
       (* -- rrcurveto (8) *)
+(*
   | EndChar
       (* -- endchar (14) -- *)
+*)
   | HStemHM of int * int * cspoint list
       (* -- hstemhm (18) -- *)
   | HintMask of stem_argument
@@ -843,12 +845,11 @@ type parsed_charstring =
       (* -- vvcurveto (26) -- *)
   | HHCurveTo of csy option * (csx * cspoint * csx) list
       (* -- hhcurveto (27) -- *)
-  | VHCurveTo1 of int * int * int * int * (int * int * int * int * int * int * int * int) list * int option
-  | VHCurveTo2 of (int * int * int * int * int * int * int * int) list * int option
+  | VHCurveTo of (int * cspoint * int) list * int option
       (* -- vhcurveto (30) -- *)
-  | HVCurveTo1 of int * int * int * int * (int * int * int * int * int * int * int * int) list * int option
-  | HVCurveTo2 of (int * int * int * int * int * int * int * int) list * int option
+  | HVCurveTo of (int * cspoint * int) list * int option
       (* -- hvcurveto (31) -- *)
+(*
   | Flex of cspoint * cspoint * cspoint * cspoint * int
       (* -- flex (12 35) -- *)
   | HFlex of int * cspoint * int * int * int * int
@@ -857,12 +858,20 @@ type parsed_charstring =
       (* -- hflex1 (12 36) -- *)
   | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
       (* -- flex1 (12 37) -- *)
+*)
 
 val pp_parsed_charstring : Format.formatter -> parsed_charstring -> unit
 (*
 val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* temporary *)
 *)
 val charstring : charstring_info -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
+
+type path_element =
+  | LineTo   of cspoint
+  | BezierTo of cspoint * cspoint * cspoint
+
+
+val charstring_absolute : charstring_info -> glyph_id -> ((path_element list) option, error) result
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa
