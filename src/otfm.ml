@@ -3231,14 +3231,20 @@ let access_subroutine idx i =
 
 
 let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
-  let uncleared =
+  let () =  (* for debug *)
     match woptoptprev with
-    | None    -> Format.fprintf fmtCFF "X "; true
-    | Some(_) -> Format.fprintf fmtCFF "O "; false
+    | None    -> Format.fprintf fmtCFF "X %a\n" pp_charstring_element cselem;  (* for debug *)
+    | Some(_) -> Format.fprintf fmtCFF "O %a\n" pp_charstring_element cselem;  (* for debug *)
+  in  (* for debug *)
+
+  let return_with_width ret =
+    match woptoptprev with
+    | None    -> let wopt = pop_opt stk in return (Some(wopt), ret)
+    | Some(_) -> return (woptoptprev, ret)
   in
-  Format.fprintf fmtCFF "%a\n" pp_charstring_element cselem;  (* for debug *)
-  let return_with_width wopt ret = return (Some(wopt), ret) in
-  let return_cleared ret         = return (woptoptprev, ret) in
+
+  let return_cleared ret = return (woptoptprev, ret) in
+
     match cselem with
     | Argument(i) ->
         stk |> Stack.push i; return_cleared []
@@ -3247,41 +3253,21 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         let pairlst = pop_iter pop_pair_opt stk in
         begin
           match pairlst with
-          | [] ->
-              err `Invalid_charstring
-
-          | (y, dy) :: csptlst ->
-              let ret = [HStem(y, dy, csptlst)] in
-              if uncleared then
-                let wopt = pop_opt stk in
-                return_with_width wopt ret
-              else
-                return_cleared ret
+          | []                 -> err `Invalid_charstring
+          | (y, dy) :: csptlst -> return_with_width [HStem(y, dy, csptlst)]
         end
 
     | Operator(ShortKey(3)) ->  (* -- vstem (3) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
         begin
           match pairlst with
-          | [] ->
-              err `Invalid_charstring
-
-          | (x, dx) :: csptlst ->
-              let ret = [VStem(x, dx, csptlst)] in
-              if uncleared then
-                let wopt = pop_opt stk in
-                return_with_width wopt ret
-              else
-                return_cleared ret
+          | []                 -> err `Invalid_charstring
+          | (x, dx) :: csptlst -> return_with_width [VStem(x, dx, csptlst)]
         end
 
     | Operator(ShortKey(4)) ->  (* -- vmoveto (4) -- *)
         pop stk >>= fun arg ->
-        if uncleared then
-          let wopt = pop_opt stk in
-          return_with_width wopt [VMoveTo(arg)]
-        else
-          return_cleared [VMoveTo(arg)]
+        return_with_width [VMoveTo(arg)]
 
     | Operator(ShortKey(5)) ->  (* -- rlineto (5) -- *)
         let csptlst = pop_iter pop_pair_opt stk in
@@ -3323,88 +3309,58 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(ShortKey(14)) ->  (* -- endchar (14) -- *)
         let lst = pop_all stk in
         begin
-          if uncleared then
-            match lst with
-            | w :: [] -> return_with_width (Some(w)) [EndChar]
-            | []      -> return_with_width None [EndChar]
-            | _       ->
-                Format.fprintf fmtCFF "remain1\n";  (* for debug *)
-                err `Invalid_charstring
-          else
-            match lst with
-            | [] -> return_cleared [EndChar]
-            | _  ->
-                Format.fprintf fmtCFF "remain2\n";  (* for debug *)
-                lst |> List.iter (Format.fprintf fmtCFF "%d,@ ");
-                Format.fprintf fmtCFF "\n";
-                err `Invalid_charstring
+          match woptoptprev with
+          | None ->
+              begin
+                match lst with
+                | w :: [] -> return (Some(Some(w)), [EndChar])
+                | []      -> return (Some(None), [EndChar])
+                | _       ->
+                    Format.fprintf fmtCFF "remain1\n";  (* for debug *)
+                    err `Invalid_charstring
+              end
+
+          | Some(_) ->
+              begin
+                match lst with
+                | [] -> return_cleared [EndChar]
+                | _  ->
+                    Format.fprintf fmtCFF "remain2\n";  (* for debug *)
+                    lst |> List.iter (Format.fprintf fmtCFF "%d,@ ");  (* for debug *)
+                    Format.fprintf fmtCFF "\n";  (* for debug *)
+                    err `Invalid_charstring
+              end
         end
 
     | Operator(ShortKey(18)) ->  (* -- hstemhm (18) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
         begin
           match pairlst with
-          | [] ->
-              err `Invalid_charstring
-
-          | (y, dy) :: csptlst ->
-              let ret = [HStemHM(y, dy, csptlst)] in
-              if uncleared then
-                let wopt = pop_opt stk in
-                return_with_width wopt ret
-              else
-                return_cleared ret
+          | []                 -> err `Invalid_charstring
+          | (y, dy) :: csptlst -> return_with_width [HStemHM(y, dy, csptlst)]
         end
 
     | HintMaskOperator(arg) ->
-        let ret = [HintMask(arg)] in
-        if uncleared then
-          let wopt = pop_opt stk in
-          return_with_width wopt ret
-        else
-          return_cleared ret
+        return_with_width [HintMask(arg)]
 
     | CntrMaskOperator(arg) ->
-        let ret = [CntrMask(arg)] in
-        if uncleared then
-          let wopt = pop_opt stk in
-          return_with_width wopt ret
-        else
-          return_cleared ret
+        return_with_width [CntrMask(arg)]
 
     | Operator(ShortKey(21)) ->  (* -- rmoveto (21) -- *)
         pop stk >>= fun dx1 ->
         pop stk >>= fun dy1 ->
-        let ret = [RMoveTo((dx1, dy1))] in
-        if uncleared then
-          let wopt = pop_opt stk in
-          return_with_width wopt ret
-        else
-          return_cleared ret
+        return_with_width [RMoveTo((dx1, dy1))]
 
     | Operator(ShortKey(22)) ->  (* -- hmoveto (22) -- *)
         pop stk >>= fun arg ->
-        let ret = [HMoveTo(arg)] in
-        if uncleared then
-          let wopt = pop_opt stk in
-          return_with_width wopt ret
-        else
-          return_cleared ret
+        return_with_width [HMoveTo(arg)]
 
     | Operator(ShortKey(23)) ->  (* -- vstemhm (23) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
         begin
           match pairlst with
-          | [] ->
-              err `Invalid_charstring
-
-          | (x, dx) :: csptlst ->
-              let ret = [VStemHM(x, dx, csptlst)] in
-              if uncleared then
-                let wopt = pop_opt stk in
-                return_with_width wopt ret
-              else
-                return_cleared ret
+          | []                 -> err `Invalid_charstring
+          | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst)]
         end
 
     | Operator(ShortKey(24)) ->  (* -- rcurveline (24) -- *)
