@@ -29,7 +29,7 @@ let string_of_file inf =
 
 
 let charstring topdict gid =
-  match Otfm.charstring topdict.Otfm.charstring_info gid with
+  match Otfm.charstring_absolute topdict.Otfm.charstring_info gid with
   | Ok(None)      -> Error(`Msg (Printf.sprintf "no CharString for GID %d" gid))
   | Ok(Some(s))   -> Ok(s)
   | Error(e)      -> Error(e :> error)
@@ -60,9 +60,18 @@ let main fmt =
         pp fmt "UnderlineThickness: %d\n" cffinfo.Otfm.underline_thickness;
         pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
         pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
-        charstring cffinfo 30 >>= fun (w, pcs) ->
+        charstring cffinfo 32 >>= fun pcs ->
         pp fmt "Raw CharString example:\n";
-        pcs |> List.iter (fun pcselem -> Otfm.pp_parsed_charstring fmt pcselem; pp fmt ",@ ");
+        pcs |> List.iter (function
+        | Otfm.LineTo((x, y)) ->
+            Format.fprintf fmt "-- (%d, %d)@ " x y
+
+        | Otfm.BezierTo((xA, yA), (xB, yB), (xC, yC)) ->
+            Format.fprintf fmt ".. controls (%d, %d) and (%d, %d) .. (%d, %d)@ " xA yA xB yB xC yC
+
+        | Otfm.CloseAndMoveTo((x, y)) ->
+            Format.fprintf fmt "\nstart (%d, %d)@ " x y
+        );
         match cffinfo.Otfm.cid_info with
         | None ->
             pp fmt "Not a CIDFont\n";

@@ -825,10 +825,6 @@ type parsed_charstring =
       (* -- vlineto (7) -- *)
   | RRCurveTo of (cspoint * cspoint * cspoint) list
       (* -- rrcurveto (8) *)
-(*
-  | EndChar
-      (* -- endchar (14) -- *)
-*)
   | HStemHM of int * int * cspoint list
       (* -- hstemhm (18) -- *)
   | HintMask of stem_argument
@@ -867,8 +863,9 @@ val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* t
 val charstring : charstring_info -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
 
 type path_element =
-  | LineTo   of cspoint
-  | BezierTo of cspoint * cspoint * cspoint
+  | CloseAndMoveTo of cspoint
+  | LineTo         of cspoint
+  | BezierTo       of cspoint * cspoint * cspoint
 
 
 val charstring_absolute : charstring_info -> glyph_id -> ((path_element list) option, error) result

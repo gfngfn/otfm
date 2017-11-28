@@ -3036,23 +3036,25 @@ let cff d =
   begin
     match privateopt with
     | None ->
+        Format.fprintf fmtCFF "No Private DICT\n";  (* for debug *)
         return (None, None, [| |])
 
     | Some(size_private, reloffset_private) ->
         let offset_private = offset_CFF + reloffset_private in
         seek_pos offset_private d >>= fun () ->
         d_dict size_private d >>= fun dictmap_private ->
-        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_subrs ->
+        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_lsubrs ->
         get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
         get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
 
       (* -- Local Subr INDEX -- *)
-        seek_pos (offset_private + selfoffset_subrs) d >>= fun () ->
+        seek_pos (offset_private + selfoffset_lsubrs) d >>= fun () ->
         Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
-        d_index [] d_charstring d >>= fun subridx ->
-        return (Some(default_width_x), Some(nominal_width_x), subridx)
+        d_index [] d_charstring d >>= fun lsubridx ->
+        Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
+        return (Some(default_width_x), Some(nominal_width_x), lsubridx)
 
-  end >>= fun (default_width_x_opt, nominal_width_x_opt, subridx) ->
+  end >>= fun (default_width_x_opt, nominal_width_x_opt, lsubridx) ->
   return {
     font_name;
     is_fixed_pitch;
@@ -3065,7 +3067,7 @@ let cff d =
     cid_info;
     default_width_x = default_width_x_opt;
     nominal_width_x = default_width_x_opt;
-    charstring_info = (d, gsubridx, subridx, offset_CFF + reloffset_charstring);
+    charstring_info = (d, gsubridx, lsubridx, offset_CFF + reloffset_charstring);
   }
 
 
@@ -3167,10 +3169,6 @@ type parsed_charstring =
       (* -- vlineto (7) -- *)
   | RRCurveTo of (cspoint * cspoint * cspoint) list
       (* -- rrcurveto (8) *)
-(*
-  | EndChar
-      (* -- endchar (14) -- *)
-*)
   | HStemHM of int * int * cspoint list
       (* -- hstemhm (18) -- *)
   | HintMask of stem_argument
@@ -3228,7 +3226,9 @@ let access_subroutine idx i =
         32768
   in
   try return idx.(bias + i) with
-  | Invalid_argument(_) -> err `Invalid_charstring
+  | Invalid_argument(_) ->
+      Format.fprintf fmtCFF "invalid; length = %d, bias = %d, i = %d\n" len bias i;  (* for debug *)
+      err `Invalid_charstring
 
 
 let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
@@ -3303,7 +3303,9 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
         pop stk >>= fun i ->
+        Format.fprintf fmtCFF "callsubr1\n"; (* for debug *)
         access_subroutine lsubridx i >>= fun rawcs ->
+        Format.fprintf fmtCFF "callsubr2\n"; (* for debug *)
         parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
@@ -3457,8 +3459,9 @@ let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_in
 
 
 type path_element =
-  | LineTo   of cspoint
-  | BezierTo of cspoint * cspoint * cspoint
+  | CloseAndMoveTo of cspoint
+  | LineTo         of cspoint
+  | BezierTo       of cspoint * cspoint * cspoint
 
 
 let ( +@ ) (x, y) (dx, dy) = (x + dx, y + dy)
@@ -3468,25 +3471,25 @@ let ( +@- ) (x, y) dx = (x + dx, y)
 let ( +@| ) (x, y) dy = (x, y + dy)
 
 
-let line_parity is_horizontal_init lst curv =
-  let rec aux acc is_horizontal lst curv =
+let line_parity is_horizontal_init acc lst curv =
+  let rec aux is_horizontal acc lst curv =
     match lst with
     | [] ->
-        (curv, List.rev acc)
+        (curv, acc)
 
     | dt :: tail ->
         if is_horizontal then
           let curvnew = curv +@- dt in
-          aux (LineTo(curvnew) :: acc) (not is_horizontal) tail curvnew
+          aux (not is_horizontal) (LineTo(curvnew) :: acc) tail curvnew
         else
           let curvnew = curv +@| dt in
-          aux (LineTo(curvnew) :: acc) (not is_horizontal) tail curvnew
+          aux (not is_horizontal) (LineTo(curvnew) :: acc) tail curvnew
   in
-  aux [] is_horizontal_init lst curv
+  aux is_horizontal_init acc lst curv
 
 
-let curve_parity is_horizontal_init lst (dtD, dvE, dsF) dtFopt curv =
-  let rec aux acc is_horizontal lst curv =
+let curve_parity is_horizontal_init acc lst (dtD, dvE, dsF) dtFopt curv =
+  let rec aux  is_horizontal acc lst curv =
     match lst with
     | [] ->
         if is_horizontal then
@@ -3497,7 +3500,7 @@ let curve_parity is_horizontal_init lst (dtD, dvE, dsF) dtFopt curv =
             | None      -> vE +@| dsF
             | Some(dtF) -> vE +@ (dtF, dsF)
           in
-            (vF, List.rev (BezierTo(vD, vE, vF) :: acc))
+            (vF, (BezierTo(vD, vE, vF) :: acc))
         else
           let vD = curv +@| dtD in
           let vE = vD +@ dvE in
@@ -3506,22 +3509,22 @@ let curve_parity is_horizontal_init lst (dtD, dvE, dsF) dtFopt curv =
             | None      -> vE +@- dsF
             | Some(dtF) -> vE +@ (dsF, dtF)
           in
-            (vF, List.rev (BezierTo(vD, vE, vF) :: acc))
+            (vF, (BezierTo(vD, vE, vF) :: acc))
 
     | (dtA, dvB, dsC) :: tail ->
         if is_horizontal then
           let vA = curv +@- dtA in
           let vB = vA +@ dvB in
           let vC = vB +@| dsC in
-            aux (BezierTo(vA, vB, vC) :: acc) (not is_horizontal) tail vC
+            aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
         else
           let vA = curv +@| dtA in
           let vB = vA +@ dvB in
           let vC = vB +@- dsC in
-            aux (BezierTo(vA, vB, vC) :: acc) (not is_horizontal) tail vC
+            aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
           
   in
-  aux [] is_horizontal_init lst curv
+  aux is_horizontal_init acc lst curv
         
   
 
@@ -3533,6 +3536,7 @@ let charstring_absolute csinfo gid =
   | Some((_, pcs)) ->
       let (lastv, acc) =
         pcs |> List.fold_left (fun (curv, acc) pcselem ->
+          Format.fprintf fmtCFF "%a@ " pp_parsed_charstring pcselem;  (* for debug *)
           match pcselem with
           | HintMask(_)
           | CntrMask(_)
@@ -3542,20 +3546,26 @@ let charstring_absolute csinfo gid =
           | VStemHM(_, _, _)
               -> (curv, acc)
 
-          | VMoveTo(dy) -> (curv +@| dy, acc)
+          | VMoveTo(dy) ->
+              let curvnew = curv +@| dy in
+                (curvnew, CloseAndMoveTo(curvnew) :: acc)
 
-          | HMoveTo(dx) -> (curv +@- dx, acc)
+          | HMoveTo(dx) ->
+              let curvnew = curv +@- dx in
+                (curvnew, CloseAndMoveTo(curvnew) :: acc)
 
-          | RMoveTo(dv) -> (curv +@ dv, acc)
+          | RMoveTo(dv) ->
+              let curvnew = curv +@ dv in
+                (curvnew, CloseAndMoveTo(curvnew) :: acc)
 
           | RLineTo(csptlst) ->
               csptlst |> List.fold_left (fun (curv, acc) dv ->
                 (curv +@ dv, LineTo(curv +@ dv) :: acc)
               ) (curv, acc)
 
-          | HLineTo(lst) -> line_parity true lst curv
+          | HLineTo(lst) -> line_parity true acc lst curv
 
-          | VLineTo(lst) -> line_parity false lst curv
+          | VLineTo(lst) -> line_parity false acc lst curv
 
           | RRCurveTo(tricsptlst) ->
               tricsptlst |> List.fold_left (fun (curv, acc) (dvA, dvB, dvC) ->
@@ -3607,7 +3617,7 @@ let charstring_absolute csinfo gid =
                 | []              -> assert false
                 | last :: revmain ->
                     let hvlstmain = List.rev revmain in
-                    curve_parity true hvlstmain last lastopt curv
+                    curve_parity true acc hvlstmain last lastopt curv
               end
                   
           | VHCurveTo(vhlst, lastopt) ->
@@ -3616,9 +3626,8 @@ let charstring_absolute csinfo gid =
                 | []              -> assert false
                 | last :: revmain ->
                     let vhlstmain = List.rev revmain in
-                    curve_parity false vhlstmain last lastopt curv
+                    curve_parity false acc vhlstmain last lastopt curv
               end
-                   
-       ) ((0, 0), [])
+        ) ((0, 0), [])
       in
       return (Some(List.rev acc))
