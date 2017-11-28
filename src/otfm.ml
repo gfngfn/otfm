@@ -3474,10 +3474,10 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
           end
 
     | Operator(ShortKey(i)) ->
-        failwith (Printf.sprintf "unsupported operator '%d'" i)
+        err `Invalid_charstring
 
     | Operator(LongKey(i)) ->
-        failwith (Printf.sprintf "unsupported operator '12 %d'" i)
+        failwith (Printf.sprintf "invalid or unsupported operator '12 %d'" i)
 
 
 and parse_charstring (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
