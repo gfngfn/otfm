@@ -51,20 +51,19 @@ let main fmt =
   | Otfm.SingleDecoder(d) ->
       begin
         print_endline "finish initializing decoder";
-        Otfm.cff_info d >>= fun cffi ->
-        Otfm.cff_top_dict cffi >>= fun topdict ->
-        let (x1, y1, x2, y2) = topdict.Otfm.font_bbox in
+        Otfm.cff d >>= fun cffinfo ->
+        let (x1, y1, x2, y2) = cffinfo.Otfm.font_bbox in
         pp fmt "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
-        pp fmt "IsFixedPitch: %B\n" topdict.Otfm.is_fixed_pitch;
-        pp fmt "ItalicAngle: %d\n" topdict.Otfm.italic_angle;
-        pp fmt "UnderlinePosition: %d\n" topdict.Otfm.underline_position;
-        pp fmt "UnderlineThickness: %d\n" topdict.Otfm.underline_thickness;
-        pp fmt "PaintType: %d\n" topdict.Otfm.paint_type;
-        pp fmt "StrokeWidth: %d\n" topdict.Otfm.stroke_width;
-        charstring topdict 30 >>= fun (w, pcs) ->
+        pp fmt "IsFixedPitch: %B\n" cffinfo.Otfm.is_fixed_pitch;
+        pp fmt "ItalicAngle: %d\n" cffinfo.Otfm.italic_angle;
+        pp fmt "UnderlinePosition: %d\n" cffinfo.Otfm.underline_position;
+        pp fmt "UnderlineThickness: %d\n" cffinfo.Otfm.underline_thickness;
+        pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
+        pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
+        charstring cffinfo 30 >>= fun (w, pcs) ->
         pp fmt "Raw CharString example:\n";
         pcs |> List.iter (fun pcselem -> Otfm.pp_parsed_charstring fmt pcselem; pp fmt ",@ ");
-        match topdict.Otfm.cid_info with
+        match cffinfo.Otfm.cid_info with
         | None ->
             pp fmt "Not a CIDFont\n";
             Ok()

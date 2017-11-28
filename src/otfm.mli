@@ -768,14 +768,12 @@ val math : decoder -> (math, error) result
 (** [math d] returns the whole information in the
     {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} table of [d]. *)
 
-type cff_info
-
 type cff_cid_info =
   {
     registry          : string;
     ordering          : string;
     supplement        : int;
-    cid_font_version  : int;
+    cid_font_version  : float;
     cid_font_revision : int;
     cid_font_type     : int;
     cid_count         : int;
@@ -783,8 +781,9 @@ type cff_cid_info =
 
 type charstring_info
 
-type cff_top_dict =
+type cff_info =
   {
+    font_name           : string;
     is_fixed_pitch      : bool;
     italic_angle        : int;
     underline_position  : int;
@@ -794,14 +793,12 @@ type cff_top_dict =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
-    default_width_x     : int;
-    nominal_width_x     : int;
+    default_width_x     : int option;
+    nominal_width_x     : int option;
     charstring_info     : charstring_info;
   }
 
-val cff_info : decoder -> (cff_info, error) result
-
-val cff_top_dict : cff_info -> (cff_top_dict, error) result
+val cff : decoder -> (cff_info, error) result
 
 type charstring_element
 

@@ -2554,14 +2554,14 @@ type charstring_element =
 
 type subroutine_index = (charstring_element list) array
 
-type cff_info = string * dict * string_index * subroutine_index * decoder * int
+type cff_first = string * dict * string_index * subroutine_index * int
 
 type cff_cid_info =
   {
     registry          : string;
     ordering          : string;
     supplement        : int;
-    cid_font_version  : int;
+    cid_font_version  : float;
     cid_font_revision : int;
     cid_font_type     : int;
     cid_count         : int;
@@ -2569,8 +2569,9 @@ type cff_cid_info =
 
 type charstring_info = decoder * subroutine_index * subroutine_index * int
 
-type cff_top_dict =
+type cff_info =
   {
+    font_name           : string;
     is_fixed_pitch      : bool;
     italic_angle        : int;
     underline_position  : int;
@@ -2580,8 +2581,8 @@ type cff_top_dict =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
-    default_width_x     : int;
-    nominal_width_x     : int;
+    default_width_x     : int option;
+    nominal_width_x     : int option;
     charstring_info     : charstring_info;
   }
 
@@ -2773,7 +2774,7 @@ let d_dict_element d : (int * dict_element) ok =
 
 let pp_element ppf = function
   | Value(Integer(i)) -> Format.fprintf ppf "Integer(%d)" i
-  | Value(Real(r))    -> Format.fprintf ppf "Real(_)"
+  | Value(Real(r))    -> Format.fprintf ppf "Real(%f)" r
   | Key(LongKey(x))   -> Format.fprintf ppf "LongKey(%d)" x
   | Key(ShortKey(x))  -> Format.fprintf ppf "ShortKey(%d)" x
 
@@ -2886,7 +2887,7 @@ let d_charstring len32 d : (charstring_element list) ok =
   aux 0 (?@ len32) [] d
 
 
-let cff_info d : cff_info ok =
+let cff_first d : cff_first ok =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   let offset_CFF = cur_pos d in
@@ -2916,7 +2917,7 @@ let cff_info d : cff_info ok =
     d_index [] d_charstring d >>= fun gsubridx ->
       (* temporary; should be decoded *)
 
-    return (name, dictmap, stridx, gsubridx, d, offset_CFF)
+    return (name, dictmap, stridx, gsubridx, offset_CFF)
 
 
 let err_dict_key key =
@@ -2948,13 +2949,21 @@ let get_integer dictmap key =
   | None                   -> err_dict_key key
 
 
-let get_integer_pair dictmap key =
+let get_integer_pair_opt dictmap key =
   match DictMap.find_opt key dictmap with
-  | Some(Integer(i1) :: Integer(i2) :: []) -> return (i1, i2)
+  | Some(Integer(i1) :: Integer(i2) :: []) -> return (Some(i1, i2))
   | Some(_)                                -> err `Invalid_cff_not_an_integer
-  | None                                   -> err_dict_key key
+  | None                                   -> return None
+
 
 let get_sid = get_integer
+
+
+let get_real_opt dictmap key dflt =
+    match DictMap.find_opt key dictmap with
+    | Some(Real(r) :: []) -> return r
+    | Some(_)             -> err `Invalid_cff_not_an_integer
+    | None                -> return dflt
 
 
 let get_boolean_opt dictmap key dflt =
@@ -2975,7 +2984,8 @@ let get_ros dictmap key =
   | None                                                     -> err `Invalid_ros
 
 
-let cff_top_dict ((_, dictmap, stridx, gsubridx, d, offset_CFF) : cff_info) =
+let cff d =
+  cff_first d >>= fun (font_name, dictmap, stridx, gsubridx, offset_CFF) ->
 (*
   get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
   get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
@@ -2995,15 +3005,14 @@ let cff_top_dict ((_, dictmap, stridx, gsubridx, d, offset_CFF) : cff_info) =
 
   (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
 
-  get_iquad_opt    dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-  get_integer_opt  dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
-  get_integer      dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
-  get_integer_pair dictmap (ShortKey(18))             >>= fun (size_private, reloffset_private) ->
+  get_iquad_opt        dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+  get_integer_opt      dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
+  get_integer          dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
   let cidoptres =
     if DictMap.mem (LongKey(30)) dictmap then
     (* -- when the font is a CIDFont -- *)
       get_ros         dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
-      get_integer_opt dictmap (LongKey(31)) 0    >>= fun cid_font_version ->
+      get_real_opt    dictmap (LongKey(31)) 0.   >>= fun cid_font_version ->
       get_integer_opt dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
       get_integer_opt dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
       get_integer_opt dictmap (LongKey(34)) 8720 >>= fun cid_count ->
@@ -3023,19 +3032,29 @@ let cff_top_dict ((_, dictmap, stridx, gsubridx, d, offset_CFF) : cff_info) =
   cidoptres >>= fun cid_info ->
 
 (* -- Private DICT -- *)
-  let offset_private = offset_CFF + reloffset_private in
-  seek_pos offset_private d >>= fun () ->
-  d_dict size_private d >>= fun dictmap_private ->
-  get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_subrs ->
-  get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
-  get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
+  get_integer_pair_opt dictmap (ShortKey(18)) >>= fun privateopt ->
+  begin
+    match privateopt with
+    | None ->
+        return (None, None, [| |])
 
-(* -- Local Subr INDEX -- *)
-  seek_pos (offset_private + selfoffset_subrs) d >>= fun () ->
-  Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
-  d_index [] d_charstring d >>= fun subridx ->
+    | Some(size_private, reloffset_private) ->
+        let offset_private = offset_CFF + reloffset_private in
+        seek_pos offset_private d >>= fun () ->
+        d_dict size_private d >>= fun dictmap_private ->
+        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_subrs ->
+        get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
+        get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
 
+      (* -- Local Subr INDEX -- *)
+        seek_pos (offset_private + selfoffset_subrs) d >>= fun () ->
+        Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
+        d_index [] d_charstring d >>= fun subridx ->
+        return (Some(default_width_x), Some(nominal_width_x), subridx)
+
+  end >>= fun (default_width_x_opt, nominal_width_x_opt, subridx) ->
   return {
+    font_name;
     is_fixed_pitch;
     italic_angle;
     underline_position;
@@ -3044,8 +3063,8 @@ let cff_top_dict ((_, dictmap, stridx, gsubridx, d, offset_CFF) : cff_info) =
     font_bbox;
     stroke_width;
     cid_info;
-    default_width_x;
-    nominal_width_x;
+    default_width_x = default_width_x_opt;
+    nominal_width_x = default_width_x_opt;
     charstring_info = (d, gsubridx, subridx, offset_CFF + reloffset_charstring);
   }
 
