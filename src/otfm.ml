@@ -2802,6 +2802,8 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
 
 let pp_charstring_element fmt = function
   | Argument(i)           -> Format.fprintf fmt "  Argument(%d)" i
+  | Operator(ShortKey(10)) -> Format.fprintf fmt "CallSubr"
+  | Operator(ShortKey(29)) -> Format.fprintf fmt "CallGSubr"
   | Operator(ShortKey(i)) -> Format.fprintf fmt "Operator(%d)" i
   | Operator(LongKey(i))  -> Format.fprintf fmt "Operator(12 %d)" i
   | HintMaskOperator(arg) -> Format.fprintf fmt "HintMaskOperator(...)"
@@ -3294,7 +3296,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
         pop stk >>= fun i ->
         access_subroutine lsubridx i >>= fun rawcs ->
-        parse_charstring gsubridx lsubridx (woptoptprev, []) rawcs
+        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -3418,7 +3420,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
         pop stk >>= fun i ->
         access_subroutine gsubridx i >>= fun rawcs ->
-        parse_charstring gsubridx lsubridx (woptoptprev, []) rawcs
+        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -3459,8 +3461,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         failwith (Printf.sprintf "unsupported operator '12 %d'" i)
 
 
-and parse_charstring (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
-  let stk : int Stack.t = Stack.create () in
+and parse_charstring (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
   cs |> List.fold_left (fun res cselem ->
     res >>= fun (woptoptprev, acc) ->
     parse_progress gsubridx lsubridx woptoptprev stk cselem >>= fun (woptopt, parsed) ->
@@ -3478,6 +3479,7 @@ let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_in
       return None
 
   | Some(cs) ->
-      parse_charstring gsubridx lsubridx (None, []) cs >>= function
+      let stk : int Stack.t = Stack.create () in
+      parse_charstring stk gsubridx lsubridx (None, []) cs >>= function
       | (None, acc)       -> err `Invalid_charstring
       | (Some(wopt), acc) -> return (Some((wopt, List.rev acc)))
