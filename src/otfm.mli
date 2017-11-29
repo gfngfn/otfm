@@ -870,6 +870,8 @@ type path = cspoint * path_element list
 
 val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, error) result
 
+val charstring_bbox : path list -> (csx * csx * csy * csy) option
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa
 

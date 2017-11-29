@@ -29,11 +29,14 @@ let string_of_file inf =
 
 
 let charstring topdict gid =
-  match Otfm.charstring_absolute topdict.Otfm.charstring_info gid with
-  | Ok(None)      -> Error(`Msg (Printf.sprintf "no CharString for GID %d" gid))
-  | Ok(Some(s))   -> Ok(s)
-  | Error(e)      -> Error(e :> error)
-
+    match Otfm.charstring_absolute topdict.Otfm.charstring_info gid with
+    | Error(e)      -> Error(e :> error)
+    | Ok(None)      -> Error(`Msg (Printf.sprintf "no CharString for GID %d" gid))
+    | Ok(Some(pcs)) ->
+        match Otfm.charstring_bbox pcs with
+        | None       -> Error(`Msg "no bounding box")
+        | Some(bbox) -> Ok((bbox, pcs))
+    
 
 type point_kind = OL | OM | OA | OB | OC
 
@@ -64,15 +67,15 @@ let main fmt =
         pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
         pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
 
-        charstring cffinfo 32 >>= fun pcs ->
+        charstring cffinfo 32 >>= fun ((xmin, xmax, ymin, ymax), pcs) ->
 
         let svgx x = x in
         let svgy y = 1000 - y in  (* temporary; should be upside-down for SVG *)
         let fout = open_out "test.svg" in
         Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
         Printf.fprintf fout "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">";
-        Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"1000\" height=\"1000\" overflow=\"visible\">";
-        Printf.fprintf fout "<rect x=\"0\" y=\"0\" width=\"1000\" height=\"1000\" fill=\"none\" stroke=\"blue\"/>";
+        Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"1000\" height=\"1000\" viewBox=\"0 300 1000 1000\">";
+        Printf.fprintf fout "<rect x=\"0\" y=\"0\" width=\"1000\" height=\"1000\" fill=\"none\" stroke=\"blue\" />";
         pcs |> List.iter (fun ((x, y), pelst) ->
           Printf.fprintf fout "<path d=\"M%d,%d " (svgx x) (svgy y);
           let csptacc =
@@ -102,6 +105,12 @@ let main fmt =
             i + 1
           ) 0 |> ignore;
         );
+        let xmins = svgx xmin in
+        let ymins = min (svgy ymin) (svgy ymax) in
+        let wid = svgx xmax - xmins in
+        let hgt = abs (svgy ymax - svgy ymin) in
+        Format.fprintf fmt "bbox: %d, %d, %d, %d\n" xmin xmax ymin ymax;
+        Printf.fprintf fout "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"none\" stroke=\"red\" />" xmins ymins wid hgt;
         Printf.fprintf fout "</svg>";
         close_out fout;
 

@@ -3726,3 +3726,75 @@ let charstring_absolute csinfo gid =
     >>= function
     | (_, None)                           -> return (Some([]))
     | (_, Some(((cspt, peacc), pathacc))) -> return (Some(List.rev ((cspt, List.rev peacc) :: pathacc)))
+
+
+type bbox =
+  | BBoxInital
+  | BBox       of csx * csx * csy * csy
+
+
+let update_bbox bbox (x1, y1) (x2, y2) =
+  let xminnew = min x1 x2 in
+  let xmaxnew = max x1 x2 in
+  let yminnew = min y1 y2 in
+  let ymaxnew = max y1 y2 in
+    match bbox with
+    | BBox(xmin, xmax, ymin, ymax) -> BBox(min xmin xminnew, max xmax xmaxnew, min ymin yminnew, max ymax ymaxnew)
+    | BBoxInital                   -> BBox(xminnew, xmaxnew, yminnew, ymaxnew)
+
+
+let bezier_bbox (x0, y0) (x1, y1) (x2, y2) (x3, y3) =
+  let ( ~$ ) = float_of_int in
+
+  let bezier_point t r0 r1 r2 r3 =
+    if t < 0. then r0 else
+      if 1. < t then r3 else
+        let c1 = ~$ (3 * (-r0 + r1)) in
+        let c2 = ~$ (3 * (r0 - 2 * r1 + r2)) in
+        let c3 = ~$ (-r0 + 3 * (r1 - r2) + r3) in
+          int_of_float @@ (~$ r0) +. t *. (c1 +. t *. (c2 +. t *. c3))
+  in
+  
+  let aux r0 r1 r2 r3 =
+    let a = -r0 + 3 * (r1 - r2) + r3 in
+    let b = 2 * (r0 - 2 * r1 + r2) in
+    let c = -r0 + r1 in
+    if a = 0 then
+      [r0; r3]
+    else
+      let det = b * b - 4 * a * c in
+      if det < 0 then
+        [r0; r3]
+      else
+        let delta = sqrt (~$ det) in
+        let t_plus  = (-. (~$ b) +. delta) /. (~$ (2 * a)) in
+        let t_minus = (-. (~$ b) -. delta) /. (~$ (2 * a)) in
+        [r0; r3; bezier_point t_plus r0 r1 r2 r3; bezier_point t_minus r0 r1 r2 r3]
+  in
+
+  let xoptlst = aux x0 x1 x2 x3 in
+  let xmax = xoptlst |> List.fold_left max x0 in
+  let xmin = xoptlst |> List.fold_left min x0 in
+  let yoptlst = aux y0 y1 y2 y3 in
+  let ymax = yoptlst |> List.fold_left max y0 in
+  let ymin = yoptlst |> List.fold_left min y0 in
+  ((xmin, ymin), (xmax, ymax))
+
+
+let charstring_bbox (pathlst : path list) =
+  let bbox =
+    pathlst |> List.fold_left (fun bboxprev (cspt, pelst) ->
+      let (_, bbox) =
+        pelst |> List.fold_left (fun (v0, bboxprev) pe ->
+          match pe with
+          | LineTo(v1)           -> (v1, update_bbox bboxprev v0 v1)
+          | BezierTo(v1, v2, v3) -> let (vb1, vb2) = bezier_bbox v0 v1 v2 v3 in (v3, update_bbox bboxprev vb1 vb2)
+        ) (cspt, bboxprev)
+      in
+        bbox
+    ) BBoxInital
+  in
+  match bbox with
+  | BBoxInital                   -> None  (* needs reconsideration *)
+  | BBox(xmin, xmax, ymin, ymax) -> (Some((xmin, xmax, ymin, ymax)))
+        
