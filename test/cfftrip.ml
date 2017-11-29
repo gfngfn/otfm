@@ -98,7 +98,7 @@ let main fmt =
               | OC -> "green"
             in
             Printf.fprintf fout "<circle cx=\"%d\" cy=\"%d\" r=\"5\" fill=\"%s\" />" (svgx x) (svgy y) color;
-            Printf.fprintf fout "<text x=\"%d\" y=\"%d\">%d</text>" (svgx x) (svgy y) i;
+            Printf.fprintf fout "<text x=\"%d\" y=\"%d\"><tspan fill=\"gray\" font-size=\"7pt\">%d</tspan></text>" (svgx (x + 4)) (svgy y) i;
             i + 1
           ) 0 |> ignore;
         );

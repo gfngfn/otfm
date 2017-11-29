@@ -3517,11 +3517,12 @@ let line_parity is_horizontal_init acc lst curv =
   aux is_horizontal_init acc lst curv
 
 
-let curve_parity is_horizontal_init acc lst (dtD, dvE, dsF) dtFopt curv =
+let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
   let rec aux  is_horizontal acc lst curv =
     match lst with
     | [] ->
         if is_horizontal then
+        (* -- dtD is x-directed and dsF is y-directed -- *)
           let vD = curv +@- dtD in
           let vE = vD +@ dvE in
           let vF =
@@ -3529,7 +3530,7 @@ let curve_parity is_horizontal_init acc lst (dtD, dvE, dsF) dtFopt curv =
             | None      -> vE +@| dsF
             | Some(dtF) -> vE +@ (dtF, dsF)
           in
-            (vF, (BezierTo(vD, vE, vF) :: acc))
+            (vF, BezierTo(vD, vE, vF) :: acc)
         else
           let vD = curv +@| dtD in
           let vE = vD +@ dvE in
@@ -3538,7 +3539,7 @@ let curve_parity is_horizontal_init acc lst (dtD, dvE, dsF) dtFopt curv =
             | None      -> vE +@- dsF
             | Some(dtF) -> vE +@ (dsF, dtF)
           in
-            (vF, (BezierTo(vD, vE, vF) :: acc))
+            (vF, BezierTo(vD, vE, vF) :: acc)
 
     | (dtA, dvB, dsC) :: tail ->
         if is_horizontal then
@@ -3553,7 +3554,7 @@ let curve_parity is_horizontal_init acc lst (dtD, dvE, dsF) dtFopt curv =
             aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
           
   in
-  aux is_horizontal_init acc lst curv
+  aux is_horizontal acc lst curv
         
 
 type path = cspoint * path_element list
@@ -3666,7 +3667,7 @@ let charstring_absolute csinfo gid =
                       let vB = vA +@ dvB in
                       let vC = vB +@| dyC in
                       (vC, BezierTo(vA, vB, vC) :: peacc)
-                    ) (curv, BezierTo(v1, v2, v3) :: peacc)
+                    ) (v3, BezierTo(v1, v2, v3) :: peacc)
                   in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
@@ -3692,7 +3693,7 @@ let charstring_absolute csinfo gid =
                     let vB = vA +@ dvB in
                     let vC = vB +@- dxC in
                     (vC, BezierTo(vA, vB, vC) :: peacc)
-                  ) (curv, BezierTo(v1, v2, v3) :: peacc)
+                  ) (v3, BezierTo(v1, v2, v3) :: peacc)
                 in
                 return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
