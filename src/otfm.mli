@@ -863,12 +863,12 @@ val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* t
 val charstring : charstring_info -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
 
 type path_element =
-  | CloseAndMoveTo of cspoint
   | LineTo         of cspoint
   | BezierTo       of cspoint * cspoint * cspoint
 
+type path = cspoint * path_element list
 
-val charstring_absolute : charstring_info -> glyph_id -> ((path_element list) option, error) result
+val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, error) result
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa

@@ -61,17 +61,23 @@ let main fmt =
         pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
         pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
         charstring cffinfo 32 >>= fun pcs ->
-        pp fmt "Raw CharString example:\n";
-        pcs |> List.iter (function
-        | Otfm.LineTo((x, y)) ->
-            Format.fprintf fmt "-- (%d, %d)@ " x y
+(*
+        let fout = open_out "test.svg" in
+*)
+        pcs |> List.iter (fun ((x, y), pelst) ->
+          Format.fprintf fmt "\n(path (%d, %d)@ " x y;
+          pelst |> List.iter (function
+          | Otfm.LineTo((x, y)) ->
+              Format.fprintf fmt "-- (%d, %d)@ " x y
 
-        | Otfm.BezierTo((xA, yA), (xB, yB), (xC, yC)) ->
-            Format.fprintf fmt ".. controls (%d, %d) and (%d, %d) .. (%d, %d)@ " xA yA xB yB xC yC
-
-        | Otfm.CloseAndMoveTo((x, y)) ->
-            Format.fprintf fmt "\nstart (%d, %d)@ " x y
+          | Otfm.BezierTo((xA, yA), (xB, yB), (xC, yC)) ->
+              Format.fprintf fmt ".. controls (%d, %d) and (%d, %d) .. (%d, %d)@ " xA yA xB yB xC yC
+          );
+          Format.fprintf fmt ")";
         );
+(*
+        close_out fout;
+*)
         match cffinfo.Otfm.cid_info with
         | None ->
             pp fmt "Not a CIDFont\n";
