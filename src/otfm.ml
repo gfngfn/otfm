@@ -3201,21 +3201,42 @@ type parsed_charstring =
 *)
 
 
+let pp_cspoint fmt (x, y) = pp fmt "(%d %d)" x y
+
+let pp_bezier fmt (dvA, dvB, dvC) = pp fmt "%a..%a..%a" pp_cspoint dvA pp_cspoint dvB pp_cspoint dvC
+
+let pp_int fmt x = pp fmt "%d" x
+
+let pp_int_option fmt = function
+  | None    -> pp fmt "NONE"
+  | Some(i) -> pp fmt "%d" i
+
+let pp_partial fmt (dtD, (dxE, dyE), dsF) = pp fmt "%d_(%d %d)_%d" dtD dxE dyE dsF
+
+let pp_sep_space fmt () = pp fmt " "
+
+let pp_cspoint_list = pp_list ~pp_sep:pp_sep_space pp_cspoint
+
+let pp_partial_list = pp_list ~pp_sep:pp_sep_space pp_partial
+
 let pp_parsed_charstring fmt = function
-  | HStem(y, dy, csptlst)   -> pp fmt "HStem(%d, %d, ...)" y dy
-  | VStem(x, dx, csptlst)   -> pp fmt "VStem(%d, %d, ...)" x dx
+  | HStem(y, dy, csptlst)   -> pp fmt "HStem(%d %d %a)" y dy pp_cspoint_list csptlst
+  | VStem(x, dx, csptlst)   -> pp fmt "VStem(%d %d %a)" x dx pp_cspoint_list csptlst
+  | HStemHM(y, dy, csptlst) -> pp fmt "HStemHM(%d %d %a)" y dy pp_cspoint_list csptlst
+  | VStemHM(x, dx, csptlst) -> pp fmt "VStemHM(%d %d %a)" x dx pp_cspoint_list csptlst
+  | HintMask(_)             -> pp fmt "HintMask(_)"
+  | CntrMask(_)             -> pp fmt "CntrMask(_)"
   | VMoveTo(dy1)            -> pp fmt "VMoveTo(%d)" dy1
-  | RLineTo(csptlst)        -> pp fmt "RLineTo(...)"
-  | HLineTo(lst)            -> pp fmt "HLineTo(...)"
-  | VLineTo(lst)            -> pp fmt "VLineTo(...)"
-  | RRCurveTo(bezierlst)    -> pp fmt "RRCurveTo(...)"
-  | HStemHM(y, dy, csptlst) -> pp fmt "HStemHM(%d, %d, ...)" y dy
+  | RLineTo(csptlst)        -> pp fmt "RLineTo(%a)" pp_cspoint_list csptlst
+  | HLineTo(lst)            -> pp fmt "HLineTo(%a)" (pp_list ~pp_sep:pp_sep_space pp_int) lst
+  | VLineTo(lst)            -> pp fmt "VLineTo(%a)" (pp_list ~pp_sep:pp_sep_space pp_int) lst
+  | RRCurveTo(bezierlst)    -> pp fmt "RRCurveTo(%a)" (pp_list ~pp_sep:pp_sep_space pp_bezier) bezierlst
   | RMoveTo((dx1, dy1))     -> pp fmt "RMoveTo(%d, %d)" dx1 dy1
   | HMoveTo(dx1)            -> pp fmt "HMoveTo(%d)" dx1
-  | VStemHM(x, dx, csptlst) -> pp fmt "VStemHM(%d, %d, ...)" x dx
-  | VVCurveTo(_, _)         -> pp fmt "VVCurveTo(_, ...)"
-  | HHCurveTo(_, _)         -> pp fmt "HHCurveTo(_, ...)"
-  | _                       -> pp fmt "<other>"
+  | VVCurveTo(dtopt, lst)   -> pp fmt "VVCurveTo(%a %a)" pp_int_option dtopt pp_partial_list lst
+  | HHCurveTo(dtopt, lst)   -> pp fmt "HHCurveTo(%a %a)" pp_int_option dtopt pp_partial_list lst
+  | VHCurveTo(lst, dtopt)   -> pp fmt "VHCurveTo(%a %a)" pp_partial_list lst pp_int_option dtopt
+  | HVCurveTo(lst, dtopt)   -> pp fmt "HVCurveTo(%a %a)" pp_partial_list lst pp_int_option dtopt
 
 
 let access_subroutine idx i =
@@ -3346,14 +3367,23 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         end
 
     | HintMaskOperator(arg) ->
-        return_with_width [HintMask(arg)]
+        if Stack.length stk = 0 then
+          return_with_width [HintMask(arg)]
+        else
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | []                 -> err `Invalid_charstring
+          | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); HintMask(arg)]
+        end
+          
 
     | CntrMaskOperator(arg) ->
         return_with_width [CntrMask(arg)]
 
     | Operator(ShortKey(21)) ->  (* -- rmoveto (21) -- *)
-        pop stk >>= fun dx1 ->
         pop stk >>= fun dy1 ->
+        pop stk >>= fun dx1 ->
         return_with_width [RMoveTo((dx1, dy1))]
 
     | Operator(ShortKey(22)) ->  (* -- hmoveto (22) -- *)
@@ -3537,7 +3567,7 @@ let charstring_absolute csinfo gid =
   | Some((_, pcs)) ->
       pcs |> List.fold_left (fun prevres pcselem ->
         prevres >>= fun (curv, accopt) ->
-        Format.fprintf fmtCFF "%a@ " pp_parsed_charstring pcselem;  (* for debug *)
+        Format.fprintf fmtCFF "%a\n" pp_parsed_charstring pcselem;  (* for debug *)
         match pcselem with
         | HintMask(_)
         | CntrMask(_)
@@ -3551,24 +3581,24 @@ let charstring_absolute csinfo gid =
             let curvnew = curv +@| dy in
             begin
               match accopt with
-              | None                 -> return (curvnew, Some((curvnew, []), []))
-              | Some((acc, pathacc)) -> return (curvnew, Some((curvnew, []), acc :: pathacc))
+              | None                           -> return (curvnew, Some((curvnew, []), []))
+              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
         | HMoveTo(dx) ->
             let curvnew = curv +@- dx in
             begin
               match accopt with
-              | None                 -> return (curvnew, Some((curvnew, []), []))
-              | Some((acc, pathacc)) -> return (curvnew, Some((curvnew, []), acc :: pathacc))
+              | None                           -> return (curvnew, Some((curvnew, []), []))
+              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
         | RMoveTo(dv) ->
             let curvnew = curv +@ dv in
             begin
               match accopt with
-              | None                 -> return (curvnew, Some((curvnew, []), []))
-              | Some((acc, pathacc)) -> return (curvnew, Some((curvnew, []), acc :: pathacc))
+              | None                           -> return (curvnew, Some((curvnew, []), []))
+              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
         | RLineTo(csptlst) ->
@@ -3668,7 +3698,7 @@ let charstring_absolute csinfo gid =
             end
 
         | HHCurveTo(_, []) ->
-            assert false
+            err `Invalid_charstring
 
         | HVCurveTo(hvlst, lastopt) ->
             begin
@@ -3693,5 +3723,5 @@ let charstring_absolute csinfo gid =
             end
       ) (return ((0, 0), None))
     >>= function
-    | (_, None)                 -> return (Some([]))
-    | (_, Some((acc, pathacc))) -> return (Some(List.rev (acc :: pathacc)))
+    | (_, None)                           -> return (Some([]))
+    | (_, Some(((cspt, peacc), pathacc))) -> return (Some(List.rev ((cspt, List.rev peacc) :: pathacc)))

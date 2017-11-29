@@ -10,6 +10,7 @@ tmp
 *.otf
 *.ttf
 *.ttx
+*.svg
 otftrip
 otftrip-local
 gsubtrip

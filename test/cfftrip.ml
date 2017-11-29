@@ -35,6 +35,9 @@ let charstring topdict gid =
   | Error(e)      -> Error(e :> error)
 
 
+type point_kind = OL | OM | OA | OB | OC
+
+
 let main fmt =
   let ( >>= ) x f =
     match x with
@@ -60,24 +63,48 @@ let main fmt =
         pp fmt "UnderlineThickness: %d\n" cffinfo.Otfm.underline_thickness;
         pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
         pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
-        charstring cffinfo 32 >>= fun pcs ->
-(*
-        let fout = open_out "test.svg" in
-*)
-        pcs |> List.iter (fun ((x, y), pelst) ->
-          Format.fprintf fmt "\n(path (%d, %d)@ " x y;
-          pelst |> List.iter (function
-          | Otfm.LineTo((x, y)) ->
-              Format.fprintf fmt "-- (%d, %d)@ " x y
 
-          | Otfm.BezierTo((xA, yA), (xB, yB), (xC, yC)) ->
-              Format.fprintf fmt ".. controls (%d, %d) and (%d, %d) .. (%d, %d)@ " xA yA xB yB xC yC
-          );
-          Format.fprintf fmt ")";
+        charstring cffinfo 32 >>= fun pcs ->
+
+        let svgx x = x in
+        let svgy y = 1000 - y in  (* temporary; should be upside-down for SVG *)
+        let fout = open_out "test.svg" in
+        Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
+        Printf.fprintf fout "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">";
+        Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"1000\" height=\"1000\" overflow=\"visible\">";
+        Printf.fprintf fout "<rect x=\"0\" y=\"0\" width=\"1000\" height=\"1000\" fill=\"none\" stroke=\"blue\"/>";
+        pcs |> List.iter (fun ((x, y), pelst) ->
+          Printf.fprintf fout "<path d=\"M%d,%d " (svgx x) (svgy y);
+          let csptacc =
+            pelst |> List.fold_left (fun csptacc pe ->
+              match pe with
+              | Otfm.LineTo((x, y)) ->
+                  Printf.fprintf fout "L%d,%d " (svgx x) (svgy y);
+                  (OL, x, y) :: csptacc
+
+              | Otfm.BezierTo((xA, yA), (xB, yB), (xC, yC)) ->
+                  Printf.fprintf fout "C%d,%d %d,%d %d,%d " (svgx xA) (svgy yA) (svgx xB) (svgy yB) (svgx xC) (svgy yC);
+                  (OC, xC, yC) :: (OB, xB, yB) :: (OA, xA, yA) :: csptacc
+            ) [(OM, x, y)]
+          in
+          Printf.fprintf fout "Z\" />";
+          csptacc |> List.rev |> List.fold_left (fun i (o, x, y) ->
+            let color =
+              match o with
+              | OM -> "purple"
+              | OL -> "orange"
+              | OA -> "red"
+              | OB -> "blue"
+              | OC -> "green"
+            in
+            Printf.fprintf fout "<circle cx=\"%d\" cy=\"%d\" r=\"5\" fill=\"%s\" />" (svgx x) (svgy y) color;
+            Printf.fprintf fout "<text x=\"%d\" y=\"%d\">%d</text>" (svgx x) (svgy y) i;
+            i + 1
+          ) 0 |> ignore;
         );
-(*
+        Printf.fprintf fout "</svg>";
         close_out fout;
-*)
+
         match cffinfo.Otfm.cid_info with
         | None ->
             pp fmt "Not a CIDFont\n";
