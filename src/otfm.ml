@@ -9,11 +9,10 @@
 let debugfmt =
   Format.formatter_of_out_channel (open_out "/dev/null")
 
-let fmtCFF = debugfmt
-
-let print_for_debug msg = () (* print_endline msg *) (* for debug *)
-
-let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
+let fmtgen  = debugfmt
+let fmtGSUB = debugfmt
+let fmtMATH = debugfmt
+let fmtCFF  = debugfmt
 
 
 open Result
@@ -466,7 +465,7 @@ let d_repeat n df d =
 
 let d_list df d =
   d_uint16 d >>= fun count ->
-  print_for_debug_int "(d_list) count" count;
+  Format.fprintf fmtgen "(d_list) count = %d\n" count;
   d_repeat count df d
 
 
@@ -480,7 +479,7 @@ let d_list_filtered df predicate d =
       aux acc imax (i + 1)
   in
     d_uint16 d >>= fun count ->
-    print_for_debug_int "count" count;
+    Format.fprintf fmtgen "(d_list_filtered) count = %d\n" count;
     aux [] count 0
 
 
@@ -522,10 +521,10 @@ let d_offset_opt (offset_origin : int) d : (int option) ok =
 
 let d_fetch offset_origin df d =
   let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch) | pos_before" pos_before;
+  Format.fprintf fmtgen "(d_fetch) | pos_before = %d\n" pos_before;
   d_offset offset_origin d >>= fun offset ->
-  print_for_debug_int "          | rel_offset" (offset - offset_origin);
-  print_for_debug_int "          | offset" offset;
+  Format.fprintf fmtgen "          | rel_offset = %d\n" (offset - offset_origin);
+  Format.fprintf fmtgen "          | offset     = %d\n" offset;
   seek_pos offset d >>= fun () ->
   df d >>= fun res ->
   seek_pos (pos_before + 2) d >>= fun () ->
@@ -536,14 +535,14 @@ let d_fetch_opt offset_origin df d =
   let pos_before = cur_pos d in
   d_offset_opt offset_origin d >>= function
     | None ->
-        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
-        print_for_debug     "              | NULL";
+        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d\n" pos_before;
+        Format.fprintf fmtgen "              | NULL\n";
         seek_pos (pos_before + 2) d >>= fun () ->
         return None
 
     | Some(offset) ->
-        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
-        print_for_debug     "              | non-NULL";
+        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d\n" pos_before;
+        Format.fprintf fmtgen "              | non-NULL\n";
         seek_pos offset d >>= fun () ->
         df d >>= fun res ->
         seek_pos (pos_before + 2) d >>= fun () ->
@@ -552,15 +551,15 @@ let d_fetch_opt offset_origin df d =
 
 let d_fetch_list offset_origin df d =
   let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  Format.fprintf fmtgen "(d_fetch_list) | pos_before = %d\n" pos_before;
   d_offset_opt offset_origin d >>= function
     | None ->
-        print_for_debug "               | NULL";
+        Format.fprintf fmtgen "               | NULL\n";
         seek_pos (pos_before + 2) d >>= fun () ->
         return []
 
     | Some(offset) ->
-        print_for_debug "               | non-NULL";
+        Format.fprintf fmtgen "               | non-NULL\n";
         seek_pos offset d >>= fun () ->
         df d >>= fun lst ->
         seek_pos (pos_before + 2) d >>= fun () ->
@@ -1502,17 +1501,22 @@ let loca d gid =
 (* -- GSUB table -- *)
 
 type gsub_subtable =
-  | LigatureSubtable of (glyph_id * (glyph_id list * glyph_id) list) list
+  | SingleSubtable    of (glyph_id * glyph_id) list
+      (* -- LookupType 1: Single substitution subtable [page 251] -- *)
+  | AlternateSubtable of (glyph_id * (glyph_id list)) list
+      (* -- LookupType 3: Alternate substitution subtable [page 253] -- *)
+  | LigatureSubtable  of (glyph_id * (glyph_id list * glyph_id) list) list
+      (* -- LookupType 4: Ligature substitution subtable [page 254] -- *)
   (* temporary; should contain more lookup type *)
 
-
+(*
 let seek_pos_from_list origin scriptTag d =
   let rec aux i =
     if i <= 0 then return false else
     begin
       d_bytes 4 d >>= fun tag ->
       d_uint16 d  >>= fun offset ->
-(*        print_for_debug ("| tag = '" ^ tag ^ "'");  (* for debug *) *)
+(*        Format.fprintf fmtgen ("| tag = '" ^ tag ^ "'");  (* for debug *) *)
         if String.equal tag scriptTag then
           seek_pos (origin + offset) d >>= fun () ->
           return true
@@ -1521,10 +1525,10 @@ let seek_pos_from_list origin scriptTag d =
     end
   in
   d_uint16 d >>= fun scriptCount ->
-  print_for_debug_int "scriptCount" scriptCount;
+  Format.fprintf fmtGSUB "scriptCount = %d\n" scriptCount;
   aux scriptCount >>= fun found ->
   return found
-
+*)
 
 let d_range_record d =
   let rec range acc i j =
@@ -1541,13 +1545,13 @@ let d_coverage d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
-  print_for_debug_int "{Coverage format" coverageFormat;  (* for debug *)
+  Format.fprintf fmtgen "{Coverage format = %d\n" coverageFormat;  (* for debug *)
   let res =  (* for debug *)
     match coverageFormat with
     | 1 -> d_list d_uint16 d
     | 2 -> d_list d_range_record d >>= fun rnglst -> return (List.concat rnglst)
     | _ -> err_version d (Int32.of_int coverageFormat)
-  in print_for_debug "end Coverage table}"; res  (* for debug *)
+  in Format.fprintf fmtgen "end Coverage table}\n"; res  (* for debug *)
 
 (*
 let d_coverage offset_origin d : (glyph_id list) ok =
@@ -1568,10 +1572,10 @@ let combine_coverage d coverage lst =
 
 let d_fetch offset_origin df d =
   let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch) | pos_before" pos_before;
+  Format.fprintf fmtgen "(d_fetch) | pos_before = %d\n" pos_before;
   d_offset offset_origin d >>= fun offset ->
-  print_for_debug_int "          | rel_offset" (offset - offset_origin);
-  print_for_debug_int "          | offset" offset;
+  Format.fprintf fmtgen "          | rel_offset = %d\n" (offset - offset_origin);
+  Format.fprintf fmtgen "          | offset     = %d\n" offset;
   seek_pos offset d >>= fun () ->
   df d >>= fun res ->
   seek_pos (pos_before + 2) d >>= fun () ->
@@ -1582,14 +1586,14 @@ let d_fetch_opt offset_origin df d =
   let pos_before = cur_pos d in
   d_offset_opt offset_origin d >>= function
     | None ->
-        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
-        print_for_debug     "              | NULL";
+        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d\n" pos_before;
+        Format.fprintf fmtgen "              | NULL";
         seek_pos (pos_before + 2) d >>= fun () ->
         return None
 
     | Some(offset) ->
-        print_for_debug_int "(d_fetch_opt) | pos_before" pos_before;
-        print_for_debug     "              | non-NULL";
+        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d\n" pos_before;
+        Format.fprintf fmtgen "              | non-NULL\n";
         seek_pos offset d >>= fun () ->
         df d >>= fun res ->
         seek_pos (pos_before + 2) d >>= fun () ->
@@ -1598,15 +1602,15 @@ let d_fetch_opt offset_origin df d =
 
 let d_fetch_list offset_origin df d =
   let pos_before = cur_pos d in
-  print_for_debug_int "(d_fetch_list) | pos_before" pos_before;
+  Format.fprintf fmtgen "(d_fetch_list) | pos_before = %d\n" pos_before;
   d_offset_opt offset_origin d >>= function
     | None ->
-        print_for_debug "               | NULL";
+        Format.fprintf fmtgen "               | NULL\n";
         seek_pos (pos_before + 2) d >>= fun () ->
         return []
 
     | Some(offset) ->
-        print_for_debug "               | non-NULL";
+        Format.fprintf fmtgen "               | non-NULL\n";
         seek_pos offset d >>= fun () ->
         df d >>= fun lst ->
         seek_pos (pos_before + 2) d >>= fun () ->
@@ -1618,7 +1622,7 @@ let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : d
   match offsetlst with
   | []             -> return (List.rev acc)
   | offset :: tail ->
-(*      let () = print_for_debug ("| offset = " ^ (string_of_int offset)) in  (* for debug *) *)
+(*      let () = Format.fprintf fmtgen ("| offset = " ^ (string_of_int offset)) in  (* for debug *) *)
       seek_pos offset d >>= fun () ->
       df d >>= fun data ->
       aux (data :: acc) tail
@@ -1631,13 +1635,11 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
           just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
   d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
-  print_for_debug_int "size of Coverage" (List.length coverage);  (* for debug *)
-  List.iter (print_for_debug_int "  *   elem") coverage;  (* for debug *)
+  Format.fprintf fmtgen "size of Coverage = %d\n" (List.length coverage);  (* for debug *)
+  List.iter (Format.fprintf fmtgen "  *   elem = %d\n") coverage;  (* for debug *)
 
     (* -- the position is set just before LigSetCount field [page 254] -- *)
-  d_offset_list offset_Substitution_table d >>= fun offsetlst_LigatureSet ->
-  print_for_debug_int "number of LigatureSet" (List.length offsetlst_LigatureSet);  (* for debug *)
-  seek_every_pos offsetlst_LigatureSet df d >>= fun datalst ->
+  d_list (d_fetch offset_Substitution_table df) d >>= fun datalst ->
   combine_coverage d coverage datalst
 
 
@@ -1658,7 +1660,7 @@ let gpos_script_tag = gxxx_script_tag
 let d_tag_offset_record offset_Gxxx d =
   d_bytes 4 d >>= fun tag ->
   d_offset offset_Gxxx d >>= fun offset ->
-  print_for_debug (Printf.sprintf "(%s, %d)" tag offset);  (* for debug *)
+  Format.fprintf fmtgen "(%s, %d)\n" tag offset;  (* for debug *)
   return (tag, offset)
 
 
@@ -1707,7 +1709,7 @@ let gpos_langsys_tag = gxxx_langsys_tag
 
 let gxxx_langsys (script : gxxx_script) : (gxxx_langsys * gxxx_langsys list) ok =
   let (d, scriptTag, offset_Script_table, offset_FeatureList, offset_LookupList) = script in
-  print_for_debug_int "offset_Script_table" offset_Script_table;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_Script_table = %d\n" offset_Script_table;  (* for debug *)
   seek_pos offset_Script_table d >>= fun () ->
   d_offset offset_Script_table d >>= fun offset_DefaultLangSys ->
   d_list (d_tag_offset_record offset_Script_table) d >>= fun langSysList ->
@@ -1750,7 +1752,7 @@ let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature 
   d_uint16 d >>= fun requiredFeatureIndex ->
   d_list d_uint16 d >>= fun featureIndex_list ->
     (* -- now we are going to see FeatureList table -- *)
-  print_for_debug_int "offset_FeatureList" offset_FeatureList;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_FeatureList = %d\n" offset_FeatureList;  (* for debug *)
   seek_pos offset_FeatureList d >>= fun () ->
   d_list_filtered (d_tag_offset_record offset_FeatureList) (fun fi -> List.mem fi featureIndex_list) d >>= fun featureList ->
   let featureList_res =
@@ -1785,19 +1787,18 @@ let gpos_feature = gxxx_feature
 
 let gxxx_subtable_list (type a) (lookup_gxxx : decoder -> a ok) (feature : gxxx_feature) : (a list) ok =
   let (d, featureTag, offset_Feature_table, offset_LookupList) = feature in
-  print_for_debug_int "offset_Feature_table" offset_Feature_table;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_Feature_table = %d\n" offset_Feature_table;  (* for debug *)
   seek_pos offset_Feature_table d >>= fun () ->
     (* -- now the position is set to the beginning of the required Feature table -- *)
-  print_for_debug "---- Feature table ----";  (* for debug *)
+  Format.fprintf fmtGSUB "---- Feature table ----\n";  (* for debug *)
   d_uint16 d >>= fun featureParams ->
   confirm (featureParams = 0) (`Invalid_feature_params(featureParams)) >>= fun () ->
   d_list d_uint16 d >>= fun lookupListIndexList ->
-  print_for_debug_int "offset_LookupList" offset_LookupList;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_LookupList = %d\n" offset_LookupList;  (* for debug *)
   seek_pos offset_LookupList d >>= fun () ->
     (* -- now the position is set to the beginning of the LookupList table -- *)
   d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookupListIndexList) d >>= fun offsetlst_Lookup_table ->
   seek_every_pos offsetlst_Lookup_table lookup_gxxx d
-
 
 
 let d_ligature_table d : (glyph_id list * glyph_id) ok =
@@ -1805,7 +1806,7 @@ let d_ligature_table d : (glyph_id list * glyph_id) ok =
           to the beginning of a Ligature table [page 255] -- *)
   d_uint16 d >>= fun ligGlyph ->
   d_uint16 d >>= fun compCount ->
-  print_for_debug (Printf.sprintf "    [ligGlyph = %d ----> compCount = %d]" ligGlyph compCount);
+  Format.fprintf fmtGSUB "    [ligGlyph = %d ----> compCount = %d]\n" ligGlyph compCount;
   d_repeat (compCount - 1) d_uint16 d >>= fun component ->
   return (component, ligGlyph)
 
@@ -1814,20 +1815,57 @@ let d_ligature_set_table d : ((glyph_id list * glyph_id) list) ok =
     (* -- the position is supposed to be set
           to the beginning of a LigatureSet table [page 254] -- *)
   let offset_LigatureSet_table = cur_pos d in
-  print_for_debug_int "offset_LigatureSet_table" offset_LigatureSet_table;
-  d_offset_list offset_LigatureSet_table d >>= fun offsetlst_Ligature_table ->
-  seek_every_pos offsetlst_Ligature_table d_ligature_table d
+  Format.fprintf fmtGSUB "offset_LigatureSet_table = %d\n" offset_LigatureSet_table;
+  d_list (d_fetch offset_LigatureSet_table d_ligature_table) d
 
 
 let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id) list) list) ok =
     (* -- the position is supposed to be set
           to the beginning of Ligature SubstFormat1 subtable [page 254] -- *)
   let offset_Substitution_table = cur_pos d in
-  print_for_debug_int "offset_Substitution_table" offset_Substitution_table;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
   d_uint16 d >>= fun substFormat ->
-  print_for_debug_int "substFormat" substFormat;  (* for debug *)
+  Format.fprintf fmtGSUB "substFormat = %d\n" substFormat;  (* for debug *)
   confirm (substFormat = 1) (e_version d (Int32.of_int substFormat)) >>= fun () ->
   d_with_coverage offset_Substitution_table d_ligature_set_table d
+
+
+let d_alternate_set_table d : (glyph_id list) ok =
+    (* -- the position is supposed to be set
+       to the beginning of AlternateSet table [page 253] -- *)
+  d_list d_uint16 d
+
+
+let d_alternate_substitution_subtable d : ((glyph_id * glyph_id list) list) ok =
+    (* -- the position is supposed to be set
+       to the beginning of Alternate SubstFormat1 subtable [page 253] -- *)
+  let offset_Substitution_table = cur_pos d in
+  Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
+  d_uint16 d >>= fun substFormat ->
+  confirm (substFormat = 1) (e_version d (Int32.of_int substFormat)) >>= fun () ->
+  d_with_coverage offset_Substitution_table d_alternate_set_table d
+
+
+let d_single_substitution_subtable_format_1 offset_Substitution_table d =
+  d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
+  d_uint16 d >>= fun deltaGlyphID ->
+  return (coverage |> List.map (fun gid -> (gid, gid + deltaGlyphID)))
+
+
+let d_single_substitution_subtable_format_2 offset_Substitution_table d =
+  d_with_coverage offset_Substitution_table d_uint16 d
+
+
+let d_single_substitution_subtable d : ((glyph_id * glyph_id) list) ok =
+    (* -- the position is supposed to be set
+       to the beginning of Single SubstFormat1 or Single SubstFormat2 subtable [page 251] -- *)
+  let offset_Substitution_table = cur_pos d in
+  Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
+  d_uint16 d >>= fun substFormat ->
+  match substFormat with
+  | 1 -> d_single_substitution_subtable_format_1 offset_Substitution_table d
+  | 2 -> d_single_substitution_subtable_format_2 offset_Substitution_table d
+  | _ -> err_version d (Int32.of_int substFormat)
 
 
 let lookup_gsub d : gsub_subtable ok =
@@ -1835,9 +1873,9 @@ let lookup_gsub d : gsub_subtable ok =
           to the beginning of a Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
   d_uint16 d >>= fun lookupType ->
-  print_for_debug ("# lookupType = " ^ (string_of_int lookupType));  (* for debug *)
+  Format.fprintf fmtGSUB "# lookupType = %d\n" lookupType;  (* for debug *)
   d_uint16 d >>= fun lookupFlag ->
-  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag));  (* for debug *)
+  Format.fprintf fmtGSUB "# lookupFlag = %d\n" lookupFlag;  (* for debug *)
 (*
   let rightToLeft      = 0 < lookupFlag land 1 in
   let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
@@ -1845,35 +1883,57 @@ let lookup_gsub d : gsub_subtable ok =
   let ignoreMarks      = 0 < lookupFlag land 8 in
 *)
   match lookupType with
-  | 1  (* -- single substitution -- *) ->
-      failwith "single substitution; remains to be supported."  (* temporary *)
-  | 2  (* -- multiple substitution -- *) ->
+  | 1 ->  (* -- single substitution -- *)
+      Format.fprintf fmtGSUB "LookupType 1\n";
+      d_list (d_fetch offset_Lookup_table d_single_substitution_subtable) d >>= fun gid_single_assoc_list ->
+      return (SingleSubtable(List.concat gid_single_assoc_list))
+
+  | 2 ->  (* -- multiple substitution -- *)
       failwith "multiple substitution; remains to be supported."  (* temporary *)
-  | 3  (* -- alternate substitution -- *) ->
-      failwith "alternate substitution; remains to be supported."  (* temporary *)
-  | 4  (* -- ligature substitution -- *) ->
-      let () = print_for_debug "lookupType 4" in  (* for debug *)
-      d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
-      let () = print_for_debug_int "number of subtables" (List.length offsetlst_SubTable) in  (* for debug *)
-      seek_every_pos offsetlst_SubTable d_ligature_substitution_subtable d >>= fun gidfst_ligset_assoc ->
-      return (LigatureSubtable(List.concat gidfst_ligset_assoc))
+
+  | 3 ->  (* -- alternate substitution -- *)
+      Format.fprintf fmtGSUB "LookupType 3\n";
+      d_list (d_fetch offset_Lookup_table d_alternate_substitution_subtable) d >>= fun gid_altset_assoc_list ->
+      return (AlternateSubtable(List.concat gid_altset_assoc_list))
+
+  | 4 ->  (* -- ligature substitution -- *)
+      Format.fprintf fmtGSUB "LookupType 4\n";  (* for debug *)
+      d_list (d_fetch offset_Lookup_table d_ligature_substitution_subtable) d >>= fun gidfst_ligset_assoc_list ->
+      return (LigatureSubtable(List.concat gidfst_ligset_assoc_list))
+
   | _ ->
       failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
 
 
-let rec fold_subtables_gsub (f_lig : 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
-  let iter = fold_subtables_gsub f_lig in
+type 'a folding_single = 'a -> glyph_id * glyph_id -> 'a
+
+type 'a folding_alt = 'a -> glyph_id * glyph_id list -> 'a
+
+type 'a folding_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
+
+
+let rec fold_subtables_gsub (f_single : 'a folding_single) (f_alt : 'a folding_alt) (f_lig : 'a folding_lig) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
+  let iter = fold_subtables_gsub f_single f_alt f_lig in
     match subtablelst with
-    | [] -> init
+    | [] ->
+        init
+
+    | SingleSubtable(gid_single_assoc) :: tail ->
+        let initnew = List.fold_left f_single init gid_single_assoc in
+        iter initnew tail
+
+    | AlternateSubtable(gid_altset_assoc) :: tail ->
+        let initnew = List.fold_left f_alt init gid_altset_assoc in
+        iter initnew tail
 
     | LigatureSubtable(gidfst_ligset_assoc) :: tail ->
         let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
-          iter initnew tail
+        iter initnew tail
 
 
-let gsub feature f_lig init =
+let gsub feature f_single f_alt f_lig init =
   gxxx_subtable_list lookup_gsub feature >>= fun subtablelst ->
-  return (fold_subtables_gsub f_lig init subtablelst)
+  return (fold_subtables_gsub f_single f_alt f_lig init subtablelst)
 
 
 let d_if cond df d =
@@ -2015,8 +2075,7 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
       d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
-      d_list (d_offset offset_PairPos) d >>= fun offsetlst_PairSet ->
-      seek_every_pos offsetlst_PairSet (d_pair_set valueFormat1 valueFormat2) d >>= fun pairsetlst ->
+      d_list (d_fetch offset_PairPos (d_pair_set valueFormat1 valueFormat2)) d >>= fun pairsetlst ->
       combine_coverage d coverage pairsetlst >>= fun comb ->
       return (PairPosAdjustment1(comb))
 
@@ -2039,17 +2098,22 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
 
 let lookup_gpos_exact offsetlst_SubTable lookupType d : (gpos_subtable list) ok =
   match lookupType with
-  | 1  (* -- Single adjustment -- *) ->
+  | 1 ->  (* -- Single adjustment -- *)
       failwith "Single adjustment; remains to be supported."  (* temporary *)
-  | 2  (* -- Pair adjustment -- *) ->
-      let () = print_for_debug_int "number of subtables" (List.length offsetlst_SubTable) in  (* for debug *)
+
+  | 2 ->  (* -- Pair adjustment -- *)
+      Format.fprintf fmtGSUB "number of subtables = %d\n" (List.length offsetlst_SubTable);  (* for debug *)
       seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d
-  | 3  (* -- Cursive attachment -- *) ->
+
+  | 3 ->  (* -- Cursive attachment -- *)
       failwith "Cursive attachment; remains to be supported."  (* temporary *)
-  | 4  (* -- MarkToBase attachment -- *) ->
+
+  | 4 ->  (* -- MarkToBase attachment -- *)
       failwith "MarkToBase attachment; remains to be supported."  (* temporary *)
-  | 9  (* -- Extension positioning [page 213] -- *) ->
+
+  | 9 ->  (* -- Extension positioning [page 213] -- *)
       err `Invalid_extension_position
+
   | _ ->
       failwith "lookupType other; remains to be supported (or font file broken)."  (* temporary *)
 
@@ -2071,9 +2135,9 @@ let lookup_gpos d : gpos_subtable ok =
           to the beginning of Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
   d_uint16 d >>= fun lookupType ->
-  print_for_debug ("# lookupType = " ^ (string_of_int lookupType));  (* for debug *)
+  Format.fprintf fmtGSUB "# lookupType = %d\n" lookupType;  (* for debug *)
   d_uint16 d >>= fun lookupFlag ->
-  print_for_debug ("# lookupFlag = " ^ (string_of_int lookupFlag));  (* for debug *)
+  Format.fprintf fmtGSUB "# lookupFlag = %d\n" lookupFlag;  (* for debug *)
 (*
   let rightToLeft      = 0 < lookupFlag land 1 in
   let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
@@ -2372,7 +2436,7 @@ let d_math_kern d : math_kern ok =
 
 
 let d_math_kern_info_record offset_MathKernInfo_table d : math_kern_info_record ok =
-  print_for_debug_int "### MathKernInfoRecord[1]" (cur_pos d);
+  Format.fprintf fmtMATH "### MathKernInfoRecord[1] = %d\n" (cur_pos d);
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topRightMathKern_opt ->
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topLeftMathKern_opt ->
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun bottomRightMathKern_opt ->
@@ -2387,24 +2451,24 @@ let d_math_kern_info_record offset_MathKernInfo_table d : math_kern_info_record 
 
 let d_math_kern_info d : ((glyph_id * math_kern_info_record) list) ok =
   let offset_MathKernInfo_table = cur_pos d in
-  print_for_debug_int "## MathKernInfo[1]" (cur_pos d);
+  Format.fprintf fmtMATH "## MathKernInfo[1] = %d\n" (cur_pos d);
   d_fetch offset_MathKernInfo_table d_coverage d >>= fun coverage ->
-  print_for_debug_int "## MathKernInfo[2]" (cur_pos d);
+  Format.fprintf fmtMATH "## MathKernInfo[2] = %d\n" (cur_pos d);
   d_list (d_math_kern_info_record offset_MathKernInfo_table) d >>= fun mvrlst ->
-  print_for_debug_int "## MathKernInfo[3]" (cur_pos d);
+  Format.fprintf fmtMATH "## MathKernInfo[3] = %d\n" (cur_pos d);
   combine_coverage d coverage mvrlst
 
 
 let d_math_glyph_info d : math_glyph_info ok =
   let offset_MathGlyphInfo_table = cur_pos d in
-  print_for_debug_int "# jump to MathItalicsCorrection" (cur_pos d);
+  Format.fprintf fmtMATH "# jump to MathItalicsCorrection = %d\n" (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_italics_correction_info d >>= fun mathItalicsCorrection ->
-  print_for_debug_int "# jump to MathTopAccentAttachment" (cur_pos d);
+  Format.fprintf fmtMATH "# jump to MathTopAccentAttachment = %d\n" (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_top_accent_attachment d >>= fun mathTopAccentAttachment ->
   d_fetch_opt offset_MathGlyphInfo_table d_coverage d >>= fun _ ->
-  print_for_debug_int "# jump to MathKernInfo" (cur_pos d);
+  Format.fprintf fmtMATH "# jump to MathKernInfo = %d\n" (cur_pos d);
   d_fetch_list offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
-  print_for_debug "# END MathGlyphInfo";
+  Format.fprintf fmtMATH "# END MathGlyphInfo\n";
   return {
     math_italics_correction    = mathItalicsCorrection;
     math_top_accent_attachment = mathTopAccentAttachment;
@@ -2442,11 +2506,11 @@ let d_glyph_assembly d : (math_value_record * glyph_part_record list) ok =
 
 let d_math_glyph_construction d : math_glyph_construction ok =
   let offset_MathGlyphConstruction_table = cur_pos d in
-  print_for_debug "| | {GlyphAssembly";
+  Format.fprintf fmtMATH "| | {GlyphAssembly\n";
   d_fetch_opt offset_MathGlyphConstruction_table d_glyph_assembly d >>= fun glyphAssembly ->
-  print_for_debug "| | MathGlyphVariantRecord";
+  Format.fprintf fmtMATH "| | MathGlyphVariantRecord\n";
   d_list d_math_glyph_variant_record d >>= fun mathGlyphVariantRecord_lst ->
-  print_for_debug "| | END MathGlyphConstruction}";
+  Format.fprintf fmtMATH "| | END MathGlyphConstruction}\n";
   return {
     glyph_assembly                 = glyphAssembly;
     math_glyph_variant_record_list = mathGlyphVariantRecord_lst;
@@ -2456,16 +2520,16 @@ let d_math_glyph_construction d : math_glyph_construction ok =
 let d_math_variants d : math_variants ok =
   let offset_MathVariants_table = cur_pos d in
   d_uint16 d >>= fun minConnectorOverlap ->
-  print_for_debug "| VertGlyphCoverage";
+  Format.fprintf fmtMATH "| VertGlyphCoverage\n";
   d_fetch offset_MathVariants_table d_coverage d >>= fun vertGlyphCoverage ->
-  print_for_debug "| HorizGlyphCoverage";
+  Format.fprintf fmtMATH "| HorizGlyphCoverage\n";
   d_fetch offset_MathVariants_table d_coverage d >>= fun horizGlyphCoverage ->
   d_uint16 d >>= fun vertGlyphCount ->
   d_uint16 d >>= fun horizGlyphCount ->
   let df = d_fetch offset_MathVariants_table d_math_glyph_construction in
-  print_for_debug "| VertGlyphConstruction";
+  Format.fprintf fmtMATH "| VertGlyphConstruction\n";
   d_repeat vertGlyphCount df d >>= fun vertGlyphConstruction_lst ->
-  print_for_debug "| HorizGlyphConstruction";
+  Format.fprintf fmtMATH "| HorizGlyphConstruction\n";
   d_repeat horizGlyphCount df d >>= fun horizGlyphConstruction_lst ->
   combine_coverage d vertGlyphCoverage vertGlyphConstruction_lst >>= fun vertcomb ->
   combine_coverage d horizGlyphCoverage horizGlyphConstruction_lst >>= fun horizcomb ->
@@ -2482,16 +2546,16 @@ let math d : math ok =
     | None    -> err (`Missing_required_table(Tag.math))
     | Some(_) ->
         let offset_MATH = cur_pos d in
-        print_for_debug_int "begin MATH" offset_MATH;
+        Format.fprintf fmtMATH "begin MATH = %d\n" offset_MATH;
         d_uint32 d >>= fun version ->
         confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
-        print_for_debug_int "jump to MathConstants" (cur_pos d);
+        Format.fprintf fmtMATH "jump to MathConstants = %d\n" (cur_pos d);
         d_fetch offset_MATH d_math_constants d >>= fun mathConstants ->
-        print_for_debug_int "jump to MathGlyphInfo" (cur_pos d);
+        Format.fprintf fmtMATH "jump to MathGlyphInfo = %d\n" (cur_pos d);
         d_fetch offset_MATH d_math_glyph_info d >>= fun mathGlyphInfo ->
-        print_for_debug_int "jump to MathVariants" (cur_pos d);
+        Format.fprintf fmtMATH "jump to MathVariants = %d\n" (cur_pos d);
         d_fetch offset_MATH d_math_variants d >>= fun mathVariants ->
-        print_for_debug "end MATH";
+        Format.fprintf fmtMATH "end MATH\n";
         return {
           math_constants  = mathConstants;
           math_glyph_info = mathGlyphInfo;
