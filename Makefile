@@ -8,6 +8,10 @@ gsub:
 	ocamlbuild -use-ocamlfind gsubtrip.native
 	mv gsubtrip.native gsubtrip
 
+cff:
+	ocamlbuild -use-ocamlfind cfftrip.native
+	mv cfftrip.native cfftrip
+
 install:
 	sudo install otftrip-local $(PREFIX)
 	sudo install gsubtrip $(PREFIX)

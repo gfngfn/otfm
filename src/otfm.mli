@@ -214,8 +214,14 @@ type error =
   | `Invalid_cff_not_an_element
   | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
+  | `Missing_required_dict_long_key   of int
+  | `Missing_required_dict_short_key  of int
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Invalid_charstring_type          of int
+  | `Invalid_charstring
+  | `Invalid_sid                      of int
+  | `Invalid_ros
   | `Layered_ttc
 ]
 (** The type for decoding errors.
@@ -762,24 +768,109 @@ val math : decoder -> (math, error) result
 (** [math d] returns the whole information in the
     {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} table of [d]. *)
 
-type cff_info
-
-type cff_top_dict =
+type cff_cid_info =
   {
-    is_fixed_pitch : bool;
-    italic_angle : int;
-    underline_position : int;
-    underline_thickness : int;
-    paint_type : int;
-    charstring_type : int;
-    (* font_matrix : float * float * float * float; *)
-    font_bbox : int * int * int * int;
-    stroke_width : int;
+    registry          : string;
+    ordering          : string;
+    supplement        : int;
+    cid_font_version  : float;
+    cid_font_revision : int;
+    cid_font_type     : int;
+    cid_count         : int;
   }
 
-val cff_info : decoder -> (cff_info, error) result
+type charstring_info
 
-val cff_top_dict : cff_info -> (cff_top_dict option, error) result
+type cff_info =
+  {
+    font_name           : string;
+    is_fixed_pitch      : bool;
+    italic_angle        : int;
+    underline_position  : int;
+    underline_thickness : int;
+    paint_type          : int;
+    (* font_matrix : float * float * float * float; *)
+    font_bbox           : int * int * int * int;
+    stroke_width        : int;
+    cid_info            : cff_cid_info option;
+    default_width_x     : int option;
+    nominal_width_x     : int option;
+    charstring_info     : charstring_info;
+  }
+
+val cff : decoder -> (cff_info, error) result
+
+type charstring_element
+
+type csx = int
+
+type csy = int
+
+type cspoint = csx * csy
+
+type stem_argument = string  (* temporary *)
+
+type parsed_charstring =
+  | HStem of int * int * cspoint list
+      (* -- hstem (1) -- *)
+  | VStem of int * int * cspoint list
+      (* -- vstem (3) -- *)
+  | VMoveTo of int
+      (* -- vmoveto (4) -- *)
+  | RLineTo of cspoint list
+      (* -- rlineto (5) -- *)
+  | HLineTo of int list
+      (* -- hlineto (6) -- *)
+  | VLineTo of int list
+      (* -- vlineto (7) -- *)
+  | RRCurveTo of (cspoint * cspoint * cspoint) list
+      (* -- rrcurveto (8) *)
+  | HStemHM of int * int * cspoint list
+      (* -- hstemhm (18) -- *)
+  | HintMask of stem_argument
+      (* -- hintmask (19) -- *)
+  | CntrMask of stem_argument
+      (* -- cntrmask (20) -- *)
+  | RMoveTo of cspoint
+      (* -- rmoveto (21) -- *)
+  | HMoveTo of int
+      (* -- hmoveto (22) -- )*)
+  | VStemHM of int * int * cspoint list
+      (* -- vstemhm (23) -- *)
+  | VVCurveTo of csx option * (csy * cspoint * csy) list
+      (* -- vvcurveto (26) -- *)
+  | HHCurveTo of csy option * (csx * cspoint * csx) list
+      (* -- hhcurveto (27) -- *)
+  | VHCurveTo of (int * cspoint * int) list * int option
+      (* -- vhcurveto (30) -- *)
+  | HVCurveTo of (int * cspoint * int) list * int option
+      (* -- hvcurveto (31) -- *)
+(*
+  | Flex of cspoint * cspoint * cspoint * cspoint * int
+      (* -- flex (12 35) -- *)
+  | HFlex of int * cspoint * int * int * int * int
+      (* -- hflex (12 34) -- *)
+  | HFlex1 of cspoint * cspoint * int * int * int * int
+      (* -- hflex1 (12 36) -- *)
+  | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
+      (* -- flex1 (12 37) -- *)
+*)
+
+val pp_parsed_charstring : Format.formatter -> parsed_charstring -> unit
+(*
+val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* temporary *)
+*)
+val charstring : charstring_info -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
+
+type path_element =
+  | LineTo         of cspoint
+  | BezierTo       of cspoint * cspoint * cspoint
+
+type path = cspoint * path_element list
+
+val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, error) result
+
+val charstring_bbox : path list -> (csx * csx * csy * csy) option
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa
