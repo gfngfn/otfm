@@ -10,7 +10,7 @@ let debugfmt =
   Format.formatter_of_out_channel (open_out "/dev/null")
 
 let fmtgen  = debugfmt
-let fmtGSUB = Format.std_formatter
+let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
 let fmtCFF  = debugfmt
 
