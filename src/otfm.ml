@@ -9,8 +9,7 @@
 let debugfmt =
   Format.formatter_of_out_channel (open_out "/dev/null")
 
-let fmtCFF =
-  Format.std_formatter
+let fmtCFF = debugfmt
 
 let print_for_debug msg = () (* print_endline msg *) (* for debug *)
 
