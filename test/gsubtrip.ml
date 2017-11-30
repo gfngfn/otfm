@@ -46,11 +46,11 @@ type pair_position =
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
 
 
-let f_lig lst (gidfst, liginfolst) =
-  (gidfst, liginfolst) :: lst
+let f_alt acc (gid, gidaltlst) = (gid, gidaltlst) :: acc
 
-let f_pair1 lst (gidfst, pairinfolst) =
-  Pair1(gidfst, pairinfolst) :: lst
+let f_lig acc (gidfst, liginfolst) = (gidfst, liginfolst) :: acc
+
+let f_pair1 acc (gidfst, pairinfolst) = Pair1(gidfst, pairinfolst) :: acc
 
 (*
 let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
@@ -59,16 +59,30 @@ let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
 let f_pair2 _ _ lst _ = lst
 
 
+let type3tag = "aalt"
+
+let type4tag = "aalt"
+
+
 let decode_gsub d =
   Otfm.gsub_script d >>= fun scriptlst ->
-  pickup scriptlst (fun script -> Otfm.gsub_script_tag script = "latn")
+  pickup scriptlst (fun gs -> Otfm.gsub_script_tag gs = "latn")
     (`Msg("GSUB does not contain Script tag 'latn'")) >>= fun script_latn ->
   Otfm.gsub_langsys script_latn >>= fun (langsys_DFLT, _) ->
   Otfm.gsub_feature langsys_DFLT >>= fun (_, featurelst) ->
-  pickup featurelst (fun feature -> Otfm.gsub_feature_tag feature = "liga")
-    (`Msg("GSUB does not contain Feature tag 'liga' for 'latn'")) >>= fun feature_liga ->
-  Otfm.gsub feature_liga f_lig [] >>= fun gsubres ->
-  return gsubres
+  Format.printf "all GSUB Feature tags: [";
+  featurelst |> List.iter (fun gf -> Format.printf "%s, " (Otfm.gsub_feature_tag gf));
+  print_endline "]";
+  pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type4tag)
+    (`Msg(str "GSUB does not contain Feature tag '%s' for 'latn', 'DFLT'" type4tag)) >>= fun feature_type4 ->
+  Otfm.gsub feature_type4 (fun gid _ -> gid) f_lig [] >>= fun type4ret ->
+  Format.printf "finish '%s'\n" type4tag;
+  pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type3tag)
+    (`Msg(str "GSUB does not contain Feature tag '%s' for 'latn', 'DFLT'" type3tag)) >>= fun feature_type3 ->
+  Format.printf "middle of '%s'\n" type3tag;
+  Otfm.gsub feature_type3 f_alt (fun gid _ -> gid) [] >>= fun type3ret ->
+  Format.printf "finish '%s'\n" type3tag;
+  return (type3ret, type4ret)
 
 
 let decode_gpos d =
@@ -95,30 +109,43 @@ let main () =
   in
   Otfm.decoder (`String(src)) >>= function
   | Otfm.SingleDecoder(d) ->
-      let () = print_endline "finish initializing decoder" in
       begin
-        decode_gsub d >>= fun gsubres ->
-        decode_gpos d >>= fun gposres ->
-        return (gsubres, gposres)
+        print_endline "finish initializing decoder";
+        decode_gsub d >>= fun (type3ret, type4ret) ->
+        decode_gpos d >>= fun gposret ->
+        print_endline "finish decoding";
+        return (type3ret, type4ret, gposret)
       end
 
   | Otfm.TrueTypeCollection(_) ->
       let () = print_endline "TTC file" in
-      return ([], [])
+      return ([], [], [])
 
 
 let () =
   match main () with
-  | Error(#Otfm.error as e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
-  | Error(`Msg(msg))        -> Format.eprintf "%s" msg
-  | Ok(gidfst_ligset_assoc, clsfst_pairposlst_assoc) ->
+  | Error(#Otfm.error as e) ->
+      Format.printf "error1\n";
+      Format.printf "@[%a@]@.\n" Otfm.pp_error e
+
+  | Error(`Msg(msg)) ->
+      Format.printf "error2\n";
+      Format.printf "!!!! %s !!!!\n" msg
+
+  | Ok(gid_altset_assoc, gidfst_ligset_assoc, clsfst_pairposlst_assoc) ->
       begin
-        print_endline "GSUB:";
+        Format.printf "GSUB '%s':\n" type3tag;
+        gid_altset_assoc |> List.rev |> List.iter (fun (gid, gidlst) ->
+          Format.printf "%d -> [" gid;
+          gidlst |> List.iter (fun gidalt -> Format.printf " %d" gid);
+          print_endline "]";
+        );
+        Format.printf "GSUB '%s':\n" type4tag;
         gidfst_ligset_assoc |> List.rev |> List.iter (fun (gidfst, ligset) ->
-          print_string ((string_of_int gidfst) ^ " -> [");
+          Format.printf "%d -> [" gidfst;
           ligset |> List.iter (fun (gidtail, gidlig) ->
-            gidtail |> List.iter (fun gid -> print_string (" " ^ (string_of_int gid)));
-            print_string (" ----> " ^ (string_of_int gidlig) ^ "; ");
+            gidtail |> List.iter (fun gid -> Format.printf " %d" gid);
+            Format.printf " ----> %d; " gidlig;
           );
           print_endline "]";
         );
