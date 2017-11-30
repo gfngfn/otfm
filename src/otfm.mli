@@ -579,11 +579,13 @@ val gsub_feature : gsub_langsys -> (gsub_feature option * gsub_feature list, err
 val gsub_feature_tag : gsub_feature -> string
 (** Returns the Feature tag (e.g. ["aalt"], ["liga"], etc.). *)
 
+type 'a folding_single = 'a -> glyph_id * glyph_id -> 'a
+
 type 'a folding_alt = 'a -> glyph_id * glyph_id list -> 'a
 
 type 'a folding_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
 
-val gsub : gsub_feature -> 'a folding_alt -> 'a folding_lig -> 'a -> ('a, error) result
+val gsub : gsub_feature -> 'a folding_single -> 'a folding_alt -> 'a folding_lig -> 'a -> ('a, error) result
 (** {b WARNING: subject to change in the future.}
     Supports only
     {{:https://www.microsoft.com/typography/otspec/gsub.htm#LS}LookupType 4: ligature substitution subtable}.

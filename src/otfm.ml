@@ -1501,6 +1501,8 @@ let loca d gid =
 (* -- GSUB table -- *)
 
 type gsub_subtable =
+  | SingleSubtable    of (glyph_id * glyph_id) list
+      (* -- LookupType 1: Single substitution subtable [page 251] -- *)
   | AlternateSubtable of (glyph_id * (glyph_id list)) list
       (* -- LookupType 3: Alternate substitution subtable [page 253] -- *)
   | LigatureSubtable  of (glyph_id * (glyph_id list * glyph_id) list) list
@@ -1844,6 +1846,28 @@ let d_alternate_substitution_subtable d : ((glyph_id * glyph_id list) list) ok =
   d_with_coverage offset_Substitution_table d_alternate_set_table d
 
 
+let d_single_substitution_subtable_format_1 offset_Substitution_table d =
+  d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
+  d_uint16 d >>= fun deltaGlyphID ->
+  return (coverage |> List.map (fun gid -> (gid, gid + deltaGlyphID)))
+
+
+let d_single_substitution_subtable_format_2 offset_Substitution_table d =
+  d_with_coverage offset_Substitution_table d_uint16 d
+
+
+let d_single_substitution_subtable d : ((glyph_id * glyph_id) list) ok =
+    (* -- the position is supposed to be set
+       to the beginning of Single SubstFormat1 or Single SubstFormat2 subtable [page 251] -- *)
+  let offset_Substitution_table = cur_pos d in
+  Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
+  d_uint16 d >>= fun substFormat ->
+  match substFormat with
+  | 1 -> d_single_substitution_subtable_format_1 offset_Substitution_table d
+  | 2 -> d_single_substitution_subtable_format_2 offset_Substitution_table d
+  | _ -> err_version d (Int32.of_int substFormat)
+
+
 let lookup_gsub d : gsub_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of a Lookup table [page 137] -- *)
@@ -1860,18 +1884,20 @@ let lookup_gsub d : gsub_subtable ok =
 *)
   match lookupType with
   | 1 ->  (* -- single substitution -- *)
-      failwith "single substitution; remains to be supported."  (* temporary *)
+      Format.fprintf fmtGSUB "LookupType 1\n";
+      d_list (d_fetch offset_Lookup_table d_single_substitution_subtable) d >>= fun gid_single_assoc_list ->
+      return (SingleSubtable(List.concat gid_single_assoc_list))
 
   | 2 ->  (* -- multiple substitution -- *)
       failwith "multiple substitution; remains to be supported."  (* temporary *)
 
   | 3 ->  (* -- alternate substitution -- *)
-      Format.fprintf fmtGSUB "lookupType 3\n";
+      Format.fprintf fmtGSUB "LookupType 3\n";
       d_list (d_fetch offset_Lookup_table d_alternate_substitution_subtable) d >>= fun gid_altset_assoc_list ->
       return (AlternateSubtable(List.concat gid_altset_assoc_list))
 
   | 4 ->  (* -- ligature substitution -- *)
-      Format.fprintf fmtGSUB "lookupType 4\n";  (* for debug *)
+      Format.fprintf fmtGSUB "LookupType 4\n";  (* for debug *)
       d_list (d_fetch offset_Lookup_table d_ligature_substitution_subtable) d >>= fun gidfst_ligset_assoc_list ->
       return (LigatureSubtable(List.concat gidfst_ligset_assoc_list))
 
@@ -1879,16 +1905,22 @@ let lookup_gsub d : gsub_subtable ok =
       failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
 
 
+type 'a folding_single = 'a -> glyph_id * glyph_id -> 'a
+
 type 'a folding_alt = 'a -> glyph_id * glyph_id list -> 'a
 
 type 'a folding_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
 
 
-let rec fold_subtables_gsub (f_alt : 'a folding_alt) (f_lig : 'a folding_lig) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
-  let iter = fold_subtables_gsub f_alt f_lig in
+let rec fold_subtables_gsub (f_single : 'a folding_single) (f_alt : 'a folding_alt) (f_lig : 'a folding_lig) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
+  let iter = fold_subtables_gsub f_single f_alt f_lig in
     match subtablelst with
     | [] ->
         init
+
+    | SingleSubtable(gid_single_assoc) :: tail ->
+        let initnew = List.fold_left f_single init gid_single_assoc in
+        iter initnew tail
 
     | AlternateSubtable(gid_altset_assoc) :: tail ->
         let initnew = List.fold_left f_alt init gid_altset_assoc in
@@ -1899,9 +1931,9 @@ let rec fold_subtables_gsub (f_alt : 'a folding_alt) (f_lig : 'a folding_lig) (i
         iter initnew tail
 
 
-let gsub feature f_alt f_lig init =
+let gsub feature f_single f_alt f_lig init =
   gxxx_subtable_list lookup_gsub feature >>= fun subtablelst ->
-  return (fold_subtables_gsub f_alt f_lig init subtablelst)
+  return (fold_subtables_gsub f_single f_alt f_lig init subtablelst)
 
 
 let d_if cond df d =

@@ -46,6 +46,10 @@ type pair_position =
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
 
 
+let skip gid _ = gid
+
+let f_single acc (gid, gidto) = (gid, [gidto]) :: acc
+
 let f_alt acc (gid, gidaltlst) = (gid, gidaltlst) :: acc
 
 let f_lig acc (gidfst, liginfolst) = (gidfst, liginfolst) :: acc
@@ -61,7 +65,7 @@ let f_pair2 _ _ lst _ = lst
 
 let type3tag = "aalt"
 
-let type4tag = "aalt"
+let type4tag = "liga"
 
 
 let decode_gsub d =
@@ -75,12 +79,12 @@ let decode_gsub d =
   print_endline "]";
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type4tag)
     (`Msg(str "GSUB does not contain Feature tag '%s' for 'latn', 'DFLT'" type4tag)) >>= fun feature_type4 ->
-  Otfm.gsub feature_type4 (fun gid _ -> gid) f_lig [] >>= fun type4ret ->
+  Otfm.gsub feature_type4 skip skip f_lig [] >>= fun type4ret ->
   Format.printf "finish '%s'\n" type4tag;
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type3tag)
     (`Msg(str "GSUB does not contain Feature tag '%s' for 'latn', 'DFLT'" type3tag)) >>= fun feature_type3 ->
   Format.printf "middle of '%s'\n" type3tag;
-  Otfm.gsub feature_type3 f_alt (fun gid _ -> gid) [] >>= fun type3ret ->
+  Otfm.gsub feature_type3 f_single f_alt skip [] >>= fun type3ret ->
   Format.printf "finish '%s'\n" type3tag;
   return (type3ret, type4ret)
 
