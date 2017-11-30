@@ -9,6 +9,8 @@
 let debugfmt =
   Format.formatter_of_out_channel (open_out "/dev/null")
 
+let fmtCFF = debugfmt
+
 let print_for_debug msg = () (* print_endline msg *) (* for debug *)
 
 let print_for_debug_int name v = print_for_debug (name ^ " = " ^ (string_of_int v))
@@ -166,8 +168,14 @@ type error =
   | `Invalid_cff_not_an_element
   | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
+  | `Missing_required_dict_short_key  of int
+  | `Missing_required_dict_long_key   of int
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Invalid_charstring_type          of int
+  | `Invalid_charstring
+  | `Invalid_sid                      of int
+  | `Invalid_ros
   | `Layered_ttc
 ]
 
@@ -239,10 +247,22 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ not@ an@ element@]"
 | `Invalid_cff_not_an_offsize(n) ->
     pp ppf "@[Invalid@ CFF@ table;@ not@ an@ offsize@ %d@]" n
+| `Missing_required_dict_short_key i ->
+    pp ppf "@[Missing@ required@ key@ '%d'@ in@ a@ DICT@]" i
+| `Missing_required_dict_long_key i ->
+    pp ppf "@[Missing@ required@ key@ '12 %d'@ in@ a@ DICT@]" i
 | `Invalid_cff_inconsistent_length ->
     pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
 | `Invalid_cff_invalid_first_offset ->
     pp ppf "@[Invalid@ CFF@ table;@ invalid@ first@ offset@]"
+| `Invalid_charstring_type csty ->
+    pp ppf "@[Invalid@ CharString@ type@ (%d)@]" csty
+| `Invalid_charstring ->
+    pp ppf "@[Invalid@ CharString@]"
+| `Invalid_sid sid ->
+    pp ppf "@[Invalid@ SID@ (%d)@]" sid
+| `Invalid_ros ->
+    pp ppf "@[Invalid@ ROS@]"
 | `Layered_ttc ->
     pp ppf "@[Layered@ TTC@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
@@ -371,6 +391,10 @@ let d_uint32_int d =
     let s0 = (b0 lsl 8) lor b1 in
     let s1 = (b2 lsl 8) lor b3 in
     return ((s0 lsl 16) lor s1)
+
+let d_int32 d =
+  d_uint32 d >>= fun i ->
+  return (if i > 0x7FFFFFFFl then Int32.sub i 0x10000000l else i)
 
 let d_time d =                       (* LONGDATETIME as a unix time stamp. *)
   if miss d 8 then err_eoi d else
@@ -2483,15 +2507,25 @@ let base d =
   confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
   d_offset_opt offset_BASE d >>= fun offsetopt_HorizAxis ->
   d_offset_opt offset_BASE d >>= fun offsetopt_VertAxis ->
-  return ()
+  return ()  (* temporary *)
 
 
 (* -- CFF_ table -- *)
 
 type offsize = OffSize1 | OffSize2 | OffSize3 | OffSize4
-type cff_key = ShortKey of int | LongKey of int
-type cff_value = Integer of int | Real of float
-type dict_element = Value of cff_value | Key of cff_key
+
+type cff_key =
+  | ShortKey of int
+  | LongKey  of int
+
+type cff_value =
+  | Integer of int
+  | Real    of float
+
+type dict_element =
+  | Value of cff_value
+  | Key   of cff_key
+
 
 module DictMap = Map.Make
   (struct
@@ -2504,19 +2538,51 @@ module DictMap = Map.Make
       | (LongKey(i1), LongKey(i2))   -> Pervasives.compare i1 i2
   end)
 
-type cff_info = (string option * (cff_value list) DictMap.t) option
 
-type cff_top_dict =
+type dict = (cff_value list) DictMap.t
+
+type string_index = string array
+
+type stem_argument = string  (* temporary *)
+
+type charstring_element =
+  | Argument         of int
+  | Operator         of cff_key
+  | HintMaskOperator of stem_argument
+  | CntrMaskOperator of stem_argument
+
+type subroutine_index = (charstring_element list) array
+
+type cff_first = string * dict * string_index * subroutine_index * int
+
+type cff_cid_info =
   {
-    is_fixed_pitch : bool;
-    italic_angle : int;
-    underline_position : int;
+    registry          : string;
+    ordering          : string;
+    supplement        : int;
+    cid_font_version  : float;
+    cid_font_revision : int;
+    cid_font_type     : int;
+    cid_count         : int;
+  }
+
+type charstring_info = decoder * subroutine_index * subroutine_index * int
+
+type cff_info =
+  {
+    font_name           : string;
+    is_fixed_pitch      : bool;
+    italic_angle        : int;
+    underline_position  : int;
     underline_thickness : int;
-    paint_type : int;
-    charstring_type : int;
+    paint_type          : int;
     (* font_matrix : float * float * float * float; *)
-    font_bbox : int * int * int * int;
-    stroke_width : int;
+    font_bbox           : int * int * int * int;
+    stroke_width        : int;
+    cid_info            : cff_cid_info option;
+    default_width_x     : int option;
+    nominal_width_x     : int option;
+    charstring_info     : charstring_info;
   }
 
 
@@ -2526,7 +2592,7 @@ let (-@) = Int32.sub
 let is_in_range a b x = (a <= x && x <= b)
 
 
-let d_offsize d =
+let d_offsize d : offsize ok =
   d_uint8 d >>= fun i ->
     match i with
     | 1 -> return OffSize1
@@ -2535,12 +2601,21 @@ let d_offsize d =
     | 4 -> return OffSize4
     | n -> err (`Invalid_cff_not_an_offsize(n))
 
-let d_cff_offset ofsz d =
+
+let pp_offsize fmt = function
+  | OffSize1 -> Format.fprintf fmt "OffSize1"
+  | OffSize2 -> Format.fprintf fmt "OffSize2"
+  | OffSize3 -> Format.fprintf fmt "OffSize3"
+  | OffSize4 -> Format.fprintf fmt "OffSize4"
+
+
+let d_cff_offset ofsz d : int32 ok =
   match ofsz with
   | OffSize1 -> d_uint8  d >>= fun i -> return (~@ i)
   | OffSize2 -> d_uint16 d >>= fun i -> return (~@ i)
   | OffSize3 -> d_uint24 d >>= fun i -> return (~@ i)
   | OffSize4 -> d_uint32 d
+
 
 let d_cff_offset_singleton ofsz dl d =
   d_cff_offset ofsz d                                            >>= fun offset1 ->
@@ -2548,180 +2623,1177 @@ let d_cff_offset_singleton ofsz dl d =
   d_cff_offset ofsz d                                            >>= fun offset2 ->
   dl (offset2 -@ offset1) d
 
+
 let d_index_singleton dl d =
-  d_uint8 d                                        >>= fun count ->
+  d_uint16 d                                       >>= fun count ->
   confirm (count = 1) `Invalid_cff_not_a_singleton >>= fun () ->
   d_offsize d                                      >>= fun offSize ->
-  d_cff_offset_singleton offSize dl d                  >>= fun v ->
+  d_cff_offset_singleton offSize dl d              >>= fun v ->
   return v
 
-let d_cff_offset_list ofsz count d =
+
+let d_cff_length_list ofsz count d =
   let rec aux offsetprev acc i =
-    if i >= count then return (List.rev acc) else
-    d_cff_offset ofsz d >>= fun offset ->
-    aux offset ((offset -@ offsetprev) :: acc) (i + 1)
+    if i >= count then
+      return (List.rev acc)
+    else
+      d_cff_offset ofsz d >>= fun offset ->
+      aux offset ((offset -@ offsetprev) :: acc) (i + 1)
   in
-  d_cff_offset ofsz d                                            >>= fun offset1 ->
+  d_cff_offset ofsz d                                        >>= fun offset1 ->
   confirm (offset1 = ~@ 1) `Invalid_cff_invalid_first_offset >>= fun () ->
   aux (~@ 1) [] 0
 
-let d_index dl d =
-  let rec loop_data acc = function
-    | []          -> return (List.rev acc)
-    | len :: tail ->
-        dl len d >>= fun v ->
-        loop_data (v :: acc) tail
-  in
-  d_uint8 d                     >>= fun count ->
-(*
-  Printf.printf "count: %d\n" count;  (* for debug *)
-*)
-  if count = 0 then return [] else
-  d_offsize d                   >>= fun offSize ->
-  d_cff_offset_list offSize count d >>= fun lenlst ->
-  loop_data [] lenlst
 
-let d_dict_element d =
+let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) : (a array) ok =
+  let rec loop_data arr i = function
+    | []             -> return ()
+    | len :: lentail ->
+        dl len d >>= fun v ->
+        arr.(i) <- v;
+        loop_data arr (i + 1) lentail
+  in
+  d_uint16 d >>= fun count ->
+  Format.fprintf fmtCFF "INDEX count: %d\n" count;  (* for debug *)
+  if count = 0 then
+    return [| |]
+  else
+    let arr = Array.make count dummy in
+    d_offsize d                       >>= fun offSize ->
+    Format.fprintf fmtCFF "INDEX offSize: %a\n" pp_offsize offSize;  (* for debug *)
+    d_cff_length_list offSize count d >>= fun lenlst ->
+    loop_data arr 0 lenlst >>= fun () ->
+    return arr
+
+
+let d_cff_real d =
+  Format.fprintf fmtCFF "d_cff_real\n";  (* for debug *)
+  let to_float lst =
+    float_of_string (String.concat "" lst)
+  in
+  let nibble = function
+    | d  when d |> is_in_range 0 9 -> return (string_of_int d)
+    | 10                           -> return "."
+    | 11                           -> return "e"
+    | 12                           -> return "e-"
+    | 13                           -> err `Invalid_cff_not_an_element
+    | 14                           -> return "-"
+    | 15                           -> return ""
+    | _                            -> err `Invalid_cff_not_an_element
+  in
+  let rec aux step acc =
+    d_uint8 d >>= fun raw ->
+    let q1 = raw / 16 in
+    let q2 = raw mod 16 in
+    if q1 = 15 then
+      if q2 = 15 then
+        return (step + 1, to_float (List.rev acc))
+      else
+        err `Invalid_cff_not_an_element
+    else
+      if q2 = 15 then
+        nibble q1 >>= fun nb1 ->
+        return (step + 1, to_float (List.rev (nb1 :: acc)))
+      else
+        nibble q2 >>= fun nb2 ->
+        nibble q1 >>= fun nb1 ->
+        aux (step + 1) (nb2 :: nb1 :: acc)
+  in
+  aux 0 []
+
+
+let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
+  d_uint16 d >>= fun count ->
+  Format.fprintf fmtCFF "count = %d\n" count;  (* for debug *)
+  if iaccess < 0 || count <= iaccess then
+    return None
+  else
+    d_offsize d >>= fun offSize ->
+    let ofszint =
+      match offSize with
+      | OffSize1 -> 1
+      | OffSize2 -> 2
+      | OffSize3 -> 3
+      | OffSize4 -> 4
+    in
+    Format.fprintf fmtCFF "OffSize = %a\n" pp_offsize offSize;  (* for debug *)
+    let offset_origin = (cur_pos d) + (count + 1) * ofszint - 1 in
+    d_skip (iaccess * ofszint) d >>= fun () ->
+    d_cff_offset offSize d >>= fun reloffset_access ->
+    d_cff_offset offSize d >>= fun reloffset_next ->
+    let offset_access = offset_origin + (?@ reloffset_access) in
+    let data_length = reloffset_next -@ reloffset_access in
+    seek_pos offset_access d >>= fun () ->
+    dl data_length d >>= fun data ->
+    return (Some(data))
+
+
+let d_dict_element d : (int * dict_element) ok =
   d_uint8 d >>= function
-    | b0  when b0 |> is_in_range 32 246 ->
-        return (1, Value(Integer(b0 - 139)))
-    | b0  when b0 |> is_in_range 247 250 ->
-        d_uint8 d >>= fun b1 ->
-        return (2, Value(Integer((b0 - 247) * 256 + b1 + 108)))
-    | b0  when b0 |> is_in_range 251 254 ->
-        d_uint8 d >>= fun b1 ->
-        return (2, Value(Integer(-(b0 - 251) * 256 - b1 - 108)))
+    | k0  when k0 |> is_in_range 0 11 ->
+        return (1, Key(ShortKey(k0)))
+
+    | 12 ->
+        d_uint8 d >>= fun k1 ->
+        return (2, Key(LongKey(k1)))
+
+    | k0  when k0 |> is_in_range 13 21 ->
+        return (1, Key(ShortKey(k0)))
+
     | 28 ->
         d_uint8 d >>= fun b1 ->
         d_uint8 d >>= fun b2 ->
         return (3, Value(Integer((b1 lsl 8) lor b2)))
+
     | 29 ->
         d_uint8 d >>= fun b1 ->
         d_uint8 d >>= fun b2 ->
         d_uint8 d >>= fun b3 ->
         d_uint8 d >>= fun b4 ->
         return (5, Value(Integer((b1 lsl 24) lor (b2 lsl 16) lor (b3 lsl 8) lor b4)))
+
     | 30 ->
-        failwith "a real number operand; remains to be implemented."
-    | k0  when k0 |> is_in_range 0 11 ->
-        return (1, Key(ShortKey(k0)))
-    | k0  when k0 |> is_in_range 13 21 ->
-        return (1, Key(ShortKey(k0)))
-    | 12 ->
-        d_uint8 d >>= fun k1 ->
-        return (2, Key(LongKey(k1)))
+        d_cff_real d >>= fun (step, real) ->
+        return (1 + step, Value(Real(real)))
+
+    | b0  when b0 |> is_in_range 32 246 ->
+        return (1, Value(Integer(b0 - 139)))
+
+    | b0  when b0 |> is_in_range 247 250 ->
+        d_uint8 d >>= fun b1 ->
+        return (2, Value(Integer((b0 - 247) * 256 + b1 + 108)))
+
+    | b0  when b0 |> is_in_range 251 254 ->
+        d_uint8 d >>= fun b1 ->
+        return (2, Value(Integer(-(b0 - 251) * 256 - b1 - 108)))
+
     | _ ->
         err `Invalid_cff_not_an_element
 
+
 let pp_element ppf = function
   | Value(Integer(i)) -> Format.fprintf ppf "Integer(%d)" i
-  | Value(Real(r))    -> Format.fprintf ppf "Real(_)"
+  | Value(Real(r))    -> Format.fprintf ppf "Real(%f)" r
   | Key(LongKey(x))   -> Format.fprintf ppf "LongKey(%d)" x
   | Key(ShortKey(x))  -> Format.fprintf ppf "ShortKey(%d)" x
 
-let d_dict_keyval d =
+
+let d_dict_keyval d : (int * cff_value list * cff_key) ok =
   let rec aux stepsum vacc =
     d_dict_element d >>= fun (step, elem) ->
-      Format.eprintf "element: %d, %a\n" step pp_element elem;  (* for debug *)
+      Format.fprintf fmtCFF "dict element: %d, %a\n" step pp_element elem;  (* for debug *)
       match elem with
       | Value(v) -> aux (stepsum + step) (v :: vacc)
       | Key(k)   -> return (stepsum + step, List.rev vacc, k)
   in
     aux 0 []
 
-let d_dict len d =
+
+let d_dict len d : ((cff_value list) DictMap.t) ok =
   let rec loop_keyval mapacc len d =
-    if len = -1 (* doubtful*) then return mapacc else
-    if len < -1 (* doubtful*) then err `Invalid_cff_inconsistent_length else
+    if len = 0 then return mapacc else
+    if len < 0 then err `Invalid_cff_inconsistent_length else
       d_dict_keyval d >>= fun (step, vlst, k) ->
-(*
-      Printf.printf "step: %d\n" step;  (*for debug *)
-*)
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
-    Printf.printf "length: %d\n" len;  (* for debug *)
-    loop_keyval DictMap.empty len d
+  Format.fprintf fmtCFF "length = %d\n" len;  (* for debug *)
+  loop_keyval DictMap.empty len d
 
-let cff_info d =
+
+let pp_charstring_element fmt = function
+  | Argument(i)           -> Format.fprintf fmt "  Argument(%d)" i
+  | Operator(ShortKey(10)) -> Format.fprintf fmt "CallSubr"
+  | Operator(ShortKey(29)) -> Format.fprintf fmt "CallGSubr"
+  | Operator(ShortKey(i)) -> Format.fprintf fmt "Operator(%d)" i
+  | Operator(LongKey(i))  -> Format.fprintf fmt "Operator(12 %d)" i
+  | HintMaskOperator(arg) -> Format.fprintf fmt "HintMaskOperator(...)"
+  | CntrMaskOperator(arg) -> Format.fprintf fmt "CntrMaskOperator(...)"
+
+
+let d_stem_argument numstem d : (int * stem_argument) ok =
+  let arglen =
+    if numstem mod 8 = 0 then
+      numstem / 8
+    else
+      numstem / 8 + 1
+  in
+  d_bytes arglen d >>= fun arg ->
+  return (arglen, arg)
+
+
+let d_charstring_element numstem d =
+  let return_normal (step, cselem) = return (step, numstem, cselem) in
+  let return_succ   (step, cselem) = return (step, numstem + 1, cselem) in
+  d_uint8 d >>= function
+  | ( 1 | 3 | 18 | 23) as b0 ->  (* -- stem operators -- *)
+      return_succ (1, Operator(ShortKey(b0)))
+
+  | b0  when b0 |> is_in_range 0 11 ->
+      return_normal (1, Operator(ShortKey(b0)))
+
+  | 12 ->
+      d_uint8 d >>= fun b1 ->
+      return_normal (2, Operator(LongKey(b1)))
+
+  | b0  when b0 |> is_in_range 13 18 ->
+      return_normal (1, Operator(ShortKey(b0)))
+
+  | 19 ->
+      d_stem_argument numstem d >>= fun (step, arg) ->
+      return_normal (1 + step, HintMaskOperator(arg))
+
+  | 20 ->
+      d_stem_argument numstem d >>= fun (step, arg) ->
+      return_normal (1 + step, CntrMaskOperator(arg))
+
+  | b0  when b0 |> is_in_range 21 27 ->
+      return_normal (1, Operator(ShortKey(b0)))
+
+  | 28 ->
+      d_int16 d >>= fun i ->
+      return_normal (3, Argument(i))
+
+  | b0  when b0 |> is_in_range 29 31 ->
+      return_normal (1, Operator(ShortKey(b0)))
+
+  | b0  when b0 |> is_in_range 32 246 ->
+      return_normal (1, Argument(b0 - 139))
+
+  | b0  when b0 |> is_in_range 247 250 ->
+      d_uint8 d >>= fun b1 ->
+      return_normal (2, Argument((b0 - 247) * 256 + b1 + 108))
+
+  | b0  when b0 |> is_in_range 251 254 ->
+      d_uint8 d >>= fun b1 ->
+      return_normal (2, Argument(- (b0 - 251) * 256 - b1 - 108))
+
+  | 255 ->
+      d_int32 d >>= fun i ->
+      return_normal (5, Argument(?@ i))
+
+  | _ ->
+      assert false
+        (* -- uint8 value must be in [0 .. 255] -- *)
+
+
+let d_charstring len32 d : (charstring_element list) ok =
+  let rec aux numstem len acc d =
+    if len = 0 then return (List.rev acc) else
+    if len < 0 then err `Invalid_charstring else
+    d_charstring_element numstem d >>= fun (step, numstemnew, cselem) ->
+    aux numstemnew (len - step) (cselem :: acc) d
+  in
+  aux 0 (?@ len32) [] d
+
+
+let cff_first d : cff_first ok =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
-  (* Header: *)
-(*
-    Printf.printf "Header\n";  (* for debug *)
-*)
+  let offset_CFF = cur_pos d in
+  (* -- Header -- *)
+    Format.fprintf fmtCFF "* Header\n";  (* for debug *)
     d_uint8 d              >>= fun major ->
     d_uint8 d              >>= fun minor ->
+    Format.fprintf fmtCFF "version = %d.%d\n" major minor;  (* for debug *)
     d_uint8 d              >>= fun hdrSize ->
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
-  (* Name INDEX (should contain only one element): *)
-(*
-    Printf.printf "Name INDEX\n";  (* for debug *)
-*)
-    d_index (fun i -> d_bytes (?@ i)) d >>= fun namelst ->
-    begin
-      match namelst with
-      | []          -> return None
-      | _ :: _ :: _ -> err `Invalid_cff_not_a_singleton
-      | n :: []     -> return (Some(n))
-    end >>= fun name ->
-  (* Top DICT INDEX (should contain only one DICT): *)
-(*
-    Printf.printf "Top DICT INDEX\n";  (* for debug *)
-*)
-    d_index (fun i -> d_dict (?@ i)) d  >>= function
-      | []            -> err `Invalid_cff_not_a_singleton
-      | _ :: _ :: _   -> err `Invalid_cff_not_a_singleton
-      | dictmap :: [] ->
-(*
-  (* String INDEX: *)
-    Printf.printf "String INDEX\n";  (* for debug *)
-    d_index (fun i -> d_bytes (?@ i)) d  >>= fun stringlst ->
-  (* Global Subr INDEX: *)
-    Printf.printf "Global Subr INDEX\n";  (* for debug *)
-    d_index (fun i -> d_bytes (?@ i)) d  >>= fun subrlst ->
-*)
-    return (Some((name, dictmap)))
 
-let cff_top_dict = function
-  | None               -> return None
-  | Some((_, dictmap)) ->
-      let get_integer key dflt =
-        try
-          let dictvlst = DictMap.find key dictmap in
-            match dictvlst with
-            | Integer(i) :: [] -> return i
-            | _                -> err `Invalid_cff_not_an_integer
-        with
-        | Not_found -> return dflt
+  (* -- Name INDEX (which should contain only one element) -- *)
+    Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
+    d_index_singleton (fun len32 -> d_bytes (?@ len32)) d >>= fun name ->
+
+  (* -- Top DICT INDEX (which should contain only one DICT) -- *)
+    Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
+    d_index_singleton (fun len32 -> d_dict (?@ len32)) d >>= fun dictmap ->
+
+  (* -- String INDEX -- *)
+    Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
+    d_index "(dummy)" (fun len32 -> d_bytes (?@ len32)) d >>= fun stridx ->
+
+  (* -- Global Subr INDEX -- *)
+    Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
+    d_index [] d_charstring d >>= fun gsubridx ->
+      (* temporary; should be decoded *)
+
+    return (name, dictmap, stridx, gsubridx, offset_CFF)
+
+
+let err_dict_key key =
+  match key with
+  | ShortKey(i) -> err (`Missing_required_dict_short_key(i))
+  | LongKey(i)  -> err (`Missing_required_dict_long_key(i))
+
+
+let get_string stridx sid =
+  let nStdString = 391 in
+  if sid < nStdString then
+    failwith "a standard string; remains to be supported."
+  else
+    try return stridx.(sid - nStdString) with
+    | Invalid_argument(_) -> err (`Invalid_sid(sid))
+
+
+let get_integer_opt dictmap key dflt =
+    match DictMap.find_opt key dictmap with
+    | Some(Integer(i) :: []) -> return i
+    | Some(_)                -> err `Invalid_cff_not_an_integer
+    | None                   -> return dflt
+
+
+let get_integer dictmap key =
+  match DictMap.find_opt key dictmap with
+  | Some(Integer(i) :: []) -> return i
+  | Some(_)                -> err `Invalid_cff_not_an_integer
+  | None                   -> err_dict_key key
+
+
+let get_integer_pair_opt dictmap key =
+  match DictMap.find_opt key dictmap with
+  | Some(Integer(i1) :: Integer(i2) :: []) -> return (Some(i1, i2))
+  | Some(_)                                -> err `Invalid_cff_not_an_integer
+  | None                                   -> return None
+
+
+let get_sid = get_integer
+
+
+let get_real_opt dictmap key dflt =
+    match DictMap.find_opt key dictmap with
+    | Some(Real(r) :: []) -> return r
+    | Some(_)             -> err `Invalid_cff_not_an_integer
+    | None                -> return dflt
+
+
+let get_boolean_opt dictmap key dflt =
+  get_integer_opt dictmap key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
+
+
+let get_iquad_opt dictmap key dflt =
+  match dictmap |> DictMap.find_opt key with
+  | Some(Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: []) -> return (i1, i2, i3, i4)
+  | Some(_)                                                              -> err `Invalid_cff_not_a_quad
+  | None                                                                 -> return dflt
+
+
+let get_ros dictmap key =
+  match dictmap |> DictMap.find_opt key with
+  | Some(Integer(sid1) :: Integer(sid2) :: Integer(i) :: []) -> return (sid1, sid2, i)
+  | Some(_)                                                  -> err `Invalid_ros
+  | None                                                     -> err `Invalid_ros
+
+
+let cff d =
+  cff_first d >>= fun (font_name, dictmap, stridx, gsubridx, offset_CFF) ->
+(*
+  get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
+  get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
+  get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
+*)
+  get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
+  get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
+  get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
+  get_boolean_opt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
+  get_integer_opt dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
+  get_integer_opt dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
+  get_integer_opt dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
+  get_integer_opt dictmap (LongKey(5) ) 0            >>= fun paint_type ->
+  get_integer_opt dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
+  confirm (charstring_type = 2)
+    (`Invalid_charstring_type(charstring_type))      >>= fun () ->
+
+  (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
+
+  get_iquad_opt        dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+  get_integer_opt      dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
+  get_integer          dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
+  let cidoptres =
+    if DictMap.mem (LongKey(30)) dictmap then
+    (* -- when the font is a CIDFont -- *)
+      get_ros         dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
+      get_real_opt    dictmap (LongKey(31)) 0.   >>= fun cid_font_version ->
+      get_integer_opt dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
+      get_integer_opt dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
+      get_integer_opt dictmap (LongKey(34)) 8720 >>= fun cid_count ->
+      get_string stridx sid_registry >>= fun registry ->
+      get_string stridx sid_ordering >>= fun ordering ->
+      return (Some{
+        registry; ordering; supplement;
+        cid_font_version;
+        cid_font_revision;
+        cid_font_type;
+        cid_count;
+      })
+    else
+    (* -- when the font is not a CIDFont -- *)
+      return None
+  in
+  cidoptres >>= fun cid_info ->
+
+(* -- Private DICT -- *)
+  get_integer_pair_opt dictmap (ShortKey(18)) >>= fun privateopt ->
+  begin
+    match privateopt with
+    | None ->
+        Format.fprintf fmtCFF "No Private DICT\n";  (* for debug *)
+        return (None, None, [| |])
+
+    | Some(size_private, reloffset_private) ->
+        let offset_private = offset_CFF + reloffset_private in
+        seek_pos offset_private d >>= fun () ->
+        d_dict size_private d >>= fun dictmap_private ->
+        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_lsubrs ->
+        get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
+        get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
+
+      (* -- Local Subr INDEX -- *)
+        seek_pos (offset_private + selfoffset_lsubrs) d >>= fun () ->
+        Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
+        d_index [] d_charstring d >>= fun lsubridx ->
+        Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
+        return (Some(default_width_x), Some(nominal_width_x), lsubridx)
+
+  end >>= fun (default_width_x_opt, nominal_width_x_opt, lsubridx) ->
+  return {
+    font_name;
+    is_fixed_pitch;
+    italic_angle;
+    underline_position;
+    underline_thickness;
+    paint_type;
+    font_bbox;
+    stroke_width;
+    cid_info;
+    default_width_x = default_width_x_opt;
+    nominal_width_x = default_width_x_opt;
+    charstring_info = (d, gsubridx, lsubridx, offset_CFF + reloffset_charstring);
+  }
+
+
+let pop (stk : int Stack.t) : int ok =
+  try return (Stack.pop stk) with
+  | Stack.Empty -> err `Invalid_charstring
+
+
+let pop_opt (stk : int Stack.t) : int option =
+  try Some(Stack.pop stk) with
+  | Stack.Empty -> None
+
+
+let pop_all (stk : int Stack.t) : int list =
+  let rec aux acc =
+    if Stack.is_empty stk then acc else
+      let i = Stack.pop stk in
+        aux (i :: acc)
+  in
+    aux []
+
+
+let pop_pair_opt (stk : int Stack.t) : (int * int) option =
+  if Stack.length stk < 2 then None else
+    let y = Stack.pop stk in
+    let x = Stack.pop stk in
+      Some((x, y))
+  
+
+let pop_4_opt (stk : int Stack.t) : (int * int * int * int) option =
+  if Stack.length stk < 4 then None else
+    let d4 = Stack.pop stk in
+    let d3 = Stack.pop stk in
+    let d2 = Stack.pop stk in
+    let d1 = Stack.pop stk in
+      Some((d1, d2, d3, d4))
+
+
+let pop_6_opt (stk : int Stack.t) : (int * int * int * int * int * int) option =
+  if Stack.length stk < 6 then None else
+    let d6 = Stack.pop stk in
+    let d5 = Stack.pop stk in
+    let d4 = Stack.pop stk in
+    let d3 = Stack.pop stk in
+    let d2 = Stack.pop stk in
+    let d1 = Stack.pop stk in
+      Some((d1, d2, d3, d4, d5, d6))
+
+
+let pop_8_opt (stk : int Stack.t) : (int * int * int * int * int * int * int * int) option =
+  if Stack.length stk < 8 then None else
+    let d8 = Stack.pop stk in
+    let d7 = Stack.pop stk in
+    let d6 = Stack.pop stk in
+    let d5 = Stack.pop stk in
+    let d4 = Stack.pop stk in
+    let d3 = Stack.pop stk in
+    let d2 = Stack.pop stk in
+    let d1 = Stack.pop stk in
+      Some((d1, d2, d3, d4, d5, d6, d7, d8))
+  
+
+let pop_iter (type a) (popf : int Stack.t -> a option) (stk : int Stack.t) : (a list) =
+  let rec aux acc =
+    let retopt = popf stk in
+    match retopt with
+    | None      -> acc
+    | Some(ret) -> aux (ret :: acc)
+  in
+  aux []
+
+
+let is_odd_length stk =
+  let len = Stack.length stk in
+    len mod 2 = 1
+
+
+let make_bezier (dxa, dya, dxb, dyb, dxc, dyc) = ((dxa, dya), (dxb, dyb), (dxc, dyc))
+
+
+type csx = int
+
+type csy = int
+
+type cspoint = csx * csy
+
+type parsed_charstring =
+  | HStem of int * int * cspoint list
+      (* -- hstem (1) -- *)
+  | VStem of int * int * cspoint list
+      (* -- vstem (3) -- *)
+  | VMoveTo of int
+      (* -- vmoveto (4) -- *)
+  | RLineTo of cspoint list
+      (* -- rlineto (5) -- *)
+  | HLineTo of int list
+      (* -- hlineto (6) -- *)
+  | VLineTo of int list
+      (* -- vlineto (7) -- *)
+  | RRCurveTo of (cspoint * cspoint * cspoint) list
+      (* -- rrcurveto (8) *)
+  | HStemHM of int * int * cspoint list
+      (* -- hstemhm (18) -- *)
+  | HintMask of stem_argument
+      (* -- hintmask (19) -- *)
+  | CntrMask of stem_argument
+      (* -- cntrmask (20) -- *)
+  | RMoveTo of cspoint
+      (* -- rmoveto (21) -- *)
+  | HMoveTo of int
+      (* -- hmoveto (22) -- )*)
+  | VStemHM of int * int * cspoint list
+      (* -- vstemhm (23) -- *)
+  | VVCurveTo of csx option * (csy * cspoint * csy) list
+      (* -- vvcurveto (26) -- *)
+  | HHCurveTo of csy option * (csx * cspoint * csx) list
+      (* -- hhcurveto (27) -- *)
+  | VHCurveTo of (int * cspoint * int) list * int option
+      (* -- vhcurveto (30) -- *)
+  | HVCurveTo of (int * cspoint * int) list * int option
+      (* -- hvcurveto (31) -- *)
+(*
+  | Flex of cspoint * cspoint * cspoint * cspoint * int
+      (* -- flex (12 35) -- *)
+  | HFlex of int * cspoint * int * int * int * int
+      (* -- hflex (12 34) -- *)
+  | HFlex1 of cspoint * cspoint * int * int * int * int
+      (* -- hflex1 (12 36) -- *)
+  | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
+      (* -- flex1 (12 37) -- *)
+*)
+
+
+let pp_cspoint fmt (x, y) = pp fmt "(%d %d)" x y
+
+let pp_bezier fmt (dvA, dvB, dvC) = pp fmt "%a..%a..%a" pp_cspoint dvA pp_cspoint dvB pp_cspoint dvC
+
+let pp_int fmt x = pp fmt "%d" x
+
+let pp_int_option fmt = function
+  | None    -> pp fmt "NONE"
+  | Some(i) -> pp fmt "%d" i
+
+let pp_partial fmt (dtD, (dxE, dyE), dsF) = pp fmt "%d_(%d %d)_%d" dtD dxE dyE dsF
+
+let pp_sep_space fmt () = pp fmt " "
+
+let pp_cspoint_list = pp_list ~pp_sep:pp_sep_space pp_cspoint
+
+let pp_partial_list = pp_list ~pp_sep:pp_sep_space pp_partial
+
+let pp_parsed_charstring fmt = function
+  | HStem(y, dy, csptlst)   -> pp fmt "HStem(%d %d %a)" y dy pp_cspoint_list csptlst
+  | VStem(x, dx, csptlst)   -> pp fmt "VStem(%d %d %a)" x dx pp_cspoint_list csptlst
+  | HStemHM(y, dy, csptlst) -> pp fmt "HStemHM(%d %d %a)" y dy pp_cspoint_list csptlst
+  | VStemHM(x, dx, csptlst) -> pp fmt "VStemHM(%d %d %a)" x dx pp_cspoint_list csptlst
+  | HintMask(_)             -> pp fmt "HintMask(_)"
+  | CntrMask(_)             -> pp fmt "CntrMask(_)"
+  | VMoveTo(dy1)            -> pp fmt "VMoveTo(%d)" dy1
+  | RLineTo(csptlst)        -> pp fmt "RLineTo(%a)" pp_cspoint_list csptlst
+  | HLineTo(lst)            -> pp fmt "HLineTo(%a)" (pp_list ~pp_sep:pp_sep_space pp_int) lst
+  | VLineTo(lst)            -> pp fmt "VLineTo(%a)" (pp_list ~pp_sep:pp_sep_space pp_int) lst
+  | RRCurveTo(bezierlst)    -> pp fmt "RRCurveTo(%a)" (pp_list ~pp_sep:pp_sep_space pp_bezier) bezierlst
+  | RMoveTo((dx1, dy1))     -> pp fmt "RMoveTo(%d, %d)" dx1 dy1
+  | HMoveTo(dx1)            -> pp fmt "HMoveTo(%d)" dx1
+  | VVCurveTo(dtopt, lst)   -> pp fmt "VVCurveTo(%a %a)" pp_int_option dtopt pp_partial_list lst
+  | HHCurveTo(dtopt, lst)   -> pp fmt "HHCurveTo(%a %a)" pp_int_option dtopt pp_partial_list lst
+  | VHCurveTo(lst, dtopt)   -> pp fmt "VHCurveTo(%a %a)" pp_partial_list lst pp_int_option dtopt
+  | HVCurveTo(lst, dtopt)   -> pp fmt "HVCurveTo(%a %a)" pp_partial_list lst pp_int_option dtopt
+
+
+let access_subroutine idx i =
+  let len = Array.length idx in
+  let bias =
+    if len < 1240 then 107 else
+      if len < 33900 then 1131 else
+        32768
+  in
+  try return idx.(bias + i) with
+  | Invalid_argument(_) ->
+      Format.fprintf fmtCFF "invalid; length = %d, bias = %d, i = %d\n" len bias i;  (* for debug *)
+      err `Invalid_charstring
+
+
+let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
+  let () =  (* for debug *)
+    match woptoptprev with
+    | None    -> Format.fprintf fmtCFF "X %a\n" pp_charstring_element cselem;  (* for debug *)
+    | Some(_) -> Format.fprintf fmtCFF "O %a\n" pp_charstring_element cselem;  (* for debug *)
+  in  (* for debug *)
+
+  let return_with_width ret =
+    match woptoptprev with
+    | None    -> let wopt = pop_opt stk in return (Some(wopt), ret)
+    | Some(_) -> return (woptoptprev, ret)
+  in
+
+  let return_cleared ret =
+    return (woptoptprev, ret)
+  in
+
+    match cselem with
+    | Argument(i) ->
+        stk |> Stack.push i; return_cleared []
+
+    | Operator(ShortKey(1)) ->  (* -- hstem (1) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | []                 -> err `Invalid_charstring
+          | (y, dy) :: csptlst -> return_with_width [HStem(y, dy, csptlst)]
+        end
+
+    | Operator(ShortKey(3)) ->  (* -- vstem (3) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | []                 -> err `Invalid_charstring
+          | (x, dx) :: csptlst -> return_with_width [VStem(x, dx, csptlst)]
+        end
+
+    | Operator(ShortKey(4)) ->  (* -- vmoveto (4) -- *)
+        pop stk >>= fun arg ->
+        return_with_width [VMoveTo(arg)]
+
+    | Operator(ShortKey(5)) ->  (* -- rlineto (5) -- *)
+        let csptlst = pop_iter pop_pair_opt stk in
+        return_cleared [RLineTo(csptlst)]
+
+    | Operator(ShortKey(6)) ->  (* -- hlineto (6) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        let lastopt = pop_opt stk in
+        let flatlst = pairlst |> List.map (fun (a, b) -> [a; b]) |> List.concat in
+        begin
+          match lastopt with
+          | None       -> return_cleared [HLineTo(flatlst)]
+          | Some(last) -> return_cleared [HLineTo(List.append flatlst [last])]
+        end
+
+    | Operator(ShortKey(7)) ->  (* -- vlineto (7) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        let lastopt = pop_opt stk in
+        let flatlst = pairlst |> List.map (fun (a, b) -> [a; b]) |> List.concat in
+        begin
+          match lastopt with
+          | None       -> return_cleared [VLineTo(flatlst)]
+          | Some(last) -> return_cleared [VLineTo(List.append flatlst [last])]
+        end
+
+    | Operator(ShortKey(8)) ->  (* -- rrcurveto (8) -- *)
+        let tuplelst = pop_iter pop_6_opt stk in
+        let bezierlst = tuplelst |> List.map make_bezier in
+        return_cleared [RRCurveTo(bezierlst)]
+
+    | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
+        pop stk >>= fun i ->
+        Format.fprintf fmtCFF "callsubr1\n"; (* for debug *)
+        access_subroutine lsubridx i >>= fun rawcs ->
+        Format.fprintf fmtCFF "callsubr2\n"; (* for debug *)
+        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs
+
+    | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
+        return_cleared []
+
+    | Operator(ShortKey(14)) ->  (* -- endchar (14) -- *)
+        let lst = pop_all stk in
+        begin
+          match woptoptprev with
+          | None ->
+              begin
+                match lst with
+                | w :: [] -> return (Some(Some(w)), [])
+                | []      -> return (Some(None), [])
+                | _       ->
+                    Format.fprintf fmtCFF "remain1\n";  (* for debug *)
+                    err `Invalid_charstring
+              end
+
+          | Some(_) ->
+              begin
+                match lst with
+                | [] -> return_cleared []
+                | _  ->
+                    Format.fprintf fmtCFF "remain2\n";  (* for debug *)
+                    lst |> List.iter (Format.fprintf fmtCFF "%d,@ ");  (* for debug *)
+                    Format.fprintf fmtCFF "\n";  (* for debug *)
+                    err `Invalid_charstring
+              end
+        end
+
+    | Operator(ShortKey(18)) ->  (* -- hstemhm (18) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | []                 -> err `Invalid_charstring
+          | (y, dy) :: csptlst -> return_with_width [HStemHM(y, dy, csptlst)]
+        end
+
+    | HintMaskOperator(arg) ->
+        if Stack.length stk = 0 then
+          return_with_width [HintMask(arg)]
+        else
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | []                 -> err `Invalid_charstring
+          | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); HintMask(arg)]
+        end
+          
+
+    | CntrMaskOperator(arg) ->
+        return_with_width [CntrMask(arg)]
+
+    | Operator(ShortKey(21)) ->  (* -- rmoveto (21) -- *)
+        pop stk >>= fun dy1 ->
+        pop stk >>= fun dx1 ->
+        return_with_width [RMoveTo((dx1, dy1))]
+
+    | Operator(ShortKey(22)) ->  (* -- hmoveto (22) -- *)
+        pop stk >>= fun arg ->
+        return_with_width [HMoveTo(arg)]
+
+    | Operator(ShortKey(23)) ->  (* -- vstemhm (23) -- *)
+        let pairlst = pop_iter pop_pair_opt stk in
+        begin
+          match pairlst with
+          | []                 -> err `Invalid_charstring
+          | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst)]
+        end
+
+    | Operator(ShortKey(24)) ->  (* -- rcurveline (24) -- *)
+        pop stk >>= fun dyd ->
+        pop stk >>= fun dxd ->
+        let tuplelst = pop_iter pop_6_opt stk in
+        let bezierlst = tuplelst |> List.map make_bezier in
+        return_cleared [RRCurveTo(bezierlst); RLineTo([(dxd, dyd)])]
+
+    | Operator(ShortKey(25)) ->  (* -- rlinecurve (25) -- *)
+        pop stk >>= fun dyd ->
+        pop stk >>= fun dxd ->
+        pop stk >>= fun dyc ->
+        pop stk >>= fun dxc ->
+        pop stk >>= fun dyb ->
+        pop stk >>= fun dxb ->
+        let pairlst = pop_iter pop_pair_opt stk in
+        return_cleared [RLineTo(pairlst); RRCurveTo([((dxb, dyb), (dxc, dyc), (dxd, dyd))])]
+
+    | Operator(ShortKey(26)) ->  (* -- vvcurveto (26) --*)
+        let tuplelst = pop_iter pop_4_opt stk in
+        let retlst = tuplelst |> List.map (fun (dya, dxb, dyb, dyc) -> (dya, (dxb, dyb), dyc)) in
+        let dx1opt = pop_opt stk in
+        return_cleared [VVCurveTo(dx1opt, retlst)]
+
+    | Operator(ShortKey(27)) ->  (* -- hhcurveto (27) -- *)
+        let tuplelst = pop_iter pop_4_opt stk in
+        let retlst = tuplelst |> List.map (fun (dxa, dxb, dyb, dxc) -> (dxa, (dxb, dyb), dxc)) in
+        let dy1opt = pop_opt stk in
+        return_cleared [HHCurveTo(dy1opt, retlst)]
+
+    | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
+        pop stk >>= fun i ->
+        access_subroutine gsubridx i >>= fun rawcs ->
+        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs
+
+    | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
+        begin
+          if is_odd_length stk then
+            pop stk >>= fun dxf ->
+            return (Some(dxf))
+          else
+            return None
+        end >>= fun lastopt ->
+      let tuplelst = pop_iter pop_4_opt stk in
+      let retlst = tuplelst |> List.map (fun (d1, d2, d3, d4) -> (d1, (d2, d3), d4)) in
+      return_cleared [VHCurveTo(retlst, lastopt)]
+
+
+    | Operator(ShortKey(31)) ->  (* -- hvcurveto (31) -- *)
+        begin
+          if is_odd_length stk then
+            pop stk >>= fun dxf ->
+            return (Some(dxf))
+          else
+            return None
+        end >>= fun lastopt ->
+        let tuplelst = pop_iter pop_4_opt stk in
+        let retlst = tuplelst |> List.map (fun (d1, d2, d3, d4) -> (d1, (d2, d3), d4)) in
+        return_cleared [HVCurveTo(retlst, lastopt)]
+
+    | Operator(ShortKey(i)) ->
+        err `Invalid_charstring
+
+    | Operator(LongKey(i)) ->
+        failwith (Printf.sprintf "invalid or unsupported operator '12 %d'" i)
+
+
+and parse_charstring (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
+  cs |> List.fold_left (fun res cselem ->
+    res >>= fun (woptoptprev, acc) ->
+    parse_progress gsubridx lsubridx woptoptprev stk cselem >>= fun (woptopt, parsed) ->
+    let accnew = List.rev_append parsed acc in
+    match woptopt with
+    | None    -> return (woptoptprev, accnew)
+    | Some(_) -> return (woptopt, accnew)
+  ) (return init)
+
+
+let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
+  seek_pos offset_CharString_INDEX d >>= fun () ->
+  d_index_access d_charstring gid d >>= function
+  | None ->
+      return None
+
+  | Some(cs) ->
+      let stk : int Stack.t = Stack.create () in
+      parse_charstring stk gsubridx lsubridx (None, []) cs >>= function
+      | (None, acc)       -> err `Invalid_charstring
+      | (Some(wopt), acc) -> return (Some((wopt, List.rev acc)))
+
+
+type path_element =
+  | LineTo         of cspoint
+  | BezierTo       of cspoint * cspoint * cspoint
+
+
+let ( +@ ) (x, y) (dx, dy) = (x + dx, y + dy)
+
+let ( +@- ) (x, y) dx = (x + dx, y)
+
+let ( +@| ) (x, y) dy = (x, y + dy)
+
+
+let line_parity is_horizontal_init acc lst curv =
+  let rec aux is_horizontal acc lst curv =
+    match lst with
+    | [] ->
+        (curv, acc)
+
+    | dt :: tail ->
+        if is_horizontal then
+          let curvnew = curv +@- dt in
+          aux (not is_horizontal) (LineTo(curvnew) :: acc) tail curvnew
+        else
+          let curvnew = curv +@| dt in
+          aux (not is_horizontal) (LineTo(curvnew) :: acc) tail curvnew
+  in
+  aux is_horizontal_init acc lst curv
+
+
+let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
+  let rec aux  is_horizontal acc lst curv =
+    match lst with
+    | [] ->
+        if is_horizontal then
+        (* -- dtD is x-directed and dsF is y-directed -- *)
+          let vD = curv +@- dtD in
+          let vE = vD +@ dvE in
+          let vF =
+            match dtFopt with
+            | None      -> vE +@| dsF
+            | Some(dtF) -> vE +@ (dtF, dsF)
+          in
+            (vF, BezierTo(vD, vE, vF) :: acc)
+        else
+          let vD = curv +@| dtD in
+          let vE = vD +@ dvE in
+          let vF =
+            match dtFopt with
+            | None      -> vE +@- dsF
+            | Some(dtF) -> vE +@ (dsF, dtF)
+          in
+            (vF, BezierTo(vD, vE, vF) :: acc)
+
+    | (dtA, dvB, dsC) :: tail ->
+        if is_horizontal then
+          let vA = curv +@- dtA in
+          let vB = vA +@ dvB in
+          let vC = vB +@| dsC in
+            aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
+        else
+          let vA = curv +@| dtA in
+          let vB = vA +@ dvB in
+          let vC = vB +@- dsC in
+            aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
+          
+  in
+  aux is_horizontal acc lst curv
+        
+
+type path = cspoint * path_element list
+  
+
+let charstring_absolute csinfo gid =
+  charstring csinfo gid >>= function
+  | None ->
+      return None
+
+  | Some((_, pcs)) ->
+      pcs |> List.fold_left (fun prevres pcselem ->
+        prevres >>= fun (curv, accopt) ->
+        Format.fprintf fmtCFF "%a\n" pp_parsed_charstring pcselem;  (* for debug *)
+        match pcselem with
+        | HintMask(_)
+        | CntrMask(_)
+        | HStem(_, _, _)
+        | VStem(_, _, _)
+        | HStemHM(_, _, _)
+        | VStemHM(_, _, _)
+            -> return (curv, accopt)
+
+        | VMoveTo(dy) ->
+            let curvnew = curv +@| dy in
+            begin
+              match accopt with
+              | None                           -> return (curvnew, Some((curvnew, []), []))
+              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+            end
+
+        | HMoveTo(dx) ->
+            let curvnew = curv +@- dx in
+            begin
+              match accopt with
+              | None                           -> return (curvnew, Some((curvnew, []), []))
+              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+            end
+
+        | RMoveTo(dv) ->
+            let curvnew = curv +@ dv in
+            begin
+              match accopt with
+              | None                           -> return (curvnew, Some((curvnew, []), []))
+              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+            end
+
+        | RLineTo(csptlst) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                  let (curvnew, peaccnew) =
+                    csptlst |> List.fold_left (fun (curv, peacc) dv ->
+                      (curv +@ dv, LineTo(curv +@ dv) :: peacc)
+                    ) (curv, peacc)
+                  in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | HLineTo(lst) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                  let (curvnew, peaccnew) = line_parity true peacc lst curv in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | VLineTo(lst) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                  let (curvnew, peaccnew) = line_parity false peacc lst curv in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | RRCurveTo(tricsptlst) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                  let (curvnew, peaccnew) =
+                    tricsptlst |> List.fold_left (fun (curv, acc) (dvA, dvB, dvC) ->
+                      let vA = curv +@ dvA in
+                      let vB = vA +@ dvB in
+                      let vC = vB +@ dvC in
+                        (vC, BezierTo(vA, vB, vC) :: acc)
+                    ) (curv, peacc)
+                  in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | VVCurveTo(dx1opt, (dy1, dv2, dy3) :: vvlst) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                  let v1 =
+                    match dx1opt with
+                    | None      -> curv +@| dy1
+                    | Some(dx1) -> curv +@ (dx1, dy1)
+                  in
+                  let v2 = v1 +@ dv2 in
+                  let v3 = v2 +@| dy3 in
+                  let (curvnew, peaccnew) =
+                    vvlst |> List.fold_left (fun (curv, peacc) (dyA, dvB, dyC) ->
+                      let vA = curv +@| dyA in
+                      let vB = vA +@ dvB in
+                      let vC = vB +@| dyC in
+                      (vC, BezierTo(vA, vB, vC) :: peacc)
+                    ) (v3, BezierTo(v1, v2, v3) :: peacc)
+                  in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | VVCurveTo(_, []) ->
+            err `Invalid_charstring
+
+        | HHCurveTo(dy1opt, (dx1, dv2, dx3) :: hhlst) ->
+            let v1 =
+              match dy1opt with
+              | None      -> curv +@- dx1
+              | Some(dy1) -> curv +@ (dx1, dy1)
+            in
+            let v2 = v1 +@ dv2 in
+            let v3 = v2 +@- dx3 in
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                let (curvnew, peaccnew) =
+                  hhlst |> List.fold_left (fun (curv, peacc) (dxA, dvB, dxC) ->
+                    let vA = curv +@- dxA in
+                    let vB = vA +@ dvB in
+                    let vC = vB +@- dxC in
+                    (vC, BezierTo(vA, vB, vC) :: peacc)
+                  ) (v3, BezierTo(v1, v2, v3) :: peacc)
+                in
+                return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | HHCurveTo(_, []) ->
+            err `Invalid_charstring
+
+        | HVCurveTo(hvlst, lastopt) ->
+            begin
+              match (List.rev hvlst, accopt) with
+              | ([], _)   -> err `Invalid_charstring
+              | (_, None) -> err `Invalid_charstring
+              | (last :: revmain, Some(((cspt, peacc), pathacc))) ->
+                  let hvlstmain = List.rev revmain in
+                  let (curvnew, peaccnew) = curve_parity true peacc hvlstmain last lastopt curv in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | VHCurveTo(vhlst, lastopt) ->
+            begin
+              match (List.rev vhlst, accopt) with
+              | ([], _)   -> err `Invalid_charstring
+              | (_, None) -> err `Invalid_charstring
+              | (last :: revmain, Some(((cspt, peacc), pathacc))) ->
+                  let vhlstmain = List.rev revmain in
+                  let (curvnew, peaccnew) = curve_parity false peacc vhlstmain last lastopt curv in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+      ) (return ((0, 0), None))
+    >>= function
+    | (_, None)                           -> return (Some([]))
+    | (_, Some(((cspt, peacc), pathacc))) -> return (Some(List.rev ((cspt, List.rev peacc) :: pathacc)))
+
+
+type bbox =
+  | BBoxInital
+  | BBox       of csx * csx * csy * csy
+
+
+let update_bbox bbox (x1, y1) (x2, y2) =
+  let xminnew = min x1 x2 in
+  let xmaxnew = max x1 x2 in
+  let yminnew = min y1 y2 in
+  let ymaxnew = max y1 y2 in
+    match bbox with
+    | BBox(xmin, xmax, ymin, ymax) -> BBox(min xmin xminnew, max xmax xmaxnew, min ymin yminnew, max ymax ymaxnew)
+    | BBoxInital                   -> BBox(xminnew, xmaxnew, yminnew, ymaxnew)
+
+
+let bezier_bbox (x0, y0) (x1, y1) (x2, y2) (x3, y3) =
+  let ( ~$ ) = float_of_int in
+
+  let bezier_point t r0 r1 r2 r3 =
+    if t < 0. then r0 else
+      if 1. < t then r3 else
+        let c1 = ~$ (3 * (-r0 + r1)) in
+        let c2 = ~$ (3 * (r0 - 2 * r1 + r2)) in
+        let c3 = ~$ (-r0 + 3 * (r1 - r2) + r3) in
+          int_of_float @@ (~$ r0) +. t *. (c1 +. t *. (c2 +. t *. c3))
+  in
+  
+  let aux r0 r1 r2 r3 =
+    let a = -r0 + 3 * (r1 - r2) + r3 in
+    let b = 2 * (r0 - 2 * r1 + r2) in
+    let c = -r0 + r1 in
+    if a = 0 then
+      [r0; r3]
+    else
+      let det = b * b - 4 * a * c in
+      if det < 0 then
+        [r0; r3]
+      else
+        let delta = sqrt (~$ det) in
+        let t_plus  = (-. (~$ b) +. delta) /. (~$ (2 * a)) in
+        let t_minus = (-. (~$ b) -. delta) /. (~$ (2 * a)) in
+        [r0; r3; bezier_point t_plus r0 r1 r2 r3; bezier_point t_minus r0 r1 r2 r3]
+  in
+
+  let xoptlst = aux x0 x1 x2 x3 in
+  let xmax = xoptlst |> List.fold_left max x0 in
+  let xmin = xoptlst |> List.fold_left min x0 in
+  let yoptlst = aux y0 y1 y2 y3 in
+  let ymax = yoptlst |> List.fold_left max y0 in
+  let ymin = yoptlst |> List.fold_left min y0 in
+  ((xmin, ymin), (xmax, ymax))
+
+
+let charstring_bbox (pathlst : path list) =
+  let bbox =
+    pathlst |> List.fold_left (fun bboxprev (cspt, pelst) ->
+      let (_, bbox) =
+        pelst |> List.fold_left (fun (v0, bboxprev) pe ->
+          match pe with
+          | LineTo(v1)           -> (v1, update_bbox bboxprev v0 v1)
+          | BezierTo(v1, v2, v3) -> let (vb1, vb2) = bezier_bbox v0 v1 v2 v3 in (v3, update_bbox bboxprev vb1 vb2)
+        ) (cspt, bboxprev)
       in
-      let get_boolean key dflt =
-        get_integer key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
-      in
-      let get_iquad key dflt =
-        try
-          let dictvlst = dictmap |> DictMap.find key in
-            match dictvlst with
-            | Integer(i1) :: Integer(i2) :: Integer(i3) :: Integer(i4) :: [] -> return (i1, i2, i3, i4)
-            | _                                                              -> err `Invalid_cff_not_a_quad
-        with
-        | Not_found -> return dflt
-      in
-        get_boolean (LongKey(1)) false       >>= fun is_fixed_pitch ->
-        get_integer (LongKey(2)) 0           >>= fun italic_angle ->
-        get_integer (LongKey(3)) (-100)      >>= fun underline_position ->
-        get_integer (LongKey(4)) 50          >>= fun underline_thickness ->
-        get_integer (LongKey(5)) 0           >>= fun paint_type ->
-        get_integer (LongKey(6)) 2           >>= fun charstring_type ->
-        get_iquad (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-        get_integer (LongKey(8)) 0           >>= fun stroke_width ->
-        return (Some{
-          is_fixed_pitch;
-          italic_angle;
-          underline_position;
-          underline_thickness;
-          paint_type;
-          charstring_type;
-          font_bbox;
-          stroke_width;
-        })
+        bbox
+    ) BBoxInital
+  in
+  match bbox with
+  | BBoxInital                   -> None  (* needs reconsideration *)
+  | BBox(xmin, xmax, ymin, ymax) -> (Some((xmin, xmax, ymin, ymax)))
+        
