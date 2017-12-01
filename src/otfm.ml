@@ -12,7 +12,7 @@ let debugfmt =
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
-let fmtCFF  = debugfmt
+let fmtCFF  = Format.std_formatter
 
 
 open Result
@@ -3111,7 +3111,8 @@ let cff d =
         get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
 
       (* -- Local Subr INDEX -- *)
-        seek_pos (offset_private + selfoffset_lsubrs) d >>= fun () ->
+        let offset_lsubrs = offset_private + selfoffset_lsubrs in
+        seek_pos offset_lsubrs d >>= fun () ->
         Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
         d_index [] d_charstring d >>= fun lsubridx ->
         Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
@@ -3309,9 +3310,9 @@ let access_subroutine idx i =
       if len < 33900 then 1131 else
         32768
   in
+  Format.fprintf fmtCFF "[G/L SUBR] length = %d, bias = %d, i = %d, ---> %d\n" len bias i (bias + i);  (* for debug *)
   try return idx.(bias + i) with
   | Invalid_argument(_) ->
-      Format.fprintf fmtCFF "invalid; length = %d, bias = %d, i = %d\n" len bias i;  (* for debug *)
       err `Invalid_charstring
 
 
@@ -3387,10 +3388,9 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
         pop stk >>= fun i ->
-        Format.fprintf fmtCFF "callsubr1\n"; (* for debug *)
         access_subroutine lsubridx i >>= fun rawcs ->
-        Format.fprintf fmtCFF "callsubr2\n"; (* for debug *)
-        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs
+        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs >>= fun (woptoptsubr, accsubr) ->
+        return (woptoptsubr, List.rev accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -3493,7 +3493,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
         pop stk >>= fun i ->
         access_subroutine gsubridx i >>= fun rawcs ->
-        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs
+        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs >>= fun (woptoptsubr, accsubr) ->
+        return (woptoptsubr, List.rev accsubr)
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -3642,27 +3643,39 @@ let charstring_absolute csinfo gid =
             -> return (curv, accopt)
 
         | VMoveTo(dy) ->
-            let curvnew = curv +@| dy in
             begin
               match accopt with
-              | None                           -> return (curvnew, Some((curvnew, []), []))
-              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+              | None ->
+                  let curvnew = curv +@| dy in
+                  return (curvnew, Some((curvnew, []), []))
+
+              | Some(((cspt, peacc), pathacc)) ->
+                  let curvnew = cspt +@| dy in  (* doubtful *)
+                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
         | HMoveTo(dx) ->
-            let curvnew = curv +@- dx in
             begin
               match accopt with
-              | None                           -> return (curvnew, Some((curvnew, []), []))
-              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+              | None ->
+                  let curvnew = curv +@- dx in
+                  return (curvnew, Some((curvnew, []), []))
+
+              | Some(((cspt, peacc), pathacc)) ->
+                  let curvnew = cspt +@- dx in  (* doubltful *)
+                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
         | RMoveTo(dv) ->
-            let curvnew = curv +@ dv in
             begin
               match accopt with
-              | None                           -> return (curvnew, Some((curvnew, []), []))
-              | Some(((cspt, peacc), pathacc)) -> return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+              | None ->
+                  let curvnew = curv +@ dv in
+                  return (curvnew, Some((curvnew, []), []))
+
+              | Some(((cspt, peacc), pathacc)) ->
+                  let curvnew = cspt +@ dv in  (* doubtful *)
+                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
         | RLineTo(csptlst) ->

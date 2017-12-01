@@ -92,7 +92,10 @@ let main fmt =
     | Ok(v)    -> f v
     | Error(e) -> Error(e :> error)
   in
-  let filename = try Sys.argv.(1) with Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end in
+  let (filename, gid) =
+    try (Sys.argv.(1), int_of_string Sys.argv.(2)) with
+    | Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end
+  in
   let src =
     match string_of_file filename with
     | Ok(src)       -> src
@@ -112,7 +115,7 @@ let main fmt =
         pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
         pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
 
-        charstring cffinfo 32 >>= fun (bbox, pcs) ->
+        charstring cffinfo gid >>= fun (bbox, pcs) ->
 
         let fout = open_out "test.svg" in
         Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
@@ -120,9 +123,9 @@ let main fmt =
         Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"1000\" height=\"1000\" viewBox=\"0 300 1000 1000\">";
         Printf.fprintf fout "<rect x=\"0\" y=\"0\" width=\"1000\" height=\"1000\" fill=\"none\" stroke=\"blue\" />";
 
-      
         pcs |> List.iter (output_path fout);
         output_bbox fmt fout bbox;
+(*
         let path_sample = ((500, 100), [ Otfm.BezierTo((700, 200), (600, 300), (400, 400)); ]) in
         output_path fout path_sample;
         begin
@@ -130,6 +133,7 @@ let main fmt =
           | None       -> Format.fprintf fmt "bbox = none\n"
           | Some(bbox) -> output_bbox fmt fout bbox
         end;
+*)
         Printf.fprintf fout "</svg>";
         close_out fout;
 
