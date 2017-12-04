@@ -12,7 +12,7 @@ let debugfmt =
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
-let fmtCFF  = Format.std_formatter
+let fmtCFF  = debugfmt
 
 
 open Result
