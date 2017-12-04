@@ -3198,7 +3198,7 @@ let pop_iter (type a) (popf : int Stack.t -> a option) (stk : int Stack.t) : (a 
   let rec aux acc =
     let retopt = popf stk in
     match retopt with
-    | None      -> acc
+    | None      -> acc  (* -- returns in the forward direction -- *)
     | Some(ret) -> aux (ret :: acc)
   in
   aux []
@@ -3363,22 +3363,22 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(6)) ->  (* -- hlineto (6) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
-        let lastopt = pop_opt stk in
+        let firstopt = pop_opt stk in
         let flatlst = pairlst |> List.map (fun (a, b) -> [a; b]) |> List.concat in
         begin
-          match lastopt with
-          | None       -> return_cleared [HLineTo(flatlst)]
-          | Some(last) -> return_cleared [HLineTo(List.append flatlst [last])]
+          match firstopt with
+          | None        -> return_cleared [HLineTo(flatlst)]
+          | Some(first) -> return_cleared [HLineTo(first :: flatlst)]
         end
 
     | Operator(ShortKey(7)) ->  (* -- vlineto (7) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
-        let lastopt = pop_opt stk in
+        let firstopt = pop_opt stk in
         let flatlst = pairlst |> List.map (fun (a, b) -> [a; b]) |> List.concat in
         begin
-          match lastopt with
-          | None       -> return_cleared [VLineTo(flatlst)]
-          | Some(last) -> return_cleared [VLineTo(List.append flatlst [last])]
+          match firstopt with
+          | None        -> return_cleared [VLineTo(flatlst)]
+          | Some(first) -> return_cleared [VLineTo(first :: flatlst)]
         end
 
     | Operator(ShortKey(8)) ->  (* -- rrcurveto (8) -- *)
@@ -3564,21 +3564,21 @@ let ( +@- ) (x, y) dx = (x + dx, y)
 let ( +@| ) (x, y) dy = (x, y + dy)
 
 
-let line_parity is_horizontal_init acc lst curv =
-  let rec aux is_horizontal acc lst curv =
+let line_parity is_horizontal_init peacc lst curv =
+  let rec aux is_horizontal peacc lst curv =
     match lst with
     | [] ->
-        (curv, acc)
+        (curv, peacc)
 
     | dt :: tail ->
         if is_horizontal then
           let curvnew = curv +@- dt in
-          aux (not is_horizontal) (LineTo(curvnew) :: acc) tail curvnew
+          aux (not is_horizontal) (LineTo(curvnew) :: peacc) tail curvnew
         else
           let curvnew = curv +@| dt in
-          aux (not is_horizontal) (LineTo(curvnew) :: acc) tail curvnew
+          aux (not is_horizontal) (LineTo(curvnew) :: peacc) tail curvnew
   in
-  aux is_horizontal_init acc lst curv
+  aux is_horizontal_init peacc lst curv
 
 
 let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
@@ -3643,38 +3643,35 @@ let charstring_absolute csinfo gid =
             -> return (curv, accopt)
 
         | VMoveTo(dy) ->
+            let curvnew = curv +@| dy in
             begin
               match accopt with
               | None ->
-                  let curvnew = curv +@| dy in
                   return (curvnew, Some((curvnew, []), []))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  let curvnew = cspt +@| dy in  (* doubtful *)
                   return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
         | HMoveTo(dx) ->
+            let curvnew = curv +@- dx in
             begin
               match accopt with
               | None ->
-                  let curvnew = curv +@- dx in
                   return (curvnew, Some((curvnew, []), []))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  let curvnew = cspt +@- dx in  (* doubltful *)
                   return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
         | RMoveTo(dv) ->
+            let curvnew = curv +@ dv in
             begin
               match accopt with
               | None ->
-                  let curvnew = curv +@ dv in
                   return (curvnew, Some((curvnew, []), []))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  let curvnew = cspt +@ dv in  (* doubtful *)
                   return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
             end
 
