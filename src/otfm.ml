@@ -12,7 +12,7 @@ let debugfmt =
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
-let fmtCFF  = debugfmt
+let fmtCFF  = Format.std_formatter
 
 
 open Result
@@ -2885,55 +2885,69 @@ let d_stem_argument numstem d : (int * stem_argument) ok =
   return (arglen, arg)
 
 
-let d_charstring_element numstem d =
-  let return_normal (step, cselem) = return (step, numstem, cselem) in
-  let return_succ   (step, cselem) = return (step, numstem + 1, cselem) in
+let d_charstring_element numarg numstem d =
+  let return_argument (step, cselem) =
+    return (step, numarg + 1, numstem, cselem)
+  in
+  let return_operator (step, cselem) =
+    return (step, 0, numstem, cselem)
+  in
+  let return_stem   (step, cselem) =
+    Format.fprintf fmtCFF "step = %d, numarg = %d\n" step numarg;  (* for debug *)
+    return (step, 0, numstem + numarg / 2, cselem)
+  in
+    (* -- 'numarg' may be an odd number, but it is due to the width value -- *)
   d_uint8 d >>= function
   | ( 1 | 3 | 18 | 23) as b0 ->  (* -- stem operators -- *)
-      return_succ (1, Operator(ShortKey(b0)))
+      return_stem (1, Operator(ShortKey(b0)))
 
   | b0  when b0 |> is_in_range 0 11 ->
-      return_normal (1, Operator(ShortKey(b0)))
+      return_operator (1, Operator(ShortKey(b0)))
 
   | 12 ->
       d_uint8 d >>= fun b1 ->
-      return_normal (2, Operator(LongKey(b1)))
+      return_operator (2, Operator(LongKey(b1)))
 
   | b0  when b0 |> is_in_range 13 18 ->
-      return_normal (1, Operator(ShortKey(b0)))
+      return_operator (1, Operator(ShortKey(b0)))
 
   | 19 ->
-      d_stem_argument numstem d >>= fun (step, arg) ->
-      return_normal (1 + step, HintMaskOperator(arg))
+      Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
+      if numarg = 0 then
+        d_stem_argument numstem d >>= fun (step, bits) ->
+        return_operator (1 + step, HintMaskOperator(bits))
+      else
+        d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
+        return_stem (1 + step, HintMaskOperator(bits))
 
   | 20 ->
       d_stem_argument numstem d >>= fun (step, arg) ->
-      return_normal (1 + step, CntrMaskOperator(arg))
+      return_operator (1 + step, CntrMaskOperator(arg))
 
   | b0  when b0 |> is_in_range 21 27 ->
-      return_normal (1, Operator(ShortKey(b0)))
+      return_operator (1, Operator(ShortKey(b0)))
 
   | 28 ->
       d_int16 d >>= fun i ->
-      return_normal (3, Argument(i))
+      return_argument (3, Argument(i))
 
   | b0  when b0 |> is_in_range 29 31 ->
-      return_normal (1, Operator(ShortKey(b0)))
+      return_operator (1, Operator(ShortKey(b0)))
 
   | b0  when b0 |> is_in_range 32 246 ->
-      return_normal (1, Argument(b0 - 139))
+      return_argument (1, Argument(b0 - 139))
 
   | b0  when b0 |> is_in_range 247 250 ->
       d_uint8 d >>= fun b1 ->
-      return_normal (2, Argument((b0 - 247) * 256 + b1 + 108))
+      return_argument (2, Argument((b0 - 247) * 256 + b1 + 108))
 
   | b0  when b0 |> is_in_range 251 254 ->
       d_uint8 d >>= fun b1 ->
-      return_normal (2, Argument(- (b0 - 251) * 256 - b1 - 108))
+      return_argument (2, Argument(- (b0 - 251) * 256 - b1 - 108))
 
   | 255 ->
       d_int32 d >>= fun i ->
-      return_normal (5, Argument(?@ i))
+      return_argument (5, Argument(?@ i))
 
   | _ ->
       assert false
@@ -2941,13 +2955,13 @@ let d_charstring_element numstem d =
 
 
 let d_charstring len32 d : (charstring_element list) ok =
-  let rec aux numstem len acc d =
+  let rec aux numarg numstem len acc d =
     if len = 0 then return (List.rev acc) else
     if len < 0 then err `Invalid_charstring else
-    d_charstring_element numstem d >>= fun (step, numstemnew, cselem) ->
-    aux numstemnew (len - step) (cselem :: acc) d
+    d_charstring_element numarg numstem d >>= fun (step, numargnew, numstemnew, cselem) ->
+    aux numargnew numstemnew (len - step) (cselem :: acc) d
   in
-  aux 0 (?@ len32) [] d
+  aux 0 0 (?@ len32) [] d
 
 
 let cff_first d : cff_first ok =
