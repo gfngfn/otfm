@@ -10,7 +10,7 @@ let debugfmt =
   Format.formatter_of_out_channel (open_out "/dev/null")
 
 let fmtgen  = debugfmt
-let fmtGSUB = debugfmt
+let fmtGSUB = Format.std_formatter
 let fmtMATH = debugfmt
 let fmtCFF  = debugfmt
 
@@ -1868,6 +1868,59 @@ let d_single_substitution_subtable d : ((glyph_id * glyph_id) list) ok =
   | _ -> err_version d (Int32.of_int substFormat)
 
 
+let d_subst_lookup_record d : (int * int) ok =
+  d_uint16 d >>= fun sequenceIndex ->
+  d_uint16 d >>= fun lookupListIndex ->
+  return (sequenceIndex, lookupListIndex)
+
+
+type chain_sub_rule = glyph_id list * glyph_id list * glyph_id list * (int * int) list
+
+
+let d_chain_sub_rule d : chain_sub_rule ok =
+    (* -- ChainSubRule subtable [page 263] -- *)
+  d_list d_uint16 d >>= fun backtrack ->
+  d_uint16 d >>= fun inputGlyphCount ->
+  d_repeat (inputGlyphCount - 1) d_uint16 d >>= fun  input ->
+  d_list d_uint16 d >>= fun lookAhead ->
+  d_list d_subst_lookup_record d >>= fun substLookupRecord_list ->
+  return (backtrack, input, lookAhead, substLookupRecord_list)
+
+
+let d_chain_sub_rule_set d : (chain_sub_rule list) ok =
+  let offset_ChainSubRuleSet_table = cur_pos d in
+  d_list (d_fetch offset_ChainSubRuleSet_table d_chain_sub_rule) d
+
+
+let d_chaining_contextual_substitution_subtable_format_1 offset_Substitution_table d =
+  d_coverage d >>= fun coverage ->
+  d_list (d_fetch offset_Substitution_table d_chain_sub_rule_set) d >>= fun chainSubRuleSet_lst ->
+  combine_coverage d coverage chainSubRuleSet_lst
+  >>= fun _ -> return ()  (* temporary *)
+
+
+let d_chaining_contextual_substitution_subtable_format_2 offset_Substitution_table d =
+  d_coverage d >>= fun coverage ->
+  return ()  (* temporary *)
+
+let d_chaining_contextual_substitution_subtable_format_3 offset_Substitution_table d =
+  d_list d_coverage d >>= fun backtrack_coverage_list ->
+  return ()  (* temporary *)
+
+
+let d_chaining_contextual_substitution_subtable d =
+    (* -- the position is supposed to be set
+       to the beginning of Chaining Contextual SubstFormat(1|2|3) subtable [page 261-266] -- *)
+  let offset_Substitution_table = cur_pos d in
+  d_uint16 d >>= fun substFormat ->
+  Format.fprintf fmtGSUB "substFormat = %d\n" substFormat;  (* for debug *)
+  match substFormat with
+  | 1 -> d_chaining_contextual_substitution_subtable_format_1 offset_Substitution_table d
+  | 2 -> d_chaining_contextual_substitution_subtable_format_2 offset_Substitution_table d
+  | 3 -> d_chaining_contextual_substitution_subtable_format_3 offset_Substitution_table d
+  | _ -> err_version d (Int32.of_int substFormat)
+
+
 let lookup_gsub d : gsub_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of a Lookup table [page 137] -- *)
@@ -1889,7 +1942,7 @@ let lookup_gsub d : gsub_subtable ok =
       return (SingleSubtable(List.concat gid_single_assoc_list))
 
   | 2 ->  (* -- multiple substitution -- *)
-      failwith "multiple substitution; remains to be supported."  (* temporary *)
+      failwith "LookupType 2: multiple substitution; remains to be supported."  (* temporary *)
 
   | 3 ->  (* -- alternate substitution -- *)
       Format.fprintf fmtGSUB "LookupType 3\n";
@@ -1901,8 +1954,22 @@ let lookup_gsub d : gsub_subtable ok =
       d_list (d_fetch offset_Lookup_table d_ligature_substitution_subtable) d >>= fun gidfst_ligset_assoc_list ->
       return (LigatureSubtable(List.concat gidfst_ligset_assoc_list))
 
+  | 5 ->
+      failwith "LookupType 5: contextual substitution; remains to be supported."  (* temporary *)
+
+  | 6 ->
+      Format.fprintf fmtGSUB "LookupType 6\n";  (* for debug *)
+      d_list (d_fetch offset_Lookup_table d_chaining_contextual_substitution_subtable) d >>= fun _ ->
+      failwith "LookupType 6: chaining contextual substitution; remains to be supported."  (* temporary *)
+
+  | 7 ->
+      failwith "LookupType 7: extension; remains to be supported."  (* temporary *)
+
+  | 8 ->
+      failwith "LookupType 8: reverse chaining contextual single substitution; remains to be supported."  (* temporary *)
+
   | _ ->
-      failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
+      err_version d (Int32.of_int lookupType)
 
 
 type 'a folding_single = 'a -> glyph_id * glyph_id -> 'a
