@@ -1868,13 +1868,129 @@ let d_single_substitution_subtable d : ((glyph_id * glyph_id) list) ok =
   | _ -> err_version d (Int32.of_int substFormat)
 
 
-let d_subst_lookup_record d : (int * int) ok =
+type lookup_index = int
+
+
+let d_subst_lookup_record d : (int * lookup_index) ok =
   d_uint16 d >>= fun sequenceIndex ->
   d_uint16 d >>= fun lookupListIndex ->
   return (sequenceIndex, lookupListIndex)
 
 
-type chain_sub_rule = glyph_id list * glyph_id list * glyph_id list * (int * int) list
+type chain_sub_rule = glyph_id list * glyph_id list * glyph_id list * (int * lookup_index) list
+
+type value_format = ValueFormat of int
+
+type value_record = {
+  x_placement  : int option;
+  y_placement  : int option;
+  x_advance    : int option;
+  y_advance    : int option;
+  x_pla_device : int option;
+  y_pla_device : int option;
+  x_adv_device : int option;
+  y_adv_device : int option;
+}
+
+
+let d_if cond df d =
+  if cond then
+    df d >>= fun res ->
+    return (Some(res))
+  else
+    return None
+
+
+let d_value_format d : value_format ok =
+  d_uint16 d >>= fun raw ->
+  Ok(ValueFormat(raw))
+
+
+let d_value_record (ValueFormat(valfmt)) d : value_record ok =
+    (* -- the position is supposed to be set
+          to the beginning of a ValueRecord table [page 213] -- *)
+  d_if (0 < valfmt land   1) d_int16 d >>= fun xPlacement_opt ->
+  d_if (0 < valfmt land   2) d_int16 d >>= fun yPlacement_opt ->
+  d_if (0 < valfmt land   4) d_int16 d >>= fun xAdvance_opt ->
+  d_if (0 < valfmt land   8) d_int16 d >>= fun yAdvance_opt ->
+  d_if (0 < valfmt land  16) d_int16 d >>= fun xPlaDevice_opt ->
+  d_if (0 < valfmt land  32) d_int16 d >>= fun yPlaDevice_opt ->
+  d_if (0 < valfmt land  64) d_int16 d >>= fun xAdvDevice_opt ->
+  d_if (0 < valfmt land 128) d_int16 d >>= fun yAdvDevice_opt ->
+  return {
+    x_placement  = xPlacement_opt;
+    y_placement  = yPlacement_opt;
+    x_advance    = xAdvance_opt;
+    y_advance    = yAdvance_opt;
+    x_pla_device = xPlaDevice_opt;
+    y_pla_device = yPlaDevice_opt;
+    x_adv_device = xAdvDevice_opt;
+    y_adv_device = yAdvDevice_opt;
+  }
+
+
+type class_value = int
+
+type class_definition =
+  | GlyphToClass      of glyph_id * class_value
+  | GlyphRangeToClass of glyph_id * glyph_id * class_value
+
+
+let d_class = d_uint16
+
+
+let d_class_2_record valfmt1 valfmt2 d : (value_record * value_record) ok =
+  d_value_record valfmt1 d >>= fun valrcd1 ->
+  d_value_record valfmt2 d >>= fun valrcd2 ->
+  return (valrcd1, valrcd2)
+
+
+let numbering lst =
+  let rec aux acc i lst =
+    match lst with
+    | []           -> List.rev acc
+    | head :: tail -> aux ((i, head) :: acc) (i + 1) tail
+  in
+    aux [] 0 lst
+
+
+let d_class_1_record class2Count valfmt1 valfmt2 d : ((class_value * value_record * value_record) list) ok =
+  d_repeat class2Count (d_class_2_record valfmt1 valfmt2) d >>= fun pairlst ->
+  try return (numbering pairlst |> List.map (fun (x, (y, z)) -> (x, y, z))) with
+  | Invalid_argument(_) -> err `Inconsistent_length_of_class
+
+
+let d_class_definition_format_1 d : (class_definition list) ok =
+  let rec aux acc gidstt lst =
+    match lst with
+    | []          -> return (List.rev acc)
+    | cls :: tail -> aux (GlyphToClass(gidstt, cls) :: acc) (gidstt + 1) tail
+  in
+    d_uint16 d >>= fun startGlyph ->
+    d_list d_class d >>= fun classValueArray ->
+    aux [] startGlyph classValueArray
+
+
+let d_class_range_record d : class_definition ok =
+    d_uint16 d >>= fun start_gid ->
+    d_uint16 d >>= fun end_gid ->
+    d_class d >>= fun cls ->
+    return (GlyphRangeToClass(start_gid, end_gid, cls))
+
+
+let d_class_definition_format_2 d : (class_definition list) ok =
+  d_list d_class_range_record d >>= fun rangelst ->
+  return rangelst
+  
+
+let d_class_definition d : (class_definition list) ok =
+    (* -- the position is supposed to be set
+          to the  beginning of a ClassDef table [page 140] -- *)
+  d_uint16 d >>= fun classFormat ->
+  match classFormat with
+  | 1 -> d_class_definition_format_1 d
+  | 2 -> d_class_definition_format_2 d
+  | _ -> err_version d (Int32.of_int classFormat)
 
 
 let d_chain_sub_rule d : chain_sub_rule ok =
@@ -1894,13 +2010,34 @@ let d_chain_sub_rule_set d : (chain_sub_rule list) ok =
 
 let d_chaining_contextual_substitution_subtable_format_1 offset_Substitution_table d =
   d_coverage d >>= fun coverage ->
-  d_list (d_fetch offset_Substitution_table d_chain_sub_rule_set) d >>= fun chainSubRuleSet_lst ->
-  combine_coverage d coverage chainSubRuleSet_lst
+  d_list (d_fetch offset_Substitution_table d_chain_sub_rule_set) d >>= fun chainSubRuleSet_list ->
+  combine_coverage d coverage chainSubRuleSet_list
   >>= fun _ -> return ()  (* temporary *)
 
 
+type chain_sub_class_rule = class_value list * class_value list * class_value list * (int * lookup_index) list
+
+
+let d_chain_sub_class_rule d : chain_sub_class_rule ok  =
+  d_list d_class d >>= fun backtrack ->
+  d_uint16 d >>= fun inputGlyphCount ->
+  d_repeat (inputGlyphCount - 1) d_class d >>= fun input ->
+  d_list d_class d >>= fun lookAhead ->
+  d_list d_subst_lookup_record d >>= fun substLookupRecord_list ->
+  return (backtrack, input, lookAhead, substLookupRecord_list)
+  
+
+let d_chain_sub_class_set d : (chain_sub_class_rule list) ok =
+  let offset_ChainSubClassSet_table = cur_pos d in
+  d_list (d_fetch offset_ChainSubClassSet_table d_chain_sub_class_rule) d
+
+
 let d_chaining_contextual_substitution_subtable_format_2 offset_Substitution_table d =
-  d_coverage d >>= fun coverage ->
+  d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
+  d_fetch offset_Substitution_table d_class_definition d >>= fun backtrackClassDef ->
+  d_fetch offset_Substitution_table d_class_definition d >>= fun inputClassDef ->
+  d_fetch offset_Substitution_table d_class_definition d >>= fun lookAheadClassDef ->
+  d_list (d_fetch offset_Substitution_table d_chain_sub_class_set) d >>= fun chainSubClassSet_lst ->
   return ()  (* temporary *)
 
 let d_chaining_contextual_substitution_subtable_format_3 offset_Substitution_table d =
@@ -2003,69 +2140,11 @@ let gsub feature f_single f_alt f_lig init =
   return (fold_subtables_gsub f_single f_alt f_lig init subtablelst)
 
 
-let d_if cond df d =
-  if cond then
-    df d >>= fun res ->
-    return (Some(res))
-  else
-    return None
-
-
-type value_format = ValueFormat of int
-
-type value_record = {
-  x_placement  : int option;
-  y_placement  : int option;
-  x_advance    : int option;
-  y_advance    : int option;
-  x_pla_device : int option;
-  y_pla_device : int option;
-  x_adv_device : int option;
-  y_adv_device : int option;
-}
-
-
-let d_value_format d : value_format ok =
-  d_uint16 d >>= fun raw ->
-  Ok(ValueFormat(raw))
-
-
-let d_value_record (ValueFormat(valfmt)) d : value_record ok =
-    (* -- the position is supposed to be set
-          to the beginning of a ValueRecord table [page 213] -- *)
-  d_if (0 < valfmt land   1) d_int16 d >>= fun xPlacement_opt ->
-  d_if (0 < valfmt land   2) d_int16 d >>= fun yPlacement_opt ->
-  d_if (0 < valfmt land   4) d_int16 d >>= fun xAdvance_opt ->
-  d_if (0 < valfmt land   8) d_int16 d >>= fun yAdvance_opt ->
-  d_if (0 < valfmt land  16) d_int16 d >>= fun xPlaDevice_opt ->
-  d_if (0 < valfmt land  32) d_int16 d >>= fun yPlaDevice_opt ->
-  d_if (0 < valfmt land  64) d_int16 d >>= fun xAdvDevice_opt ->
-  d_if (0 < valfmt land 128) d_int16 d >>= fun yAdvDevice_opt ->
-  return {
-    x_placement  = xPlacement_opt;
-    y_placement  = yPlacement_opt;
-    x_advance    = xAdvance_opt;
-    y_advance    = yAdvance_opt;
-    x_pla_device = xPlaDevice_opt;
-    y_pla_device = yPlaDevice_opt;
-    x_adv_device = xAdvDevice_opt;
-    y_adv_device = yAdvDevice_opt;
-  }
-
-type class_value = int
-
-type class_definition =
-  | GlyphToClass      of glyph_id * class_value
-  | GlyphRangeToClass of glyph_id * glyph_id * class_value
-
 type gpos_subtable =
   | PairPosAdjustment1 of (glyph_id * (glyph_id * value_record * value_record) list) list
   | PairPosAdjustment2 of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
   | ExtensionPos      of gpos_subtable list
   (* temporary; must contain more kinds of adjustment subtables *)
-
-
-let d_class = d_uint16
 
 
 let d_pair_value_record valfmt1 valfmt2 d : (glyph_id * value_record * value_record) ok =
@@ -2076,60 +2155,6 @@ let d_pair_value_record valfmt1 valfmt2 d : (glyph_id * value_record * value_rec
 
 let d_pair_set valfmt1 valfmt2 d : ((glyph_id * value_record * value_record) list) ok =
   d_list (d_pair_value_record valfmt1 valfmt2) d
-
-
-let d_class_2_record valfmt1 valfmt2 d : (value_record * value_record) ok =
-  d_value_record valfmt1 d >>= fun valrcd1 ->
-  d_value_record valfmt2 d >>= fun valrcd2 ->
-  return (valrcd1, valrcd2)
-
-
-let numbering lst =
-  let rec aux acc i lst =
-    match lst with
-    | []           -> List.rev acc
-    | head :: tail -> aux ((i, head) :: acc) (i + 1) tail
-  in
-    aux [] 0 lst
-
-
-let d_class_1_record class2Count valfmt1 valfmt2 d : ((class_value * value_record * value_record) list) ok =
-  d_repeat class2Count (d_class_2_record valfmt1 valfmt2) d >>= fun pairlst ->
-  try return (numbering pairlst |> List.map (fun (x, (y, z)) -> (x, y, z))) with
-  | Invalid_argument(_) -> err `Inconsistent_length_of_class
-
-
-let d_class_definition_format_1 d : (class_definition list) ok =
-  let rec aux acc gidstt lst =
-    match lst with
-    | []          -> return (List.rev acc)
-    | cls :: tail -> aux (GlyphToClass(gidstt, cls) :: acc) (gidstt + 1) tail
-  in
-    d_uint16 d >>= fun startGlyph ->
-    d_list d_class d >>= fun classValueArray ->
-    aux [] startGlyph classValueArray
-
-
-let d_class_range_record d : class_definition ok =
-    d_uint16 d >>= fun start_gid ->
-    d_uint16 d >>= fun end_gid ->
-    d_class d >>= fun cls ->
-    return (GlyphRangeToClass(start_gid, end_gid, cls))
-
-
-let d_class_definition_format_2 d : (class_definition list) ok =
-  d_list d_class_range_record d >>= fun rangelst ->
-  return rangelst
-  
-
-let d_class_definition d : (class_definition list) ok =
-    (* -- the position is supposed to be set
-          to the  beginning of a ClassDef table [page 140] -- *)
-  d_uint16 d >>= fun classFormat ->
-  match classFormat with
-  | 1 -> d_class_definition_format_1 d
-  | 2 -> d_class_definition_format_2 d
-  | _ -> err_version d (Int32.of_int classFormat)
 
 
 let d_pair_adjustment_subtable d : gpos_subtable ok =
