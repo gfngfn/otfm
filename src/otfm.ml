@@ -1500,13 +1500,40 @@ let loca d gid =
 
 (* -- GSUB table -- *)
 
+type coverage = glyph_id list
+
+type lookup_index = int
+
+type class_value = int
+
+type class_def_element =
+  | GlyphToClass      of glyph_id * class_value
+  | GlyphRangeToClass of glyph_id * glyph_id * class_value
+
+type class_def = class_def_element list
+
+type subst_lookup_record = int * lookup_index
+
+type chain_sub_rule = glyph_id list * glyph_id list * glyph_id list * subst_lookup_record list
+
+type chain_sub_class_rule = class_value list * class_value list * class_value list * subst_lookup_record list
+
 type gsub_subtable =
-  | SingleSubtable    of (glyph_id * glyph_id) list
+  | SingleSubtable of (glyph_id * glyph_id) list
       (* -- LookupType 1: Single substitution subtable [page 251] -- *)
   | AlternateSubtable of (glyph_id * (glyph_id list)) list
       (* -- LookupType 3: Alternate substitution subtable [page 253] -- *)
-  | LigatureSubtable  of (glyph_id * (glyph_id list * glyph_id) list) list
+  | LigatureSubtable of (glyph_id * (glyph_id list * glyph_id) list) list
       (* -- LookupType 4: Ligature substitution subtable [page 254] -- *)
+  | ChainingContextualSubtable1 of (glyph_id * chain_sub_rule list) list
+      (* -- LookupType 6: Chaining contextual substitution subtable Format 1 [page 261] -- *)
+(*
+  | ChainingContextualSubtable2 of coverage * class_def * class_def * class_def * (chain_sub_class_rule list) list
+      (* -- LookupType 6: Chaining contextual substitution subtable Format 2 [page 264] -- *)
+*)
+  | ChainingContextualSubtable3 of coverage list * coverage list * coverage list * subst_lookup_record list
+      (* -- LookupType 6: Chaining contextual substitution subtable Format 3 [page 266] -- *)
+  | ExtensionSubst of gsub_subtable list
   (* temporary; should contain more lookup type *)
 
 (*
@@ -1541,7 +1568,7 @@ let d_range_record d =
   return (range [] start_gid end_gid)
 
 
-let d_coverage d : (glyph_id list) ok =
+let d_coverage d : coverage ok =
     (* -- the position is supposed to be set
           to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
@@ -1868,16 +1895,11 @@ let d_single_substitution_subtable d : ((glyph_id * glyph_id) list) ok =
   | _ -> err_version d (Int32.of_int substFormat)
 
 
-type lookup_index = int
-
-
 let d_subst_lookup_record d : (int * lookup_index) ok =
   d_uint16 d >>= fun sequenceIndex ->
   d_uint16 d >>= fun lookupListIndex ->
   return (sequenceIndex, lookupListIndex)
 
-
-type chain_sub_rule = glyph_id list * glyph_id list * glyph_id list * (int * lookup_index) list
 
 type value_format = ValueFormat of int
 
@@ -1929,13 +1951,6 @@ let d_value_record (ValueFormat(valfmt)) d : value_record ok =
   }
 
 
-type class_value = int
-
-type class_definition =
-  | GlyphToClass      of glyph_id * class_value
-  | GlyphRangeToClass of glyph_id * glyph_id * class_value
-
-
 let d_class = d_uint16
 
 
@@ -1960,7 +1975,7 @@ let d_class_1_record class2Count valfmt1 valfmt2 d : ((class_value * value_recor
   | Invalid_argument(_) -> err `Inconsistent_length_of_class
 
 
-let d_class_definition_format_1 d : (class_definition list) ok =
+let d_class_def_format_1 d : class_def ok =
   let rec aux acc gidstt lst =
     match lst with
     | []          -> return (List.rev acc)
@@ -1971,25 +1986,25 @@ let d_class_definition_format_1 d : (class_definition list) ok =
     aux [] startGlyph classValueArray
 
 
-let d_class_range_record d : class_definition ok =
+let d_class_range_record d : class_def_element ok =
     d_uint16 d >>= fun start_gid ->
     d_uint16 d >>= fun end_gid ->
     d_class d >>= fun cls ->
     return (GlyphRangeToClass(start_gid, end_gid, cls))
 
 
-let d_class_definition_format_2 d : (class_definition list) ok =
+let d_class_def_format_2 d : class_def ok =
   d_list d_class_range_record d >>= fun rangelst ->
   return rangelst
   
 
-let d_class_definition d : (class_definition list) ok =
+let d_class_def d : class_def ok =
     (* -- the position is supposed to be set
           to the  beginning of a ClassDef table [page 140] -- *)
   d_uint16 d >>= fun classFormat ->
   match classFormat with
-  | 1 -> d_class_definition_format_1 d
-  | 2 -> d_class_definition_format_2 d
+  | 1 -> d_class_def_format_1 d
+  | 2 -> d_class_def_format_2 d
   | _ -> err_version d (Int32.of_int classFormat)
 
 
@@ -2011,11 +2026,8 @@ let d_chain_sub_rule_set d : (chain_sub_rule list) ok =
 let d_chaining_contextual_substitution_subtable_format_1 offset_Substitution_table d =
   d_coverage d >>= fun coverage ->
   d_list (d_fetch offset_Substitution_table d_chain_sub_rule_set) d >>= fun chainSubRuleSet_list ->
-  combine_coverage d coverage chainSubRuleSet_list
-  >>= fun _ -> return ()  (* temporary *)
-
-
-type chain_sub_class_rule = class_value list * class_value list * class_value list * (int * lookup_index) list
+  combine_coverage d coverage chainSubRuleSet_list >>= fun assoc ->
+  return (ChainingContextualSubtable1(assoc))
 
 
 let d_chain_sub_class_rule d : chain_sub_class_rule ok  =
@@ -2031,21 +2043,26 @@ let d_chain_sub_class_set d : (chain_sub_class_rule list) ok =
   let offset_ChainSubClassSet_table = cur_pos d in
   d_list (d_fetch offset_ChainSubClassSet_table d_chain_sub_class_rule) d
 
-
-let d_chaining_contextual_substitution_subtable_format_2 offset_Substitution_table d =
+(*
+let d_chaining_contextual_substitution_subtable_format_2 offset_Substitution_table d
+    (* : (coverage * class_def * class_def * class_def * chain_sub_class_rule list list) ok *) =
   d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
-  d_fetch offset_Substitution_table d_class_definition d >>= fun backtrackClassDef ->
-  d_fetch offset_Substitution_table d_class_definition d >>= fun inputClassDef ->
-  d_fetch offset_Substitution_table d_class_definition d >>= fun lookAheadClassDef ->
-  d_list (d_fetch offset_Substitution_table d_chain_sub_class_set) d >>= fun chainSubClassSet_lst ->
-  return ()  (* temporary *)
+  d_fetch offset_Substitution_table d_class_def d >>= fun backtrackClassDef ->
+  d_fetch offset_Substitution_table d_class_def d >>= fun inputClassDef ->
+  d_fetch offset_Substitution_table d_class_def d >>= fun lookAheadClassDef ->
+  d_list (d_fetch offset_Substitution_table d_chain_sub_class_set) d >>= fun chainSubClassSet_list ->
+  return (ChainingContextualSubtable2(coverage, backtrackClassDef, inputClassDef, lookAheadClassDef, chainSubClassSet_list))
+*)
 
 let d_chaining_contextual_substitution_subtable_format_3 offset_Substitution_table d =
-  d_list d_coverage d >>= fun backtrack_coverage_list ->
-  return ()  (* temporary *)
+  d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun backtrack_coverage_list ->
+  d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun input_coverage_list ->
+  d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun lookAhead_coverage_list ->
+  d_list d_subst_lookup_record d >>= fun substLookupRecord_list ->
+  return (ChainingContextualSubtable3(backtrack_coverage_list, input_coverage_list, lookAhead_coverage_list, substLookupRecord_list))
 
 
-let d_chaining_contextual_substitution_subtable d =
+let d_chaining_contextual_substitution_subtable d : gsub_subtable ok =
     (* -- the position is supposed to be set
        to the beginning of Chaining Contextual SubstFormat(1|2|3) subtable [page 261-266] -- *)
   let offset_Substitution_table = cur_pos d in
@@ -2053,7 +2070,10 @@ let d_chaining_contextual_substitution_subtable d =
   Format.fprintf fmtGSUB "substFormat = %d\n" substFormat;  (* for debug *)
   match substFormat with
   | 1 -> d_chaining_contextual_substitution_subtable_format_1 offset_Substitution_table d
+(*
   | 2 -> d_chaining_contextual_substitution_subtable_format_2 offset_Substitution_table d
+*)
+  | 2 -> failwith "LookupType 6 Format 2; remains to be supported."
   | 3 -> d_chaining_contextual_substitution_subtable_format_3 offset_Substitution_table d
   | _ -> err_version d (Int32.of_int substFormat)
 
@@ -2096,8 +2116,8 @@ let lookup_gsub d : gsub_subtable ok =
 
   | 6 ->
       Format.fprintf fmtGSUB "LookupType 6\n";  (* for debug *)
-      d_list (d_fetch offset_Lookup_table d_chaining_contextual_substitution_subtable) d >>= fun _ ->
-      failwith "LookupType 6: chaining contextual substitution; remains to be supported."  (* temporary *)
+      d_list (d_fetch offset_Lookup_table d_chaining_contextual_substitution_subtable) d >>= fun subtablelst ->
+      return (ExtensionSubst(subtablelst))
 
   | 7 ->
       failwith "LookupType 7: extension; remains to be supported."  (* temporary *)
@@ -2115,9 +2135,15 @@ type 'a folding_alt = 'a -> glyph_id * glyph_id list -> 'a
 
 type 'a folding_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
 
+type 'a folding_chain1 = 'a -> glyph_id * chain_sub_rule list -> 'a
+(*
+type 'a folding_chain2 = 'a -> coverage * class_def * class_def * class_def * (chains_sub_class_rule list) list
+*)
+type 'a folding_chain3 = 'a -> coverage list * coverage list * coverage list * subst_lookup_record list -> 'a
 
-let rec fold_subtables_gsub (f_single : 'a folding_single) (f_alt : 'a folding_alt) (f_lig : 'a folding_lig) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
-  let iter = fold_subtables_gsub f_single f_alt f_lig in
+
+let rec fold_subtables_gsub (f_single : 'a folding_single) (f_alt : 'a folding_alt) (f_lig : 'a folding_lig) (f_chain1 : 'a folding_chain1) (f_chain3 : 'a folding_chain3) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
+  let iter = fold_subtables_gsub f_single f_alt f_lig f_chain1 f_chain3 in
     match subtablelst with
     | [] ->
         init
@@ -2134,16 +2160,28 @@ let rec fold_subtables_gsub (f_single : 'a folding_single) (f_alt : 'a folding_a
         let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
         iter initnew tail
 
+    | ExtensionSubst(subtablelstsub) :: tail ->
+        let initnew = iter init subtablelstsub in
+        iter initnew tail
 
-let gsub feature f_single f_alt f_lig init =
+    | ChainingContextualSubtable1(gid_chain_assoc) :: tail ->
+        let initnew = List.fold_left f_chain1 init gid_chain_assoc in
+        iter initnew tail
+
+    | ChainingContextualSubtable3(covB, covI, covL, lst) :: tail ->
+        let initnew = f_chain3 init (covB, covI, covL, lst) in
+        iter initnew tail
+
+
+let gsub feature f_single f_alt f_lig f_chain1 f_chain3 init =
   gxxx_subtable_list lookup_gsub feature >>= fun subtablelst ->
-  return (fold_subtables_gsub f_single f_alt f_lig init subtablelst)
+  return (fold_subtables_gsub f_single f_alt f_lig f_chain1 f_chain3 init subtablelst)
 
 
 type gpos_subtable =
   | PairPosAdjustment1 of (glyph_id * (glyph_id * value_record * value_record) list) list
-  | PairPosAdjustment2 of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
-  | ExtensionPos      of gpos_subtable list
+  | PairPosAdjustment2 of class_def * class_def * (class_value * (class_value * value_record * value_record) list) list
+  | ExtensionPos       of gpos_subtable list
   (* temporary; must contain more kinds of adjustment subtables *)
 
 
@@ -2175,8 +2213,8 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
       d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
-      d_fetch offset_PairPos d_class_definition d >>= fun classDef1 ->
-      d_fetch offset_PairPos d_class_definition d >>= fun classDef2 ->
+      d_fetch offset_PairPos d_class_def d >>= fun classDef1 ->
+      d_fetch offset_PairPos d_class_def d >>= fun classDef2 ->
       d_uint16 d >>= fun class1Count ->
       d_uint16 d >>= fun class2Count ->
       d_repeat class1Count (d_class_1_record class2Count valueFormat1 valueFormat2) d >>= fun pairposlst ->
@@ -2246,7 +2284,7 @@ let lookup_gpos d : gpos_subtable ok =
       return (ExtensionPos(subtablelst))  (* ad-hoc fix *)
 
 
-let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
+let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : class_def -> class_def -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
   let iter = fold_subtables_gpos f_pair1 f_pair2 in
     match subtablelst with
     | [] -> init

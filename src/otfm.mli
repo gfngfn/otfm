@@ -550,6 +550,22 @@ val loca : decoder -> glyph_id -> (glyf_loc option, error) result
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
 
+type coverage = glyph_id list
+
+type class_value = int
+
+type class_def_element =
+  | GlyphToClass      of glyph_id * class_value
+  | GlyphRangeToClass of glyph_id * glyph_id * class_value
+
+type class_def = class_def_element list
+
+type lookup_index = int
+
+type subst_lookup_record = int * lookup_index (* temporary *)
+
+type chain_sub_rule = glyph_id list * glyph_id list * glyph_id list * subst_lookup_record list  (* temporary *)
+
 type gsub_script
 (** The type for GSUB Script. *)
 
@@ -585,7 +601,13 @@ type 'a folding_alt = 'a -> glyph_id * glyph_id list -> 'a
 
 type 'a folding_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
 
-val gsub : gsub_feature -> 'a folding_single -> 'a folding_alt -> 'a folding_lig -> 'a -> ('a, error) result
+type 'a folding_chain1 = 'a -> glyph_id * chain_sub_rule list -> 'a
+(*
+type 'a folding_chain2 = 'a -> coverage * class_def * class_def * class_def * (chains_sub_class_rule list) list
+*)
+type 'a folding_chain3 = 'a -> coverage list * coverage list * coverage list * subst_lookup_record list -> 'a
+
+val gsub : gsub_feature -> 'a folding_single -> 'a folding_alt -> 'a folding_lig -> 'a folding_chain1 -> 'a folding_chain3 -> 'a -> ('a, error) result
 (** {b WARNING: subject to change in the future.}
     Supports only
     {{:https://www.microsoft.com/typography/otspec/gsub.htm#LS}LookupType 4: ligature substitution subtable}.
@@ -633,15 +655,9 @@ type value_record = {
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/gpos.htm#valueRecord}ValueRecord} tables. *)
 
-type class_value = int
-
-type class_definition =
-  | GlyphToClass      of glyph_id * class_value
-  | GlyphRangeToClass of glyph_id * glyph_id * class_value
-
 val gpos : gpos_feature ->
   ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) ->
-  (class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) ->
+  (class_def -> class_def -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) ->
   'a -> ('a, error) result
 
 type math_value_record = int * device_table option
