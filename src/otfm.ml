@@ -3267,16 +3267,14 @@ type parsed_charstring =
       (* -- vhcurveto (30) -- *)
   | HVCurveTo of (int * cspoint * int) list * int option
       (* -- hvcurveto (31) -- *)
-(*
-  | Flex of cspoint * cspoint * cspoint * cspoint * int
+  | Flex of cspoint * cspoint * cspoint * cspoint * cspoint * cspoint * int
       (* -- flex (12 35) -- *)
   | HFlex of int * cspoint * int * int * int * int
       (* -- hflex (12 34) -- *)
-  | HFlex1 of cspoint * cspoint * int * int * int * int
+  | HFlex1 of cspoint * cspoint * int * int * cspoint * int
       (* -- hflex1 (12 36) -- *)
   | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
       (* -- flex1 (12 37) -- *)
-*)
 
 
 let pp_cspoint fmt (x, y) = pp fmt "(%d %d)" x y
@@ -3315,6 +3313,10 @@ let pp_parsed_charstring fmt = function
   | HHCurveTo(dtopt, lst)   -> pp fmt "HHCurveTo(%a %a)" pp_int_option dtopt pp_partial_list lst
   | VHCurveTo(lst, dtopt)   -> pp fmt "VHCurveTo(%a %a)" pp_partial_list lst pp_int_option dtopt
   | HVCurveTo(lst, dtopt)   -> pp fmt "HVCurveTo(%a %a)" pp_partial_list lst pp_int_option dtopt
+  | Flex(p1, p2, p3, p4, p5, p6, fd)   -> pp fmt "Flex(%a, %a, %a, %a, %a, %a, %d)" pp_cspoint p1 pp_cspoint p2 pp_cspoint p3 pp_cspoint p4 pp_cspoint p5 pp_cspoint p6 fd
+  | HFlex(dx1, p2, dx3, dx4, dx5, dx6) -> pp fmt "HFlex(%d, %a, %d, %d, %d, %d)" dx1 pp_cspoint p2 dx3 dx4 dx5 dx6
+  | HFlex1(p1, p2, dx3, dx4, p5, dx6)  -> pp fmt "HFlex1(%a, %a, %d, %d, %a, %d)" pp_cspoint p1 pp_cspoint p2 dx3 dx4 pp_cspoint p5 dx6
+  | Flex1(p1, p2, p3, p4, p5, d6)      -> pp fmt "Flex1(%a, %a, %a, %a, %a, %d)" pp_cspoint p1 pp_cspoint p2 pp_cspoint p3 pp_cspoint p4 pp_cspoint p5 d6
 
 
 let access_subroutine idx i =
@@ -3538,9 +3540,64 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(ShortKey(i)) ->
         err `Invalid_charstring
 
-    | Operator(LongKey(i)) ->
-        failwith (Printf.sprintf "invalid or unsupported operator '12 %d'" i)
+    | Operator(LongKey(i))
+        when List.mem i [9; 10; 11; 12; 14; 18; 23; 24; 26; 27; 28; 29; 30] ->
+        failwith (Printf.sprintf "unsupported arithmetic operator '12 %d'" i)
 
+    | Operator(LongKey(34)) ->  (* -- hflex (12 34) -- *)
+        pop stk >>= fun dx6 ->
+        pop stk >>= fun dx5 ->
+        pop stk >>= fun dx4 ->
+        pop stk >>= fun dx3 ->
+        pop stk >>= fun dy2 ->
+        pop stk >>= fun dx2 ->
+        pop stk >>= fun dx1 ->
+        return_cleared [HFlex(dx1, (dx2, dy2), dx3, dx4, dx5, dx6)]
+
+    | Operator(LongKey(35)) ->  (* -- flex (12 35) -- *)
+        pop stk >>= fun fd ->
+        pop stk >>= fun dy6 ->
+        pop stk >>= fun dx6 ->
+        pop stk >>= fun dy5 ->
+        pop stk >>= fun dx5 ->
+        pop stk >>= fun dy4 ->
+        pop stk >>= fun dx4 ->
+        pop stk >>= fun dy3 ->
+        pop stk >>= fun dx3 ->
+        pop stk >>= fun dy2 ->
+        pop stk >>= fun dx2 ->
+        pop stk >>= fun dy1 ->
+        pop stk >>= fun dx1 ->
+        return_cleared [Flex((dx1, dy1), (dx2, dy2), (dx3, dy3), (dx4, dy4), (dx5, dy5), (dx6, dy6), fd)]
+
+    | Operator(LongKey(36)) ->  (* -- hflex1 (12 36) -- *)
+        pop stk >>= fun dx6 ->
+        pop stk >>= fun dy5 ->
+        pop stk >>= fun dx5 ->
+        pop stk >>= fun dx4 ->
+        pop stk >>= fun dx3 ->
+        pop stk >>= fun dy2 ->
+        pop stk >>= fun dx2 ->
+        pop stk >>= fun dy1 ->
+        pop stk >>= fun dx1 ->
+        return_cleared [HFlex1((dx1, dy1), (dx2, dy2), dx3, dx4, (dx5, dy5), dx6)]
+
+    | Operator(LongKey(37)) ->  (* -- flex1 (12 37) -- *)
+        pop stk >>= fun d6 ->
+        pop stk >>= fun dy5 ->
+        pop stk >>= fun dx5 ->
+        pop stk >>= fun dy4 ->
+        pop stk >>= fun dx4 ->
+        pop stk >>= fun dy3 ->
+        pop stk >>= fun dx3 ->
+        pop stk >>= fun dy2 ->
+        pop stk >>= fun dx2 ->
+        pop stk >>= fun dy1 ->
+        pop stk >>= fun dx1 ->
+        return_cleared [Flex1((dx1, dy1), (dx2, dy2), (dx3, dy3), (dx4, dy4), (dx5, dy5), d6)]
+
+    | Operator(LongKey(i)) ->
+        err `Invalid_charstring
 
 and parse_charstring (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
   cs |> List.fold_left (fun res cselem ->
@@ -3633,7 +3690,18 @@ let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
           
   in
   aux is_horizontal acc lst curv
+
         
+let flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 =
+  let abspt1 = curv +@ pt1 in
+  let abspt2 = abspt1 +@ pt2 in
+  let abspt3 = abspt2 +@ pt3 in
+  let abspt4 = abspt3 +@ pt4 in
+  let abspt5 = abspt4 +@ pt5 in
+  let abspt6 = abspt5 +@ pt6 in
+  let curvnew = abspt6 in
+    (curvnew, [BezierTo(abspt1, abspt2, abspt3); BezierTo(abspt4, abspt5, abspt6)])
+
 
 type path = cspoint * path_element list
   
@@ -3809,6 +3877,63 @@ let charstring_absolute csinfo gid =
                   let (curvnew, peaccnew) = curve_parity false peacc vhlstmain last lastopt curv in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
+
+        | Flex(pt1, pt2, pt3, pt4, pt5, pt6, _) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                  let (curvnew, pelstflex) = flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 in
+                  let peaccnew = List.rev_append pelstflex peacc in
+                  return (curvnew, Some((cspt, peaccnew), pathacc))
+            end
+
+        | HFlex(dx1, (dx2, dy2), dx3, dx4, dx5, dx6) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                  let (curvnew, pelstflex) = flex_path curv (dx1, 0) (dx2, dy2) (dx3, 0) (dx4, 0) (dx5, -dy2) (dx6, 0) in
+                  let peaccnew = List.rev_append pelstflex peacc in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | HFlex1((dx1, dy1), (dx2, dy2), dx3, dx4, (dx5, dy5), dx6) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc), pathacc)) ->
+                  let dy6 = - (dy1 + dy2 + dy5) in
+                  let (curvnew, pelstflex) = flex_path curv (dx1, dy1) (dx2, dy2) (dx3, 0) (dx4, 0) (dx5, dy5) (dx6, dy6) in
+                  let peaccnew = List.rev_append pelstflex peacc in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
+        | Flex1(pt1, pt2, pt3, pt4, pt5, d6) ->
+            begin
+              match accopt with
+              | None -> err `Invalid_charstring
+              | Some(((cspt, peacc)), pathacc) ->
+                  let (dxsum, dysum) = pt1 +@ pt2 +@ pt3 +@ pt4 +@ pt5 in
+                  let (xstart, ystart) = curv in
+                  let abspt1 = curv +@ pt1 in
+                  let abspt2 = abspt1 +@ pt2 in
+                  let abspt3 = abspt2 +@ pt3 in
+                  let abspt4 = abspt3 +@ pt4 in
+                  let abspt5 = abspt4 +@ pt5 in
+                  let (absx5, absy5) = abspt5 in
+                  let abspt6 =
+                    if abs dxsum > abs dysum then
+                      (absx5 + d6, ystart)
+                    else
+                      (xstart, absy5 + d6)
+                  in
+                  let curvnew = abspt6 in
+                  let pelstflex = [BezierTo(abspt1, abspt2, abspt3); BezierTo(abspt4, abspt5, abspt6)] in
+                  let peaccnew = List.rev_append pelstflex peacc in
+                  return (curvnew, Some(((cspt, peaccnew), pathacc)))
+            end
+
       ) (return ((0, 0), None))
     >>= function
     | (_, None)                           -> return (Some([]))
