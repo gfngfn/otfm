@@ -1502,7 +1502,7 @@ let loca d gid =
 
 type coverage = glyph_id list
 
-type lookup_index = int
+type lookup_index = int  (* temporary *)
 
 type class_value = int
 
@@ -1512,7 +1512,7 @@ type class_def_element =
 
 type class_def = class_def_element list
 
-type subst_lookup_record = int * lookup_index
+type subst_lookup_record = int * lookup_index  (* temporary *)
 
 type chain_sub_rule = glyph_id list * glyph_id list * glyph_id list * subst_lookup_record list
 
@@ -1671,6 +1671,13 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
 
 
 type gxxx_script = decoder * string * int * int * int
+  (* --
+     (1) decoder
+     (2) Script tag
+     (3) offset to Script table (main data)
+     (4) offset to FeatureList table
+     (5) offset to LookupList table
+     -- *)
 
 type gsub_script = gxxx_script
 
@@ -1721,6 +1728,13 @@ let gpos_script = gxxx_script Tag.gpos
 
 
 type gxxx_langsys = decoder * string * int * int * int
+  (* --
+     (1) decoder
+     (2) LangSys tag
+     (3) offset to LangSys table (main data)
+     (4) offset to FeatureList table
+     (5) offset to LookupList table
+     -- *)
 
 type gsub_langsys = gxxx_langsys
 
@@ -1757,6 +1771,12 @@ let gpos_langsys = gxxx_langsys
 
 
 type gxxx_feature = decoder * string * int * int
+  (* --
+     (1) decoder
+     (2) Feature tag
+     (3) offset to FeatureList table (main data)
+     (4) offset to LookupList table
+     -- *)
 
 type gsub_feature = gxxx_feature
 
@@ -1788,15 +1808,15 @@ let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature 
     )
   in
   let featurereq =
-        match requiredFeatureIndex with
-        | 0xFFFF -> return None
-        | _      ->
-            begin
-              seek_pos offset_FeatureList d >>= fun () ->
-              d_list_access (d_tag_offset_record offset_FeatureList) requiredFeatureIndex d >>= function
-              | None           -> err (`Invalid_feature_index(requiredFeatureIndex))
-              | Some(_) as opt -> return opt
-            end
+    match requiredFeatureIndex with
+    | 0xFFFF -> return None
+    | _      ->
+        begin
+          seek_pos offset_FeatureList d >>= fun () ->
+          d_list_access (d_tag_offset_record offset_FeatureList) requiredFeatureIndex d >>= function
+          | None           -> err (`Invalid_feature_index(requiredFeatureIndex))
+          | Some(_) as opt -> return opt
+        end
   in
   featurereq >>= function
   | None ->
@@ -1812,6 +1832,12 @@ let gsub_feature = gxxx_feature
 let gpos_feature = gxxx_feature
 
 
+let lookup_lookup_list offset_LookupList lookupListIndexList d : (int list) ok =
+  seek_pos offset_LookupList d >>= fun () ->
+    (* -- now the position is set to the beginning of the LookupList table -- *)
+  d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookupListIndexList) d
+
+
 let gxxx_subtable_list (type a) (lookup_gxxx : decoder -> a ok) (feature : gxxx_feature) : (a list) ok =
   let (d, featureTag, offset_Feature_table, offset_LookupList) = feature in
   Format.fprintf fmtGSUB "offset_Feature_table = %d\n" offset_Feature_table;  (* for debug *)
@@ -1822,9 +1848,7 @@ let gxxx_subtable_list (type a) (lookup_gxxx : decoder -> a ok) (feature : gxxx_
   confirm (featureParams = 0) (`Invalid_feature_params(featureParams)) >>= fun () ->
   d_list d_uint16 d >>= fun lookupListIndexList ->
   Format.fprintf fmtGSUB "offset_LookupList = %d\n" offset_LookupList;  (* for debug *)
-  seek_pos offset_LookupList d >>= fun () ->
-    (* -- now the position is set to the beginning of the LookupList table -- *)
-  d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookupListIndexList) d >>= fun offsetlst_Lookup_table ->
+  lookup_lookup_list offset_LookupList lookupListIndexList d >>= fun offsetlst_Lookup_table ->
   seek_every_pos offsetlst_Lookup_table lookup_gxxx d
 
 
@@ -2019,11 +2043,13 @@ let d_chain_sub_rule d : chain_sub_rule ok =
 
 
 let d_chain_sub_rule_set d : (chain_sub_rule list) ok =
+    (* -- ChainSubRuleSet table [page 263] -- *)
   let offset_ChainSubRuleSet_table = cur_pos d in
   d_list (d_fetch offset_ChainSubRuleSet_table d_chain_sub_rule) d
 
 
 let d_chaining_contextual_substitution_subtable_format_1 offset_Substitution_table d =
+    (* -- ChainContextSubstFormat1 subtable [page 262] -- *)
   d_coverage d >>= fun coverage ->
   d_list (d_fetch offset_Substitution_table d_chain_sub_rule_set) d >>= fun chainSubRuleSet_list ->
   combine_coverage d coverage chainSubRuleSet_list >>= fun assoc ->
@@ -2031,6 +2057,7 @@ let d_chaining_contextual_substitution_subtable_format_1 offset_Substitution_tab
 
 
 let d_chain_sub_class_rule d : chain_sub_class_rule ok  =
+    (* -- ChainSubClassRule table [page 265] -- *)
   d_list d_class d >>= fun backtrack ->
   d_uint16 d >>= fun inputGlyphCount ->
   d_repeat (inputGlyphCount - 1) d_class d >>= fun input ->
@@ -2040,6 +2067,7 @@ let d_chain_sub_class_rule d : chain_sub_class_rule ok  =
   
 
 let d_chain_sub_class_set d : (chain_sub_class_rule list) ok =
+    (* -- ChainSubClassSet subtable [page 265] -- *)
   let offset_ChainSubClassSet_table = cur_pos d in
   d_list (d_fetch offset_ChainSubClassSet_table d_chain_sub_class_rule) d
 
@@ -2055,6 +2083,7 @@ let d_chaining_contextual_substitution_subtable_format_2 offset_Substitution_tab
 *)
 
 let d_chaining_contextual_substitution_subtable_format_3 offset_Substitution_table d =
+    (* -- ChainContextSubstFormat3 subtable [page 266] -- *)
   d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun backtrack_coverage_list ->
   d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun input_coverage_list ->
   d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun lookAhead_coverage_list ->
