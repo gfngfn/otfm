@@ -851,16 +851,15 @@ type parsed_charstring =
       (* -- vhcurveto (30) -- *)
   | HVCurveTo of (int * cspoint * int) list * int option
       (* -- hvcurveto (31) -- *)
-(*
-  | Flex of cspoint * cspoint * cspoint * cspoint * int
+  | Flex of cspoint * cspoint * cspoint * cspoint * cspoint * cspoint * int
       (* -- flex (12 35) -- *)
   | HFlex of int * cspoint * int * int * int * int
       (* -- hflex (12 34) -- *)
-  | HFlex1 of cspoint * cspoint * int * int * int * int
+  | HFlex1 of cspoint * cspoint * int * int * cspoint * int
       (* -- hflex1 (12 36) -- *)
   | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
       (* -- flex1 (12 37) -- *)
-*)
+
 
 val pp_parsed_charstring : Format.formatter -> parsed_charstring -> unit
 (*
