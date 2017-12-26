@@ -1832,7 +1832,7 @@ let gsub_feature = gxxx_feature
 let gpos_feature = gxxx_feature
 
 
-let lookup_lookup_list offset_LookupList lookupListIndexList d : (int list) ok =
+let lookup_lookup_list offset_LookupList (lookupListIndexList : lookup_index list) d : (int list) ok =
   seek_pos offset_LookupList d >>= fun () ->
     (* -- now the position is set to the beginning of the LookupList table -- *)
   d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookupListIndexList) d
@@ -1920,6 +1920,7 @@ let d_single_substitution_subtable d : ((glyph_id * glyph_id) list) ok =
 
 
 let d_subst_lookup_record d : (int * lookup_index) ok =
+    (* -- SubstLookupRecord [page 255] -- *)
   d_uint16 d >>= fun sequenceIndex ->
   d_uint16 d >>= fun lookupListIndex ->
   return (sequenceIndex, lookupListIndex)
@@ -2049,7 +2050,7 @@ let d_chain_sub_rule_set d : (chain_sub_rule list) ok =
 
 
 let d_chaining_contextual_substitution_subtable_format_1 offset_Substitution_table d =
-    (* -- ChainContextSubstFormat1 subtable [page 262] -- *)
+    (* -- ChainContextSubstFormat1 subtable [page 262] without first entry -- *)
   d_coverage d >>= fun coverage ->
   d_list (d_fetch offset_Substitution_table d_chain_sub_rule_set) d >>= fun chainSubRuleSet_list ->
   combine_coverage d coverage chainSubRuleSet_list >>= fun assoc ->
@@ -2083,7 +2084,7 @@ let d_chaining_contextual_substitution_subtable_format_2 offset_Substitution_tab
 *)
 
 let d_chaining_contextual_substitution_subtable_format_3 offset_Substitution_table d =
-    (* -- ChainContextSubstFormat3 subtable [page 266] -- *)
+    (* -- ChainContextSubstFormat3 subtable [page 266] without first entry -- *)
   d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun backtrack_coverage_list ->
   d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun input_coverage_list ->
   d_list (d_fetch offset_Substitution_table d_coverage) d >>= fun lookAhead_coverage_list ->
