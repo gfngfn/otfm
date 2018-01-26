@@ -162,6 +162,8 @@ type error =
   | `Invalid_feature_index            of int
   | `Invalid_feature_params           of int
   | `Invalid_extension_position
+  | `Invalid_GSUB_lookup_type         of int
+  | `Invalid_GPOS_lookup_type         of int
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
@@ -236,6 +238,10 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ feature@ params@ (%d)@]" fp
 | `Invalid_extension_position ->
     pp ppf "@[Invalid@ extension@ position@]"
+| `Invalid_GSUB_lookup_type lty ->
+    pp ppf "@[Invalid@ GSUB@ LookupType@ (%d)@]" lty
+| `Invalid_GPOS_lookup_type lty ->
+    pp ppf "@[Invalid@ GPOS@ LookupType@ (%d)@]" lty
 | `Invalid_cff_not_a_quad ->
     pp ppf "@[Invalid@ CFF@ table;@ not@ a@ quad@]"
 | `Invalid_cff_not_an_integer ->
@@ -1507,6 +1513,7 @@ type gsub_subtable =
       (* -- LookupType 3: Alternate substitution subtable [page 253] -- *)
   | LigatureSubtable  of (glyph_id * (glyph_id list * glyph_id) list) list
       (* -- LookupType 4: Ligature substitution subtable [page 254] -- *)
+  | UnsupportedGSUBSubtable
   (* temporary; should contain more lookup type *)
 
 (*
@@ -1889,7 +1896,7 @@ let lookup_gsub d : gsub_subtable ok =
       return (SingleSubtable(List.concat gid_single_assoc_list))
 
   | 2 ->  (* -- multiple substitution -- *)
-      failwith "multiple substitution; remains to be supported."  (* temporary *)
+      return UnsupportedGSUBSubtable  (* temporary *)
 
   | 3 ->  (* -- alternate substitution -- *)
       Format.fprintf fmtGSUB "LookupType 3\n";
@@ -1901,8 +1908,20 @@ let lookup_gsub d : gsub_subtable ok =
       d_list (d_fetch offset_Lookup_table d_ligature_substitution_subtable) d >>= fun gidfst_ligset_assoc_list ->
       return (LigatureSubtable(List.concat gidfst_ligset_assoc_list))
 
+  | 5 ->  (* -- contextual substitution subtable -- *)
+      return UnsupportedGSUBSubtable  (* temporary *)
+
+  | 6 ->  (* -- chaining contextual substitution subtable -- *)
+      return UnsupportedGSUBSubtable  (* temporary *)
+
+  | 7 ->  (* -- extension substitution -- *)
+      return UnsupportedGSUBSubtable  (* temporary *)
+
+  | 8 ->  (* -- reverse chaining contextual single substitution subtable -- *)
+      return UnsupportedGSUBSubtable  (* temporary *)
+
   | _ ->
-      failwith "lookupType >= 5; remains to be supported (or font file broken)."  (* temporary *)
+      err (`Invalid_GSUB_lookup_type(lookupType))
 
 
 type 'a folding_single = 'a -> glyph_id * glyph_id -> 'a
@@ -1929,6 +1948,9 @@ let rec fold_subtables_gsub (f_single : 'a folding_single) (f_alt : 'a folding_a
     | LigatureSubtable(gidfst_ligset_assoc) :: tail ->
         let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
         iter initnew tail
+
+    | UnsupportedGSUBSubtable :: tail ->
+        iter init tail
 
 
 let gsub feature f_single f_alt f_lig init =
@@ -1994,7 +2016,8 @@ type class_definition =
 type gpos_subtable =
   | PairPosAdjustment1 of (glyph_id * (glyph_id * value_record * value_record) list) list
   | PairPosAdjustment2 of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
-  | ExtensionPos      of gpos_subtable list
+  | ExtensionPos       of gpos_subtable list
+  | UnsupportedGPOSSubtable
   (* temporary; must contain more kinds of adjustment subtables *)
 
 
@@ -2053,7 +2076,7 @@ let d_class_range_record d : class_definition ok =
 let d_class_definition_format_2 d : (class_definition list) ok =
   d_list d_class_range_record d >>= fun rangelst ->
   return rangelst
-  
+
 
 let d_class_definition d : (class_definition list) ok =
     (* -- the position is supposed to be set
@@ -2096,29 +2119,52 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
   | _ -> err_version d (Int32.of_int posFormat)
 
 
-let lookup_gpos_exact offsetlst_SubTable lookupType d : (gpos_subtable list) ok =
+let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
   match lookupType with
   | 1 ->  (* -- Single adjustment -- *)
+      return UnsupportedGPOSSubtable
+(*
       failwith "Single adjustment; remains to be supported."  (* temporary *)
+*)
 
   | 2 ->  (* -- Pair adjustment -- *)
       Format.fprintf fmtGSUB "number of subtables = %d\n" (List.length offsetlst_SubTable);  (* for debug *)
-      seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d
+      seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d >>= fun subtablelst ->
+      return (ExtensionPos(subtablelst))
 
   | 3 ->  (* -- Cursive attachment -- *)
+      return UnsupportedGPOSSubtable
+(*
       failwith "Cursive attachment; remains to be supported."  (* temporary *)
+*)
 
   | 4 ->  (* -- MarkToBase attachment -- *)
+      return UnsupportedGPOSSubtable
+(*
       failwith "MarkToBase attachment; remains to be supported."  (* temporary *)
+*)
+  | 5 ->
+      return UnsupportedGPOSSubtable
+
+  | 6 ->
+      return UnsupportedGPOSSubtable
+
+  | 7 ->
+      return UnsupportedGPOSSubtable
+
+  | 8 ->
+      return UnsupportedGPOSSubtable
 
   | 9 ->  (* -- Extension positioning [page 213] -- *)
       err `Invalid_extension_position
 
   | _ ->
+      err (`Invalid_GPOS_lookup_type(lookupType))
+(*
       failwith "lookupType other; remains to be supported (or font file broken)."  (* temporary *)
+*)
 
-
-let d_extension_position d =
+let d_extension_position d : gpos_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of ExtensionPosFormat1 subtable [page 213] -- *)
   let offset_ExtensionPos = cur_pos d in
@@ -2147,17 +2193,18 @@ let lookup_gpos d : gpos_subtable ok =
   d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
   match lookupType with
   | 9 ->
-      seek_every_pos offsetlst_SubTable d_extension_position d >>= fun subtablelstlst ->
-      return (ExtensionPos(List.concat subtablelstlst))
+      seek_every_pos offsetlst_SubTable d_extension_position d >>= fun subtablelst ->
+      return (ExtensionPos(subtablelst))
+
   | _ ->
-      lookup_gpos_exact offsetlst_SubTable lookupType d >>= fun subtablelst ->
-      return (ExtensionPos(subtablelst))  (* ad-hoc fix *)
+      lookup_gpos_exact offsetlst_SubTable lookupType d
 
 
 let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
   let iter = fold_subtables_gpos f_pair1 f_pair2 in
     match subtablelst with
-    | [] -> init
+    | [] ->
+        init
 
     | PairPosAdjustment1(gidfst_pairposlst_assoc) :: tail ->
         let initnew = List.fold_left f_pair1 init gidfst_pairposlst_assoc in
@@ -2170,6 +2217,9 @@ let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record
     | ExtensionPos(subtablelstsub) :: tail ->
         let initnew = iter init subtablelstsub in
           iter initnew tail
+
+    | UnsupportedGPOSSubtable :: tail ->
+        iter init tail
 
 
 let gpos feature f_pair1 f_pair2 init =
@@ -3173,7 +3223,7 @@ let pop_pair_opt (stk : int Stack.t) : (int * int) option =
     let y = Stack.pop stk in
     let x = Stack.pop stk in
       Some((x, y))
-  
+
 
 let pop_4_opt (stk : int Stack.t) : (int * int * int * int) option =
   if Stack.length stk < 4 then None else
@@ -3206,7 +3256,7 @@ let pop_8_opt (stk : int Stack.t) : (int * int * int * int * int * int * int * i
     let d2 = Stack.pop stk in
     let d1 = Stack.pop stk in
       Some((d1, d2, d3, d4, d5, d6, d7, d8))
-  
+
 
 let pop_iter (type a) (popf : int Stack.t -> a option) (stk : int Stack.t) : (a list) =
   let rec aux acc =
@@ -3455,7 +3505,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
           | []                 -> err `Invalid_charstring
           | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); HintMask(arg)]
         end
-          
+
 
     | CntrMaskOperator(arg) ->
         return_with_width [CntrMask(arg)]
@@ -3687,11 +3737,11 @@ let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
           let vB = vA +@ dvB in
           let vC = vB +@- dsC in
             aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
-          
+
   in
   aux is_horizontal acc lst curv
 
-        
+
 let flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 =
   let abspt1 = curv +@ pt1 in
   let abspt2 = abspt1 +@ pt2 in
@@ -3704,7 +3754,7 @@ let flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 =
 
 
 type path = cspoint * path_element list
-  
+
 
 let charstring_absolute csinfo gid =
   charstring csinfo gid >>= function
@@ -3966,7 +4016,7 @@ let bezier_bbox (x0, y0) (x1, y1) (x2, y2) (x3, y3) =
         let c3 = ~$ (-r0 + 3 * (r1 - r2) + r3) in
           int_of_float @@ (~$ r0) +. t *. (c1 +. t *. (c2 +. t *. c3))
   in
-  
+
   let aux r0 r1 r2 r3 =
     let a = -r0 + 3 * (r1 - r2) + r3 in
     let b = 2 * (r0 - 2 * r1 + r2) in
@@ -4009,4 +4059,3 @@ let charstring_bbox (pathlst : path list) =
   match bbox with
   | BBoxInital                   -> None  (* needs reconsideration *)
   | BBox(xmin, xmax, ymin, ymax) -> (Some((xmin, xmax, ymin, ymax)))
-        

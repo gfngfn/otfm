@@ -209,6 +209,8 @@ type error =
   | `Invalid_feature_index            of int
   | `Invalid_feature_params           of int
   | `Invalid_extension_position
+  | `Invalid_GSUB_lookup_type         of int
+  | `Invalid_GPOS_lookup_type         of int
   | `Invalid_cff_not_a_quad
   | `Invalid_cff_not_an_integer
   | `Invalid_cff_not_an_element
