@@ -2660,7 +2660,8 @@ type string_index = string array
 type stem_argument = string  (* temporary *)
 
 type charstring_element =
-  | Argument         of int
+  | ArgumentInteger  of int
+  | ArgumentReal     of float
   | Operator         of cff_key
   | HintMaskOperator of stem_argument
   | CntrMaskOperator of stem_argument
@@ -2842,6 +2843,34 @@ let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d :
     return (Some(data))
 
 
+let d_twoscompl2 d =
+  d_uint8 d >>= fun b1 ->
+  d_uint8 d >>= fun b2 ->
+  let iraw = (b1 lsl 8) lor b2 in
+  let ret =
+    if iraw >= (1 lsl 15) then
+      iraw - (1 lsl 16)
+    else
+      iraw
+  in
+  return ret
+
+
+let d_twoscompl4 d =
+  d_uint8 d >>= fun b1 ->
+  d_uint8 d >>= fun b2 ->
+  d_uint8 d >>= fun b3 ->
+  d_uint8 d >>= fun b4 ->
+  let iraw = (b1 lsl 24) lor (b2 lsl 16) lor (b3 lsl 8) lor b4 in
+  let ret =
+    if iraw >= (1 lsl 31) then
+      iraw - (1 lsl 32)
+    else
+      iraw
+  in
+  return ret
+
+
 let d_dict_element d : (int * dict_element) ok =
   d_uint8 d >>= function
     | k0  when k0 |> is_in_range 0 11 ->
@@ -2855,16 +2884,12 @@ let d_dict_element d : (int * dict_element) ok =
         return (1, Key(ShortKey(k0)))
 
     | 28 ->
-        d_uint8 d >>= fun b1 ->
-        d_uint8 d >>= fun b2 ->
-        return (3, Value(Integer((b1 lsl 8) lor b2)))
+        d_twoscompl2 d >>= fun ret ->
+        return (3, Value(Integer(ret)))
 
     | 29 ->
-        d_uint8 d >>= fun b1 ->
-        d_uint8 d >>= fun b2 ->
-        d_uint8 d >>= fun b3 ->
-        d_uint8 d >>= fun b4 ->
-        return (5, Value(Integer((b1 lsl 24) lor (b2 lsl 16) lor (b3 lsl 8) lor b4)))
+        d_twoscompl4 d >>= fun ret ->
+        return (5, Value(Integer(ret)))
 
     | 30 ->
         d_cff_real d >>= fun (step, real) ->
@@ -2915,13 +2940,14 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
 
 
 let pp_charstring_element fmt = function
-  | Argument(i)           -> Format.fprintf fmt "  Argument(%d)" i
+  | ArgumentInteger(i)     -> Format.fprintf fmt "  ArgumentInteger(%d)" i
+  | ArgumentReal(r)        -> Format.fprintf fmt "  ArgumentReal(%f)" r
   | Operator(ShortKey(10)) -> Format.fprintf fmt "CallSubr"
   | Operator(ShortKey(29)) -> Format.fprintf fmt "CallGSubr"
-  | Operator(ShortKey(i)) -> Format.fprintf fmt "Operator(%d)" i
-  | Operator(LongKey(i))  -> Format.fprintf fmt "Operator(12 %d)" i
-  | HintMaskOperator(arg) -> Format.fprintf fmt "HintMaskOperator(...)"
-  | CntrMaskOperator(arg) -> Format.fprintf fmt "CntrMaskOperator(...)"
+  | Operator(ShortKey(i))  -> Format.fprintf fmt "Operator(%d)" i
+  | Operator(LongKey(i))   -> Format.fprintf fmt "Operator(12 %d)" i
+  | HintMaskOperator(arg)  -> Format.fprintf fmt "HintMaskOperator(...)"
+  | CntrMaskOperator(arg)  -> Format.fprintf fmt "CntrMaskOperator(...)"
 
 
 let d_stem_argument numstem d : (int * stem_argument) ok =
@@ -2978,26 +3004,28 @@ let d_charstring_element numarg numstem d =
       return_operator (1, Operator(ShortKey(b0)))
 
   | 28 ->
-      d_int16 d >>= fun i ->
-      return_argument (3, Argument(i))
+      d_twoscompl2 d >>= fun ret ->
+      return_argument (3, ArgumentInteger(ret))
 
   | b0  when b0 |> is_in_range 29 31 ->
       return_operator (1, Operator(ShortKey(b0)))
 
   | b0  when b0 |> is_in_range 32 246 ->
-      return_argument (1, Argument(b0 - 139))
+      return_argument (1, ArgumentInteger(b0 - 139))
 
   | b0  when b0 |> is_in_range 247 250 ->
       d_uint8 d >>= fun b1 ->
-      return_argument (2, Argument((b0 - 247) * 256 + b1 + 108))
+      return_argument (2, ArgumentInteger((b0 - 247) * 256 + b1 + 108))
 
   | b0  when b0 |> is_in_range 251 254 ->
       d_uint8 d >>= fun b1 ->
-      return_argument (2, Argument(- (b0 - 251) * 256 - b1 - 108))
+      return_argument (2, ArgumentInteger(- (b0 - 251) * 256 - b1 - 108))
 
   | 255 ->
-      d_int32 d >>= fun i ->
-      return_argument (5, Argument(?@ i))
+      d_twoscompl2 d >>= fun ret1 ->
+      d_twoscompl2 d >>= fun ret2 ->
+      let ret = float_of_int ret1 +. (float_of_int ret2) /. (float_of_int (1 lsl 16)) in
+      return_argument (5, ArgumentReal(ret))
 
   | _ ->
       assert false
@@ -3065,6 +3093,7 @@ let get_string stridx sid =
 let get_integer_opt dictmap key dflt =
     match DictMap.find_opt key dictmap with
     | Some(Integer(i) :: []) -> return i
+    | Some(Real(fl) :: [])   -> return (int_of_float fl)  (* -- rounds a float value -- *)
     | Some(_)                -> err `Invalid_cff_not_an_integer
     | None                   -> return dflt
 
@@ -3072,6 +3101,7 @@ let get_integer_opt dictmap key dflt =
 let get_integer dictmap key =
   match DictMap.find_opt key dictmap with
   | Some(Integer(i) :: []) -> return i
+  | Some(Real(fl) :: [])   -> return (int_of_float fl)  (* -- rounds a float value -- *)
   | Some(_)                -> err `Invalid_cff_not_an_integer
   | None                   -> err_dict_key key
 
@@ -3079,6 +3109,9 @@ let get_integer dictmap key =
 let get_integer_pair_opt dictmap key =
   match DictMap.find_opt key dictmap with
   | Some(Integer(i1) :: Integer(i2) :: []) -> return (Some(i1, i2))
+  | Some(Integer(i1) :: Real(fl2) :: [])   -> return (Some(i1, int_of_float fl2))
+  | Some(Real(fl1) :: Integer(i2) :: [])   -> return (Some(int_of_float fl1, i2))
+  | Some(Real(fl1) :: Real(fl2) :: [])     -> return (Some(int_of_float fl1, int_of_float fl2))
   | Some(_)                                -> err `Invalid_cff_not_an_integer
   | None                                   -> return None
 
@@ -3400,8 +3433,11 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
   in
 
     match cselem with
-    | Argument(i) ->
+    | ArgumentInteger(i) ->
         stk |> Stack.push i; return_cleared []
+
+    | ArgumentReal(r) ->
+        stk |> Stack.push (int_of_float r); return_cleared []
 
     | Operator(ShortKey(1)) ->  (* -- hstem (1) -- *)
         let pairlst = pop_iter pop_pair_opt stk in
