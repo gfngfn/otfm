@@ -36,7 +36,7 @@ let charstring topdict gid =
         match Otfm.charstring_bbox pcs with
         | None       -> Error(`Msg "no bounding box")
         | Some(bbox) -> Ok((bbox, pcs))
-    
+
 
 type point_kind = OL | OM | OA | OB | OC
 
@@ -92,8 +92,8 @@ let main fmt =
     | Ok(v)    -> f v
     | Error(e) -> Error(e :> error)
   in
-  let (filename, gid) =
-    try (Sys.argv.(1), int_of_string Sys.argv.(2)) with
+  let (filename, gid, outname) =
+    try (Sys.argv.(1), int_of_string Sys.argv.(2), Sys.argv.(3)) with
     | Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end
   in
   let src =
@@ -117,7 +117,7 @@ let main fmt =
 
         charstring cffinfo gid >>= fun (bbox, pcs) ->
 
-        let fout = open_out "test.svg" in
+        let fout = open_out outname in
         Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
         Printf.fprintf fout "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">";
         Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"1000\" height=\"1000\" viewBox=\"0 300 1000 1000\">";

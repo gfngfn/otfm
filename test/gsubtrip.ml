@@ -63,26 +63,24 @@ let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
 let f_pair2 _ _ lst _ = lst
 
 
-let type3tag = "aalt"
-
-let type4tag = "liga"
-
-
-let decode_gsub d =
+let decode_gsub scripttag type3tag type4tag d =
   Otfm.gsub_script d >>= fun scriptlst ->
-  pickup scriptlst (fun gs -> Otfm.gsub_script_tag gs = "latn")
-    (`Msg("GSUB does not contain Script tag 'latn'")) >>= fun script_latn ->
-  Otfm.gsub_langsys script_latn >>= fun (langsys_DFLT, _) ->
+  Format.printf "@[<v2>  all GSUB Script tags:@ @[[";
+  scriptlst |> List.iter (fun gs -> Format.printf "%s,@ " (Otfm.gsub_script_tag gs));
+  Format.printf "]@]@,";
+  pickup scriptlst (fun gs -> Otfm.gsub_script_tag gs = scripttag)
+    (`Msg(str "GSUB does not contain Script tag '%s'" scripttag)) >>= fun script ->
+  Otfm.gsub_langsys script >>= fun (langsys_DFLT, _) ->
   Otfm.gsub_feature langsys_DFLT >>= fun (_, featurelst) ->
-  Format.printf "all GSUB Feature tags: [";
-  featurelst |> List.iter (fun gf -> Format.printf "%s, " (Otfm.gsub_feature_tag gf));
-  print_endline "]";
+  Format.printf "all GSUB Feature tags for '%s', 'DFLT':@ @[[" scripttag;
+  featurelst |> List.iter (fun gf -> Format.printf "%s,@ " (Otfm.gsub_feature_tag gf));
+  Format.printf "]@]@,@]";
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type4tag)
-    (`Msg(str "GSUB does not contain Feature tag '%s' for 'latn', 'DFLT'" type4tag)) >>= fun feature_type4 ->
+    (`Msg(str "GSUB does not contain Feature tag '%s' for '%s', 'DFLT'" type4tag scripttag)) >>= fun feature_type4 ->
   Otfm.gsub feature_type4 skip skip f_lig [] >>= fun type4ret ->
   Format.printf "finish '%s'\n" type4tag;
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type3tag)
-    (`Msg(str "GSUB does not contain Feature tag '%s' for 'latn', 'DFLT'" type3tag)) >>= fun feature_type3 ->
+    (`Msg(str "GSUB does not contain Feature tag '%s' for '%s', 'DFLT'" type3tag scripttag)) >>= fun feature_type3 ->
   Format.printf "middle of '%s'\n" type3tag;
   Otfm.gsub feature_type3 f_single f_alt skip [] >>= fun type3ret ->
   Format.printf "finish '%s'\n" type3tag;
@@ -101,11 +99,7 @@ let decode_gpos d =
   return gposres
 
 
-let main () =
-  let filename =
-    try Sys.argv.(1) with
-    | Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end
-  in
+let main filename script type3tag type4tag =
   let src =
     match string_of_file filename with
     | Ok(src)       -> src
@@ -115,7 +109,7 @@ let main () =
   | Otfm.SingleDecoder(d) ->
       begin
         print_endline "finish initializing decoder";
-        decode_gsub d >>= fun (type3ret, type4ret) ->
+        decode_gsub script type3tag type4tag d >>= fun (type3ret, type4ret) ->
         decode_gpos d >>= fun gposret ->
         print_endline "finish decoding";
         return (type3ret, type4ret, gposret)
@@ -127,7 +121,11 @@ let main () =
 
 
 let () =
-  match main () with
+  let (filename, script, type3tag, type4tag) =
+    try (Sys.argv.(1), Sys.argv.(2), Sys.argv.(3), Sys.argv.(4)) with
+    | Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end
+  in
+  match main filename script type3tag type4tag with
   | Error(#Otfm.error as e) ->
       Format.printf "error1\n";
       Format.printf "@[%a@]@.\n" Otfm.pp_error e
