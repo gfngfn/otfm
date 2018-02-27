@@ -12,10 +12,32 @@ let debugfmt =
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
-let fmtCFF  = debugfmt
+let fmtCFF  = (* debugfmt *) Format.std_formatter
 
 
-open Result
+module Alist : sig
+  type 'a t
+  val empty : 'a t
+  val extend : 'a t -> 'a -> 'a t
+  val append : 'a t -> 'a list -> 'a t
+  val to_list : 'a t -> 'a list
+end = struct
+
+  type 'a t = 'a list
+
+  let empty = []
+
+  let extend acc x =
+    x :: acc
+
+  let append acc lst =
+    List.rev_append lst acc
+
+  let to_list acc =
+    List.rev acc
+
+end
+
 
 (* Error strings *)
 
@@ -462,11 +484,11 @@ let confirm_version d version versionreq =
 
 let d_repeat n df d =
   let rec aux acc i =
-    if i <= 0 then return (List.rev acc) else
+    if i <= 0 then return (Alist.to_list acc) else
     df d >>= fun data ->
-    aux (data :: acc) (i - 1)
+    aux (Alist.extend acc data) (i - 1)
   in
-  aux [] n
+  aux Alist.empty n
 
 
 let d_list df d =
@@ -477,16 +499,16 @@ let d_list df d =
 
 let d_list_filtered df predicate d =
   let rec aux acc imax i =
-    if i >= imax then return (List.rev acc) else
+    if i >= imax then return (Alist.to_list acc) else
     df d >>= fun data ->
     if predicate i then
-      aux (data :: acc) imax (i + 1)
+      aux (Alist.extend acc data) imax (i + 1)
     else
       aux acc imax (i + 1)
   in
     d_uint16 d >>= fun count ->
     Format.fprintf fmtgen "(d_list_filtered) count = %d\n" count;
-    aux [] count 0
+    aux Alist.empty count 0
 
 
 let d_list_access df ireq d =
@@ -1539,13 +1561,13 @@ let seek_pos_from_list origin scriptTag d =
 
 let d_range_record d =
   let rec range acc i j =
-    if i > j then List.rev acc else
-      range (i :: acc) (i + 1) j
+    if i > j then Alist.to_list acc else
+      range (Alist.extend acc i) (i + 1) j
   in
   d_uint16 d >>= fun start_gid ->
   d_uint16 d >>= fun end_gid ->
   d_uint16 d >>= fun _ -> (* -- startCoverageIndex; can be ignored -- *)
-  return (range [] start_gid end_gid)
+  return (range Alist.empty start_gid end_gid)
 
 
 let d_coverage d : (glyph_id list) ok =
@@ -1627,14 +1649,14 @@ let d_fetch_list offset_origin df d =
 let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
   let rec aux acc offsetlst =
   match offsetlst with
-  | []             -> return (List.rev acc)
+  | []             -> return (Alist.to_list acc)
   | offset :: tail ->
 (*      let () = Format.fprintf fmtgen ("| offset = " ^ (string_of_int offset)) in  (* for debug *) *)
       seek_pos offset d >>= fun () ->
       df d >>= fun data ->
-      aux (data :: acc) tail
+      aux (Alist.extend acc data) tail
   in
-    aux [] offsetlst
+    aux Alist.empty offsetlst
 
 
 let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> a ok) d : ((glyph_id * a) list) ok =
@@ -2043,10 +2065,10 @@ let d_class_2_record valfmt1 valfmt2 d : (value_record * value_record) ok =
 let numbering lst =
   let rec aux acc i lst =
     match lst with
-    | []           -> List.rev acc
-    | head :: tail -> aux ((i, head) :: acc) (i + 1) tail
+    | []           -> Alist.to_list acc
+    | head :: tail -> aux (Alist.extend acc (i, head)) (i + 1) tail
   in
-    aux [] 0 lst
+    aux Alist.empty 0 lst
 
 
 let d_class_1_record class2Count valfmt1 valfmt2 d : ((class_value * value_record * value_record) list) ok =
@@ -2058,12 +2080,12 @@ let d_class_1_record class2Count valfmt1 valfmt2 d : ((class_value * value_recor
 let d_class_definition_format_1 d : (class_definition list) ok =
   let rec aux acc gidstt lst =
     match lst with
-    | []          -> return (List.rev acc)
-    | cls :: tail -> aux (GlyphToClass(gidstt, cls) :: acc) (gidstt + 1) tail
+    | []          -> return (Alist.to_list acc)
+    | cls :: tail -> aux (Alist.extend acc (GlyphToClass(gidstt, cls))) (gidstt + 1) tail
   in
     d_uint16 d >>= fun startGlyph ->
     d_list d_class d >>= fun classValueArray ->
-    aux [] startGlyph classValueArray
+    aux Alist.empty startGlyph classValueArray
 
 
 let d_class_range_record d : class_definition ok =
@@ -2750,14 +2772,14 @@ let d_index_singleton dl d =
 let d_cff_length_list ofsz count d =
   let rec aux offsetprev acc i =
     if i >= count then
-      return (List.rev acc)
+      return (Alist.to_list acc)
     else
       d_cff_offset ofsz d >>= fun offset ->
-      aux offset ((offset -@ offsetprev) :: acc) (i + 1)
+      aux offset (Alist.extend acc (offset -@ offsetprev)) (i + 1)
   in
   d_cff_offset ofsz d                                        >>= fun offset1 ->
   confirm (offset1 = ~@ 1) `Invalid_cff_invalid_first_offset >>= fun () ->
-  aux (~@ 1) [] 0
+  aux (~@ 1) Alist.empty 0
 
 
 let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) : (a array) ok =
@@ -2802,19 +2824,19 @@ let d_cff_real d =
     let q2 = raw mod 16 in
     if q1 = 15 then
       if q2 = 15 then
-        return (step + 1, to_float (List.rev acc))
+        return (step + 1, to_float (Alist.to_list acc))
       else
         err `Invalid_cff_not_an_element
     else
       if q2 = 15 then
         nibble q1 >>= fun nb1 ->
-        return (step + 1, to_float (List.rev (nb1 :: acc)))
+        return (step + 1, to_float (Alist.to_list (Alist.extend acc nb1)))
       else
         nibble q2 >>= fun nb2 ->
         nibble q1 >>= fun nb1 ->
-        aux (step + 1) (nb2 :: nb1 :: acc)
+        aux (step + 1) (Alist.extend (Alist.extend acc nb1) nb2)
   in
-  aux 0 []
+  aux 0 Alist.empty
 
 
 let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
@@ -2922,10 +2944,10 @@ let d_dict_keyval d : (int * cff_value list * cff_key) ok =
     d_dict_element d >>= fun (step, elem) ->
       Format.fprintf fmtCFF "dict element: %d, %a\n" step pp_element elem;  (* for debug *)
       match elem with
-      | Value(v) -> aux (stepsum + step) (v :: vacc)
-      | Key(k)   -> return (stepsum + step, List.rev vacc, k)
+      | Value(v) -> aux (stepsum + step) (Alist.extend vacc v)
+      | Key(k)   -> return (stepsum + step, Alist.to_list vacc, k)
   in
-    aux 0 []
+    aux 0 Alist.empty
 
 
 let d_dict len d : ((cff_value list) DictMap.t) ok =
@@ -2939,15 +2961,21 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
   loop_keyval DictMap.empty len d
 
 
+let pp_short_key fmt = function
+  | 10 -> Format.fprintf fmt "CALLSUBR"
+  | 29 -> Format.fprintf fmt "CALLGSUBR"
+  | 11 -> Format.fprintf fmt "return"
+  | 14 -> Format.fprintf fmt "endchar"
+  | i  -> Format.fprintf fmt "OP(%d)" i
+
+
 let pp_charstring_element fmt = function
-  | ArgumentInteger(i)     -> Format.fprintf fmt "  ArgumentInteger(%d)" i
-  | ArgumentReal(r)        -> Format.fprintf fmt "  ArgumentReal(%f)" r
-  | Operator(ShortKey(10)) -> Format.fprintf fmt "CallSubr"
-  | Operator(ShortKey(29)) -> Format.fprintf fmt "CallGSubr"
-  | Operator(ShortKey(i))  -> Format.fprintf fmt "Operator(%d)" i
-  | Operator(LongKey(i))   -> Format.fprintf fmt "Operator(12 %d)" i
-  | HintMaskOperator(arg)  -> Format.fprintf fmt "HintMaskOperator(...)"
-  | CntrMaskOperator(arg)  -> Format.fprintf fmt "CntrMaskOperator(...)"
+  | ArgumentInteger(i)     -> Format.fprintf fmt "%d " i
+  | ArgumentReal(r)        -> Format.fprintf fmt "%f " r
+  | Operator(ShortKey(i))  -> Format.fprintf fmt "%a\n" pp_short_key i
+  | Operator(LongKey(i))   -> Format.fprintf fmt "OP(12 %d)\n" i
+  | HintMaskOperator(arg)  -> Format.fprintf fmt "HINTMASK(...)\n"
+  | CntrMaskOperator(arg)  -> Format.fprintf fmt "CNTRMASK(...)\n"
 
 
 let d_stem_argument numstem d : (int * stem_argument) ok =
@@ -2963,12 +2991,15 @@ let d_stem_argument numstem d : (int * stem_argument) ok =
 
 let d_charstring_element numarg numstem d =
   let return_argument (step, cselem) =
+    Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     return (step, numarg + 1, numstem, cselem)
   in
   let return_operator (step, cselem) =
+    Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     return (step, 0, numstem, cselem)
   in
-  let return_stem   (step, cselem) =
+  let return_stem (step, cselem) =
+    Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "step = %d, numarg = %d\n" step numarg;  (* for debug *)
     return (step, 0, numstem + numarg / 2, cselem)
   in
@@ -2989,10 +3020,12 @@ let d_charstring_element numarg numstem d =
 
   | 19 ->
       Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
+(*
       if numarg = 0 then
         d_stem_argument numstem d >>= fun (step, bits) ->
         return_operator (1 + step, HintMaskOperator(bits))
       else
+*)
         d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
         return_stem (1 + step, HintMaskOperator(bits))
 
@@ -3032,14 +3065,14 @@ let d_charstring_element numarg numstem d =
         (* -- uint8 value must be in [0 .. 255] -- *)
 
 
-let d_charstring len32 d : (charstring_element list) ok =
+let d_charstring (len32 : int32) d : (charstring_element list) ok =
   let rec aux numarg numstem len acc d =
-    if len = 0 then return (List.rev acc) else
+    if len = 0 then return (Alist.to_list acc) else
     if len < 0 then err `Invalid_charstring else
     d_charstring_element numarg numstem d >>= fun (step, numargnew, numstemnew, cselem) ->
-    aux numargnew numstemnew (len - step) (cselem :: acc) d
+    aux numargnew numstemnew (len - step) (Alist.extend acc cselem) d
   in
-  aux 0 0 (?@ len32) [] d
+  aux 0 0 (?@ len32) Alist.empty d
 
 
 let cff_first d : cff_first ok =
@@ -3415,7 +3448,7 @@ let access_subroutine idx i =
       err `Invalid_charstring
 
 
-let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
+let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) : ((int option) option * parsed_charstring list) ok =
   let () =  (* for debug *)
     match woptoptprev with
     | None    -> Format.fprintf fmtCFF "X %a\n" pp_charstring_element cselem;  (* for debug *)
@@ -3491,8 +3524,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
         pop stk >>= fun i ->
         access_subroutine lsubridx i >>= fun rawcs ->
-        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs >>= fun (woptoptsubr, accsubr) ->
-        return (woptoptsubr, List.rev accsubr)
+        parse_charstring stk gsubridx lsubridx (woptoptprev, Alist.empty) rawcs >>= fun (woptoptsubr, accsubr) ->
+        return (woptoptsubr, Alist.to_list accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -3595,8 +3628,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
         pop stk >>= fun i ->
         access_subroutine gsubridx i >>= fun rawcs ->
-        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs >>= fun (woptoptsubr, accsubr) ->
-        return (woptoptsubr, List.rev accsubr)
+        parse_charstring stk gsubridx lsubridx (woptoptprev, Alist.empty) rawcs >>= fun (woptoptsubr, accsubr) ->
+        return (woptoptsubr, Alist.to_list accsubr)
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -3685,11 +3718,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(LongKey(i)) ->
         err `Invalid_charstring
 
-and parse_charstring (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
+
+and parse_charstring (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring Alist.t) (cs : charstring_element list) : ((int option) option * parsed_charstring Alist.t) ok =
   cs |> List.fold_left (fun res cselem ->
     res >>= fun (woptoptprev, acc) ->
     parse_progress gsubridx lsubridx woptoptprev stk cselem >>= fun (woptopt, parsed) ->
-    let accnew = List.rev_append parsed acc in
+    let accnew = Alist.append acc parsed in
     match woptopt with
     | None    -> return (woptoptprev, accnew)
     | Some(_) -> return (woptopt, accnew)
@@ -3704,9 +3738,9 @@ let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_in
 
   | Some(cs) ->
       let stk : int Stack.t = Stack.create () in
-      parse_charstring stk gsubridx lsubridx (None, []) cs >>= function
+      parse_charstring stk gsubridx lsubridx (None, Alist.empty) cs >>= function
       | (None, acc)       -> err `Invalid_charstring
-      | (Some(wopt), acc) -> return (Some((wopt, List.rev acc)))
+      | (Some(wopt), acc) -> return (Some((wopt, Alist.to_list acc)))
 
 
 type path_element =
@@ -3721,7 +3755,7 @@ let ( +@- ) (x, y) dx = (x + dx, y)
 let ( +@| ) (x, y) dy = (x, y + dy)
 
 
-let line_parity is_horizontal_init peacc lst curv =
+let line_parity (is_horizontal_init : bool) (peacc : path_element Alist.t) lst curv =
   let rec aux is_horizontal peacc lst curv =
     match lst with
     | [] ->
@@ -3730,16 +3764,16 @@ let line_parity is_horizontal_init peacc lst curv =
     | dt :: tail ->
         if is_horizontal then
           let curvnew = curv +@- dt in
-          aux (not is_horizontal) (LineTo(curvnew) :: peacc) tail curvnew
+          aux (not is_horizontal) (Alist.extend peacc (LineTo(curvnew))) tail curvnew
         else
           let curvnew = curv +@| dt in
-          aux (not is_horizontal) (LineTo(curvnew) :: peacc) tail curvnew
+          aux (not is_horizontal) (Alist.extend peacc (LineTo(curvnew))) tail curvnew
   in
   aux is_horizontal_init peacc lst curv
 
 
-let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
-  let rec aux  is_horizontal acc lst curv =
+let curve_parity (is_horizontal : bool) (peacc : path_element Alist.t) lst (dtD, dvE, dsF) dtFopt curv =
+  let rec aux  is_horizontal peacc lst curv =
     match lst with
     | [] ->
         if is_horizontal then
@@ -3751,7 +3785,7 @@ let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
             | None      -> vE +@| dsF
             | Some(dtF) -> vE +@ (dtF, dsF)
           in
-            (vF, BezierTo(vD, vE, vF) :: acc)
+            (vF, Alist.extend peacc (BezierTo(vD, vE, vF)))
         else
           let vD = curv +@| dtD in
           let vE = vD +@ dvE in
@@ -3760,22 +3794,22 @@ let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
             | None      -> vE +@- dsF
             | Some(dtF) -> vE +@ (dsF, dtF)
           in
-            (vF, BezierTo(vD, vE, vF) :: acc)
+            (vF, Alist.extend peacc (BezierTo(vD, vE, vF)))
 
     | (dtA, dvB, dsC) :: tail ->
         if is_horizontal then
           let vA = curv +@- dtA in
           let vB = vA +@ dvB in
           let vC = vB +@| dsC in
-            aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
+            aux (not is_horizontal) (Alist.extend peacc (BezierTo(vA, vB, vC))) tail vC
         else
           let vA = curv +@| dtA in
           let vB = vA +@ dvB in
           let vC = vB +@- dsC in
-            aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
+            aux (not is_horizontal) (Alist.extend peacc (BezierTo(vA, vB, vC))) tail vC
 
   in
-  aux is_horizontal acc lst curv
+  aux is_horizontal peacc lst curv
 
 
 let flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 =
@@ -3792,7 +3826,7 @@ let flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 =
 type path = cspoint * path_element list
 
 
-let charstring_absolute csinfo gid =
+let charstring_absolute (csinfo : charstring_info) (gid : glyph_id) =
   charstring csinfo gid >>= function
   | None ->
       return None
@@ -3815,10 +3849,10 @@ let charstring_absolute csinfo gid =
             begin
               match accopt with
               | None ->
-                  return (curvnew, Some((curvnew, []), []))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.empty))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.extend pathacc (cspt, Alist.to_list peacc)))
             end
 
         | HMoveTo(dx) ->
@@ -3826,10 +3860,10 @@ let charstring_absolute csinfo gid =
             begin
               match accopt with
               | None ->
-                  return (curvnew, Some((curvnew, []), []))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.empty))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.extend pathacc (cspt, Alist.to_list peacc)))
             end
 
         | RMoveTo(dv) ->
@@ -3837,10 +3871,10 @@ let charstring_absolute csinfo gid =
             begin
               match accopt with
               | None ->
-                  return (curvnew, Some((curvnew, []), []))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.empty))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.extend pathacc (cspt, Alist.to_list peacc)))
             end
 
         | RLineTo(csptlst) ->
@@ -3850,7 +3884,7 @@ let charstring_absolute csinfo gid =
               | Some(((cspt, peacc), pathacc)) ->
                   let (curvnew, peaccnew) =
                     csptlst |> List.fold_left (fun (curv, peacc) dv ->
-                      (curv +@ dv, LineTo(curv +@ dv) :: peacc)
+                      (curv +@ dv, Alist.extend peacc (LineTo(curv +@ dv)))
                     ) (curv, peacc)
                   in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
@@ -3880,11 +3914,11 @@ let charstring_absolute csinfo gid =
               | None -> err `Invalid_charstring
               | Some(((cspt, peacc), pathacc)) ->
                   let (curvnew, peaccnew) =
-                    tricsptlst |> List.fold_left (fun (curv, acc) (dvA, dvB, dvC) ->
+                    tricsptlst |> List.fold_left (fun (curv, peacc) (dvA, dvB, dvC) ->
                       let vA = curv +@ dvA in
                       let vB = vA +@ dvB in
                       let vC = vB +@ dvC in
-                        (vC, BezierTo(vA, vB, vC) :: acc)
+                        (vC, Alist.extend peacc (BezierTo(vA, vB, vC)))
                     ) (curv, peacc)
                   in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
@@ -3907,8 +3941,8 @@ let charstring_absolute csinfo gid =
                       let vA = curv +@| dyA in
                       let vB = vA +@ dvB in
                       let vC = vB +@| dyC in
-                      (vC, BezierTo(vA, vB, vC) :: peacc)
-                    ) (v3, BezierTo(v1, v2, v3) :: peacc)
+                      (vC, Alist.extend peacc (BezierTo(vA, vB, vC)))
+                    ) (v3, Alist.extend peacc (BezierTo(v1, v2, v3)))
                   in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
@@ -3933,8 +3967,8 @@ let charstring_absolute csinfo gid =
                     let vA = curv +@- dxA in
                     let vB = vA +@ dvB in
                     let vC = vB +@- dxC in
-                    (vC, BezierTo(vA, vB, vC) :: peacc)
-                  ) (v3, BezierTo(v1, v2, v3) :: peacc)
+                    (vC, Alist.extend peacc (BezierTo(vA, vB, vC)))
+                  ) (v3, Alist.extend peacc (BezierTo(v1, v2, v3)))
                 in
                 return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
@@ -3970,7 +4004,7 @@ let charstring_absolute csinfo gid =
               | None -> err `Invalid_charstring
               | Some(((cspt, peacc), pathacc)) ->
                   let (curvnew, pelstflex) = flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 in
-                  let peaccnew = List.rev_append pelstflex peacc in
+                  let peaccnew = Alist.append peacc pelstflex in
                   return (curvnew, Some((cspt, peaccnew), pathacc))
             end
 
@@ -3980,7 +4014,7 @@ let charstring_absolute csinfo gid =
               | None -> err `Invalid_charstring
               | Some(((cspt, peacc), pathacc)) ->
                   let (curvnew, pelstflex) = flex_path curv (dx1, 0) (dx2, dy2) (dx3, 0) (dx4, 0) (dx5, -dy2) (dx6, 0) in
-                  let peaccnew = List.rev_append pelstflex peacc in
+                  let peaccnew = Alist.append peacc pelstflex in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
 
@@ -3991,7 +4025,7 @@ let charstring_absolute csinfo gid =
               | Some(((cspt, peacc), pathacc)) ->
                   let dy6 = - (dy1 + dy2 + dy5) in
                   let (curvnew, pelstflex) = flex_path curv (dx1, dy1) (dx2, dy2) (dx3, 0) (dx4, 0) (dx5, dy5) (dx6, dy6) in
-                  let peaccnew = List.rev_append pelstflex peacc in
+                  let peaccnew = Alist.append peacc pelstflex in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
 
@@ -4016,14 +4050,14 @@ let charstring_absolute csinfo gid =
                   in
                   let curvnew = abspt6 in
                   let pelstflex = [BezierTo(abspt1, abspt2, abspt3); BezierTo(abspt4, abspt5, abspt6)] in
-                  let peaccnew = List.rev_append pelstflex peacc in
+                  let peaccnew = Alist.append peacc pelstflex in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
 
       ) (return ((0, 0), None))
     >>= function
     | (_, None)                           -> return (Some([]))
-    | (_, Some(((cspt, peacc), pathacc))) -> return (Some(List.rev ((cspt, List.rev peacc) :: pathacc)))
+    | (_, Some(((cspt, peacc), pathacc))) -> return (Some(Alist.to_list (Alist.extend pathacc (cspt, Alist.to_list peacc))))
 
 
 type bbox =
