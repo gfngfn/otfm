@@ -2688,7 +2688,10 @@ type charstring_element =
   | HintMaskOperator of stem_argument
   | CntrMaskOperator of stem_argument
 
-type subroutine_index = (charstring_element list) array
+type charstring_data =
+  | CharStringData of int * int32
+
+type subroutine_index = charstring_data array
 
 type cff_first = string * dict * string_index * subroutine_index * int
 
@@ -2801,6 +2804,12 @@ let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) :
     d_cff_length_list offSize count d >>= fun lenlst ->
     loop_data arr 0 lenlst >>= fun () ->
     return arr
+
+
+
+let d_charstring_data (len32 : int32) (d : decoder) : charstring_data ok =
+  let offset = cur_pos d in
+    return (CharStringData(offset, len32))
 
 
 let d_cff_real d =
@@ -2978,7 +2987,7 @@ let pp_charstring_element fmt = function
   | CntrMaskOperator(arg)  -> Format.fprintf fmt "CNTRMASK(...)\n"
 
 
-let d_stem_argument numstem d : (int * stem_argument) ok =
+let d_stem_argument (numstem : int) (d : decoder) : (int * stem_argument) ok =
   let arglen =
     if numstem mod 8 = 0 then
       numstem / 8
@@ -2989,19 +2998,27 @@ let d_stem_argument numstem d : (int * stem_argument) ok =
   return (arglen, arg)
 
 
-let d_charstring_element numarg numstem d =
+type charstring_state = {
+  numarg : int;
+  numstem : int;
+}
+
+
+let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * charstring_state * charstring_element) ok =
+  let numarg = cstate.numarg in
+  let numstem = cstate.numstem in
   let return_argument (step, cselem) =
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-    return (step, numarg + 1, numstem, cselem)
+    return (step, { numarg = numarg + 1; numstem = numstem }, cselem)
   in
   let return_operator (step, cselem) =
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-    return (step, 0, numstem, cselem)
+    return (step, { numarg = 0; numstem = numstem }, cselem)
   in
   let return_stem (step, cselem) =
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-    Format.fprintf fmtCFF "step = %d, numarg = %d\n" step numarg;  (* for debug *)
-    return (step, 0, numstem + numarg / 2, cselem)
+    Format.fprintf fmtCFF "# step = %d, numarg = %d\n" step numarg;  (* for debug *)
+    return (step, { numarg = 0; numstem = numstem + numarg / 2 }, cselem)
   in
     (* -- 'numarg' may be an odd number, but it is due to the width value -- *)
   d_uint8 d >>= function
@@ -3064,18 +3081,22 @@ let d_charstring_element numarg numstem d =
       assert false
         (* -- uint8 value must be in [0 .. 255] -- *)
 
-
-let d_charstring (len32 : int32) d : (charstring_element list) ok =
-  let rec aux numarg numstem len acc d =
-    if len = 0 then return (Alist.to_list acc) else
-    if len < 0 then err `Invalid_charstring else
-    d_charstring_element numarg numstem d >>= fun (step, numargnew, numstemnew, cselem) ->
-    aux numargnew numstemnew (len - step) (Alist.extend acc cselem) d
+(*
+let d_charstring (cstate : charstring_state) (len32 : int32) (d : decoder) : (charstring_state * charstring_element list) ok =
+  let rec aux cstate len acc d =
+    Format.fprintf fmtCFF "$ length = %d\n" len;  (* for debug *)
+    if len = 0 then
+      let () = Format.fprintf fmtCFF "$ end\n" in  (* for debug *)
+      return (cstate, Alist.to_list acc)
+    else
+      if len < 0 then err `Invalid_charstring else
+      d_charstring_element cstate d >>= fun (step, cstate, cselem) ->
+      aux cstate (len - step) (Alist.extend acc cselem) d
   in
-  aux 0 0 (?@ len32) Alist.empty d
+  aux cstate (?@ len32) Alist.empty d
+*)
 
-
-let cff_first d : cff_first ok =
+let cff_first (d : decoder) : cff_first ok =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   let offset_CFF = cur_pos d in
@@ -3102,7 +3123,7 @@ let cff_first d : cff_first ok =
 
   (* -- Global Subr INDEX -- *)
     Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
-    d_index [] d_charstring d >>= fun gsubridx ->
+    d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun gsubridx ->
       (* temporary; should be decoded *)
 
     return (name, dictmap, stridx, gsubridx, offset_CFF)
@@ -3244,7 +3265,7 @@ let cff d =
         let offset_lsubrs = offset_private + selfoffset_lsubrs in
         seek_pos offset_lsubrs d >>= fun () ->
         Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
-        d_index [] d_charstring d >>= fun lsubridx ->
+        d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun lsubridx ->
         Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
         return (Some(default_width_x), Some(nominal_width_x), lsubridx)
 
@@ -3435,34 +3456,45 @@ let pp_parsed_charstring fmt = function
   | Flex1(p1, p2, p3, p4, p5, d6)      -> pp fmt "Flex1(%a, %a, %a, %a, %a, %d)" pp_cspoint p1 pp_cspoint p2 pp_cspoint p3 pp_cspoint p4 pp_cspoint p5 d6
 
 
-let access_subroutine idx i =
-  let len = Array.length idx in
+let access_subroutine (d : decoder) (idx : subroutine_index) (i : int) : (int * int) ok =
+  let arrlen = Array.length idx in
   let bias =
-    if len < 1240 then 107 else
-      if len < 33900 then 1131 else
+    if arrlen < 1240 then 107 else
+      if arrlen < 33900 then 1131 else
         32768
   in
-  Format.fprintf fmtCFF "[G/L SUBR] length = %d, bias = %d, i = %d, ---> %d\n" len bias i (bias + i);  (* for debug *)
-  try return idx.(bias + i) with
-  | Invalid_argument(_) ->
-      err `Invalid_charstring
+  Format.fprintf fmtCFF "# [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
+  try
+    let CharStringData(offset, len32) = idx.(bias + i) in
+    return (offset, ?@ len32)
+(*
+    let offset_init = cur_pos d in
+    seek_pos offset d >>= fun () ->
+    d_charstring cstate len32 d >>= fun (cstate, cs) ->
+    seek_pos offset_init d >>= fun () ->
+    return (cstate, cs)
+*)
+  with
+  | Invalid_argument(_) -> err `Invalid_charstring
 
 
-let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) : ((int option) option * parsed_charstring list) ok =
+let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (lenrest : int) (cstate : charstring_state) (stk : int Stack.t) (d : decoder) : (int * (int option) option * charstring_state * parsed_charstring list) ok =
+  d_charstring_element cstate d >>= fun (step, cstate, cselem) ->
+  let lenrest = lenrest - step in
   let () =  (* for debug *)
     match woptoptprev with
-    | None    -> Format.fprintf fmtCFF "X %a\n" pp_charstring_element cselem;  (* for debug *)
-    | Some(_) -> Format.fprintf fmtCFF "O %a\n" pp_charstring_element cselem;  (* for debug *)
+    | None    -> Format.fprintf fmtCFF "# X %a\n" pp_charstring_element cselem;  (* for debug *)
+    | Some(_) -> Format.fprintf fmtCFF "# O %a\n" pp_charstring_element cselem;  (* for debug *)
   in  (* for debug *)
 
   let return_with_width ret =
     match woptoptprev with
-    | None    -> let wopt = pop_opt stk in return (Some(wopt), ret)
-    | Some(_) -> return (woptoptprev, ret)
+    | None    -> let wopt = pop_opt stk in return (lenrest, Some(wopt), cstate, ret)
+    | Some(_) -> return (lenrest, woptoptprev, cstate, ret)
   in
 
   let return_cleared ret =
-    return (woptoptprev, ret)
+    return (lenrest, woptoptprev, cstate, ret)
   in
 
     match cselem with
@@ -3523,9 +3555,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
         pop stk >>= fun i ->
-        access_subroutine lsubridx i >>= fun rawcs ->
-        parse_charstring stk gsubridx lsubridx (woptoptprev, Alist.empty) rawcs >>= fun (woptoptsubr, accsubr) ->
-        return (woptoptsubr, Alist.to_list accsubr)
+        access_subroutine d lsubridx i >>= fun (offset, len) ->
+        let offset_init = cur_pos d in
+        seek_pos offset d >>= fun () ->
+        parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
+        seek_pos offset_init d >>= fun () ->
+        return (lenrest, woptoptsubr, cstate, Alist.to_list accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -3537,8 +3572,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
           | None ->
               begin
                 match lst with
-                | w :: [] -> return (Some(Some(w)), [])
-                | []      -> return (Some(None), [])
+                | w :: [] -> return (lenrest, Some(Some(w)), cstate, [])
+                | []      -> return (lenrest, Some(None), cstate, [])
                 | _       ->
                     Format.fprintf fmtCFF "remain1\n";  (* for debug *)
                     err `Invalid_charstring
@@ -3627,9 +3662,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
         pop stk >>= fun i ->
-        access_subroutine gsubridx i >>= fun rawcs ->
-        parse_charstring stk gsubridx lsubridx (woptoptprev, Alist.empty) rawcs >>= fun (woptoptsubr, accsubr) ->
-        return (woptoptsubr, Alist.to_list accsubr)
+        access_subroutine d gsubridx i >>= fun (offset, len) ->
+        let offset_init = cur_pos d in
+        seek_pos offset d >>= fun () ->
+        parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
+        seek_pos offset_init d >>= fun () ->
+        return (lenrest, woptoptsubr, cstate, Alist.to_list accsubr)
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -3719,28 +3757,34 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         err `Invalid_charstring
 
 
-and parse_charstring (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring Alist.t) (cs : charstring_element list) : ((int option) option * parsed_charstring Alist.t) ok =
-  cs |> List.fold_left (fun res cselem ->
-    res >>= fun (woptoptprev, acc) ->
-    parse_progress gsubridx lsubridx woptoptprev stk cselem >>= fun (woptopt, parsed) ->
+and parse_charstring (len : int) (cstate : charstring_state) (d : decoder) (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptinit : (int option) option) : ((int option) option * charstring_state * parsed_charstring Alist.t) ok =
+  let rec aux lenrest (woptoptprev, cstate, acc) =
+    parse_progress gsubridx lsubridx woptoptprev lenrest cstate stk d >>= fun (lenrest, woptopt, cstate, parsed) ->
     let accnew = Alist.append acc parsed in
-    match woptopt with
-    | None    -> return (woptoptprev, accnew)
-    | Some(_) -> return (woptopt, accnew)
-  ) (return init)
+    if lenrest = 0 then
+      return (woptopt, cstate, accnew)
+    else
+      if lenrest < 0 then err `Invalid_charstring else
+        match woptopt with
+        | None    -> aux lenrest (woptoptprev, cstate, accnew)
+        | Some(_) -> aux lenrest (woptopt, cstate, accnew)
+  in
+    aux len (woptoptinit, cstate, Alist.empty)
 
 
 let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
+  let cstate = { numarg = 0; numstem = 0 } in
   seek_pos offset_CharString_INDEX d >>= fun () ->
-  d_index_access d_charstring gid d >>= function
+  d_index_access d_charstring_data gid d >>= function
   | None ->
       return None
 
-  | Some(cs) ->
+  | Some(CharStringData(offset, len32)) ->
       let stk : int Stack.t = Stack.create () in
-      parse_charstring stk gsubridx lsubridx (None, Alist.empty) cs >>= function
-      | (None, acc)       -> err `Invalid_charstring
-      | (Some(wopt), acc) -> return (Some((wopt, Alist.to_list acc)))
+      seek_pos offset d >>= fun () ->
+      parse_charstring (?@ len32) cstate d stk gsubridx lsubridx None >>= function
+      | (None, _, acc)       -> err `Invalid_charstring
+      | (Some(wopt), _, acc) -> return (Some((wopt, Alist.to_list acc)))
 
 
 type path_element =
