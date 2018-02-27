@@ -2809,7 +2809,8 @@ let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) :
 
 let d_charstring_data (len32 : int32) (d : decoder) : charstring_data ok =
   let offset = cur_pos d in
-    return (CharStringData(offset, len32))
+  seek_pos (offset + (?@ len32)) d >>= fun () ->
+  return (CharStringData(offset, len32))
 
 
 let d_cff_real d =
@@ -3456,7 +3457,7 @@ let pp_parsed_charstring fmt = function
   | Flex1(p1, p2, p3, p4, p5, d6)      -> pp fmt "Flex1(%a, %a, %a, %a, %a, %d)" pp_cspoint p1 pp_cspoint p2 pp_cspoint p3 pp_cspoint p4 pp_cspoint p5 d6
 
 
-let access_subroutine (d : decoder) (idx : subroutine_index) (i : int) : (int * int) ok =
+let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
   let arrlen = Array.length idx in
   let bias =
     if arrlen < 1240 then 107 else
@@ -3467,13 +3468,6 @@ let access_subroutine (d : decoder) (idx : subroutine_index) (i : int) : (int * 
   try
     let CharStringData(offset, len32) = idx.(bias + i) in
     return (offset, ?@ len32)
-(*
-    let offset_init = cur_pos d in
-    seek_pos offset d >>= fun () ->
-    d_charstring cstate len32 d >>= fun (cstate, cs) ->
-    seek_pos offset_init d >>= fun () ->
-    return (cstate, cs)
-*)
   with
   | Invalid_argument(_) -> err `Invalid_charstring
 
@@ -3481,12 +3475,13 @@ let access_subroutine (d : decoder) (idx : subroutine_index) (i : int) : (int * 
 let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (lenrest : int) (cstate : charstring_state) (stk : int Stack.t) (d : decoder) : (int * (int option) option * charstring_state * parsed_charstring list) ok =
   d_charstring_element cstate d >>= fun (step, cstate, cselem) ->
   let lenrest = lenrest - step in
+(*
   let () =  (* for debug *)
     match woptoptprev with
     | None    -> Format.fprintf fmtCFF "# X %a\n" pp_charstring_element cselem;  (* for debug *)
     | Some(_) -> Format.fprintf fmtCFF "# O %a\n" pp_charstring_element cselem;  (* for debug *)
   in  (* for debug *)
-
+*)
   let return_with_width ret =
     match woptoptprev with
     | None    -> let wopt = pop_opt stk in return (lenrest, Some(wopt), cstate, ret)
@@ -3555,7 +3550,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
         pop stk >>= fun i ->
-        access_subroutine d lsubridx i >>= fun (offset, len) ->
+        access_subroutine lsubridx i >>= fun (offset, len) ->
         let offset_init = cur_pos d in
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
@@ -3662,7 +3657,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
         pop stk >>= fun i ->
-        access_subroutine d gsubridx i >>= fun (offset, len) ->
+        access_subroutine gsubridx i >>= fun (offset, len) ->
         let offset_init = cur_pos d in
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
