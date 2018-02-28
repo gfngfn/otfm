@@ -3127,6 +3127,7 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
       return_flushing_operator (1, Operator(ShortKey(b0)))
 
   | 19 ->
+    (* -- hintmask operator -- *)
 (*
       Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
 *)
@@ -3134,8 +3135,12 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
         return_stem (1 + step, HintMaskOperator(bits))
 
   | 20 ->
-      d_stem_argument numstem d >>= fun (step, arg) ->
-      return_flushing_operator (1 + step, CntrMaskOperator(arg))
+    (* -- cntrmask operator -- *)
+(*
+      Format.fprintf fmtCFF "cntrmask (%d argument)\n" numarg;  (*for debug *)
+*)
+      d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
+      return_flushing_operator (1 + step, CntrMaskOperator(bits))
 
   | b0  when b0 |> is_in_range 21 27 ->
       return_flushing_operator (1, Operator(ShortKey(b0)))
