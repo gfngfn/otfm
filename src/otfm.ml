@@ -191,10 +191,14 @@ type error =
   | `Invalid_cff_not_an_element
   | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
-  | `Missing_required_dict_short_key  of int
   | `Missing_required_dict_long_key   of int
+  | `Missing_required_dict_short_key  of int
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Invalid_cff_no_private_dict
+  | `Unknown_fdselect_format          of int
+  | `Invalid_fd_select                of int
+  | `Invalid_fd_index                 of int
   | `Invalid_charstring_type          of int
   | `Invalid_charstring
   | `Invalid_sid                      of int
@@ -282,6 +286,14 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
 | `Invalid_cff_invalid_first_offset ->
     pp ppf "@[Invalid@ CFF@ table;@ invalid@ first@ offset@]"
+| `Invalid_cff_no_private_dict ->
+    pp ppf "@[Invalid@ CFF@ table;@ no@ Private@ DICT@]"
+| `Unknown_fdselect_format n ->
+    pp ppf "@[Unknown@ FDSelect@ format@ (%d)@]" n
+| `Invalid_fd_select gid ->
+    pp ppf "@[Invalid@ FDSelect;@ it@ lacks@ a@ necessary@ glyph@ ID (%d)@]" gid
+| `Invalid_fd_index fdi ->
+    pp ppf "@[Invalid@ FD@ index@ (%d)]" fdi
 | `Invalid_charstring_type csty ->
     pp ppf "@[Invalid@ CharString@ type@ (%d)@]" csty
 | `Invalid_charstring ->
@@ -2706,7 +2718,25 @@ type cff_cid_info =
     cid_count         : int;
   }
 
-type charstring_info = decoder * subroutine_index * subroutine_index * int
+type single_private = {
+  default_width_x  : int;
+  nominal_width_x  : int;
+  local_subr_index : subroutine_index;
+}
+
+type fdarray = single_private array
+
+type fdindex = int
+
+type fdselect =
+  | FDSelectFormat0 of fdindex array
+  | FDSelectFormat3 of (glyph_id * fdindex) list * glyph_id
+
+type private_info =
+  | SinglePrivate of single_private
+  | FontDicts     of fdarray * fdselect
+
+type charstring_info = decoder * subroutine_index * private_info * int
 
 type cff_info =
   {
@@ -2720,8 +2750,7 @@ type cff_info =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
-    default_width_x     : int option;
-    nominal_width_x     : int option;
+    number_of_glyphs    : int;
     charstring_info     : charstring_info;
   }
 
@@ -3199,6 +3228,96 @@ let get_ros dictmap key =
   | None                                                     -> err `Invalid_ros
 
 
+let d_single_private offset_CFF dictmap d : single_private ok =
+(* -- Private DICT -- *)
+  get_integer_pair_opt dictmap (ShortKey(18)) >>= fun privateopt ->
+    match privateopt with
+    | None ->
+        Format.fprintf fmtCFF "No Private DICT\n";  (* for debug *)
+        err `Invalid_cff_no_private_dict
+
+    | Some(size_private, reloffset_private) ->
+        let offset_private = offset_CFF + reloffset_private in
+        seek_pos offset_private d >>= fun () ->
+        d_dict size_private d >>= fun dictmap_private ->
+        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_lsubrs ->
+        get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
+        get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
+
+      (* -- Local Subr INDEX -- *)
+        let offset_lsubrs = offset_private + selfoffset_lsubrs in
+        seek_pos offset_lsubrs d >>= fun () ->
+        Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
+        d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun lsubridx ->
+        Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
+        return { default_width_x; nominal_width_x; local_subr_index = lsubridx }
+
+
+let seek_number_of_glyphs offset_CharString_INDEX d =
+  seek_pos offset_CharString_INDEX d >>= fun () ->
+  d_uint16 d
+
+
+exception Internal of error
+
+
+let seek_fdarray offset_CFF offset_FDArray d : fdarray ok =
+  seek_pos offset_FDArray d >>= fun () ->
+  d_index DictMap.empty (fun len32 -> d_dict (?@ len32)) d >>= fun arrraw ->
+  try
+    let arr =
+      arrraw |> Array.map (fun dictmap ->
+        let res =
+          d_single_private offset_CFF dictmap d
+        in
+        match res with
+        | Error(e)       -> raise (Internal(e))
+        | Ok(singlepriv) -> singlepriv
+      )
+    in
+    return arr
+  with
+  | Internal(e) -> err e
+
+
+let d_fdselect_format_0 nGlyphs d : fdselect ok =
+  let idx = Array.make nGlyphs 0 in
+  let rec aux i =
+    if i >= nGlyphs then
+      return (FDSelectFormat0(idx))
+    else
+      begin
+        d_uint8 d >>= fun v ->
+        idx.(i) <- v;
+        aux (i + 1)
+      end
+
+  in
+  aux 0
+
+
+let d_fdselect_format_3 d : fdselect ok =
+  let rec aux num i acc =
+    if i >= num then
+      d_uint16 d >>= fun gid_sentinel ->
+      return (FDSelectFormat3(Alist.to_list acc, gid_sentinel))
+    else
+      d_uint16 d >>= fun gid ->
+      d_uint8 d >>= fun v ->
+      aux num (i + 1) (Alist.extend acc (gid, v))
+  in
+  d_uint16 d >>= fun nRanges ->
+  aux nRanges 0 Alist.empty
+
+
+let seek_fdselect nGlyphs offset_FDSelect d : fdselect ok =
+  seek_pos offset_FDSelect d >>= fun () ->
+  d_uint8 d >>= function
+  | 0 -> d_fdselect_format_0 nGlyphs d
+  | 3 -> d_fdselect_format_3 d
+  | n -> err (`Unknown_fdselect_format(n))
+
+
 let cff d =
   cff_first d >>= fun (font_name, dictmap, stridx, gsubridx, offset_CFF) ->
 (*
@@ -3218,12 +3337,14 @@ let cff d =
   confirm (charstring_type = 2)
     (`Invalid_charstring_type(charstring_type))      >>= fun () ->
 
-  (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
+  (* -- have not implemented 'LongKey(7) --> font_matrix' yet; maybe it is not necessary -- *)
 
   get_iquad_opt        dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
   get_integer_opt      dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
-  get_integer          dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
-  let cidoptres =
+  get_integer          dictmap (ShortKey(17))             >>= fun reloffset_CharString_INDEX ->
+  let offset_CharString_INDEX = offset_CFF + reloffset_CharString_INDEX in
+  seek_number_of_glyphs offset_CharString_INDEX d >>= fun number_of_glyphs ->
+  let pairres =
     if DictMap.mem (LongKey(30)) dictmap then
     (* -- when the font is a CIDFont -- *)
       get_ros         dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
@@ -3231,46 +3352,27 @@ let cff d =
       get_integer_opt dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
       get_integer_opt dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
       get_integer_opt dictmap (LongKey(34)) 8720 >>= fun cid_count ->
+      get_integer     dictmap (LongKey(36))      >>= fun reloffset_FDArray ->
+      get_integer     dictmap (LongKey(37))      >>= fun reloffset_FDSelect ->
       get_string stridx sid_registry >>= fun registry ->
       get_string stridx sid_ordering >>= fun ordering ->
+      let offset_FDArray = offset_CFF + reloffset_FDArray in
+      let offset_FDSelect = offset_CFF + reloffset_FDSelect in
+      seek_fdarray offset_CFF offset_FDArray d >>= fun fdarray ->
+      seek_fdselect number_of_glyphs offset_FDSelect d >>= fun fdselect ->
       return (Some{
         registry; ordering; supplement;
         cid_font_version;
         cid_font_revision;
         cid_font_type;
         cid_count;
-      })
+      }, FontDicts(fdarray, fdselect))
     else
     (* -- when the font is not a CIDFont -- *)
-      return None
+      d_single_private offset_CFF dictmap d >>= fun singlepriv ->
+      return (None, SinglePrivate(singlepriv))
   in
-  cidoptres >>= fun cid_info ->
-
-(* -- Private DICT -- *)
-  get_integer_pair_opt dictmap (ShortKey(18)) >>= fun privateopt ->
-  begin
-    match privateopt with
-    | None ->
-        Format.fprintf fmtCFF "No Private DICT\n";  (* for debug *)
-        return (None, None, [| |])
-
-    | Some(size_private, reloffset_private) ->
-        let offset_private = offset_CFF + reloffset_private in
-        seek_pos offset_private d >>= fun () ->
-        d_dict size_private d >>= fun dictmap_private ->
-        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_lsubrs ->
-        get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
-        get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
-
-      (* -- Local Subr INDEX -- *)
-        let offset_lsubrs = offset_private + selfoffset_lsubrs in
-        seek_pos offset_lsubrs d >>= fun () ->
-        Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
-        d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun lsubridx ->
-        Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
-        return (Some(default_width_x), Some(nominal_width_x), lsubridx)
-
-  end >>= fun (default_width_x_opt, nominal_width_x_opt, lsubridx) ->
+  pairres >>= fun (cid_info, private_info) ->
   return {
     font_name;
     is_fixed_pitch;
@@ -3281,9 +3383,8 @@ let cff d =
     font_bbox;
     stroke_width;
     cid_info;
-    default_width_x = default_width_x_opt;
-    nominal_width_x = default_width_x_opt;
-    charstring_info = (d, gsubridx, lsubridx, offset_CFF + reloffset_charstring);
+    number_of_glyphs;
+    charstring_info = (d, gsubridx, private_info, offset_CharString_INDEX);
   }
 
 
@@ -3767,7 +3868,46 @@ and parse_charstring (len : int) (cstate : charstring_state) (d : decoder) (stk 
     aux len (woptoptinit, cstate, Alist.empty)
 
 
-let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
+let select_fd_index (fdselect : fdselect) (gid : glyph_id) : fdindex ok =
+  match fdselect with
+  | FDSelectFormat0(arr) ->
+      begin
+        try return arr.(gid) with
+        | Invalid_argument(_) -> err (`Invalid_fd_select(gid))
+      end
+
+  | FDSelectFormat3(lst, gid_sentinel) ->
+      if gid >= gid_sentinel then
+        err (`Invalid_fd_select(gid))
+      else
+        let opt =
+          lst |> List.fold_left (fun opt (gidc, fdi) ->
+            if gidc <= gid then
+              Some(fdi)
+            else
+              opt
+          ) None
+        in
+        begin
+          match opt with
+          | None      -> err (`Invalid_fd_select(gid))
+          | Some(fdi) -> return fdi
+        end
+
+
+let select_local_subr_index (privinfo : private_info) (gid : glyph_id) : subroutine_index ok =
+  match privinfo with
+  | SinglePrivate(singlepriv) -> return singlepriv.local_subr_index
+  | FontDicts(fdarray, fdselect) ->
+      select_fd_index fdselect gid >>= fun fdindex ->
+      try
+        let singlepriv = fdarray.(fdindex) in
+        return singlepriv.local_subr_index
+      with
+      | Invalid_argument(_) -> err (`Invalid_fd_index(fdindex))
+
+
+let charstring ((d, gsubridx, privinfo, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
   let cstate = { numarg = 0; numstem = 0 } in
   seek_pos offset_CharString_INDEX d >>= fun () ->
   d_index_access d_charstring_data gid d >>= function
@@ -3777,6 +3917,7 @@ let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_in
   | Some(CharStringData(offset, len32)) ->
       let stk : int Stack.t = Stack.create () in
       seek_pos offset d >>= fun () ->
+      select_local_subr_index privinfo gid >>= fun lsubridx ->
       parse_charstring (?@ len32) cstate d stk gsubridx lsubridx None >>= function
       | (None, _, acc)       -> err `Invalid_charstring
       | (Some(wopt), _, acc) -> return (Some((wopt, Alist.to_list acc)))
