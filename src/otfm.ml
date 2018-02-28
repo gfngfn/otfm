@@ -3000,12 +3000,33 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
   loop_keyval DictMap.empty len d
 
 
-let pp_short_key fmt = function
-  | 10 -> Format.fprintf fmt "CALLSUBR"
-  | 29 -> Format.fprintf fmt "CALLGSUBR"
-  | 11 -> Format.fprintf fmt "return"
-  | 14 -> Format.fprintf fmt "endchar"
-  | i  -> Format.fprintf fmt "OP(%d)" i
+let pp_short_key fmt key =
+  let f = Format.fprintf fmt "%s" in
+  match key with
+  | 1  -> f "hstem"
+  | 3  -> f "vstem"
+  | 4  -> f "vmoveto"
+  | 5  -> f "rlineto"
+  | 6  -> f "hlineto"
+  | 7  -> f "vlineto"
+  | 8  -> f "rrcurveto"
+  | 10 -> f "CALLSUBR"
+  | 11 -> f "RETURN"
+  | 14 -> f "endchar"
+  | 18 -> f "hstemhm"
+  | 19 -> f "HINTMASK"
+  | 20 -> f "CNTRMASK"
+  | 21 -> f "rmoveto"
+  | 22 -> f "hmoveto"
+  | 23 -> f "vstemhm"
+  | 24 -> f "rcurveline"
+  | 25 -> f "rlinecurve"
+  | 26 -> f "vvcurveto"
+  | 27 -> f "hhcurveto"
+  | 29 -> f "CALLGSUBR"
+  | 30 -> f "vhcurveto"
+  | 31 -> f "hvcurveto"
+  | i  -> Format.fprintf fmt "!OP(%d)" i
 
 
 let pp_charstring_element fmt = function
@@ -3047,7 +3068,7 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   in
   let return_stem (step, cselem) =
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-    Format.fprintf fmtCFF "# step = %d, numarg = %d\n" step numarg;  (* for debug *)
+    Format.fprintf fmtCFF "  # step = %d, numarg = %d\n" step numarg;  (* for debug *)
     return (step, { numarg = 0; numstem = numstem + numarg / 2 }, cselem)
   in
     (* -- 'numarg' may be an odd number, but it is due to the width value -- *)
@@ -3565,7 +3586,7 @@ let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
       if arrlen < 33900 then 1131 else
         32768
   in
-  Format.fprintf fmtCFF "# [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
+  Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
   try
     let CharStringData(offset, len32) = idx.(bias + i) in
     return (offset, ?@ len32)
@@ -3699,16 +3720,24 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         if Stack.length stk = 0 then
           return_with_width [HintMask(arg)]
         else
-        let pairlst = pop_iter pop_pair_opt stk in
-        begin
-          match pairlst with
-          | []                 -> err `Invalid_charstring
-          | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); HintMask(arg)]
-        end
+          let pairlst = pop_iter pop_pair_opt stk in
+          begin
+            match pairlst with
+            | []                 -> err `Invalid_charstring
+            | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); HintMask(arg)]
+          end
 
 
     | CntrMaskOperator(arg) ->
-        return_with_width [CntrMask(arg)]
+        if Stack.length stk = 0 then
+          return_with_width [CntrMask(arg)]
+        else
+          let pairlst = pop_iter pop_pair_opt stk in
+          begin
+            match pairlst with
+            | []                 -> err `Invalid_charstring
+            | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); CntrMask(arg)]
+          end
 
     | Operator(ShortKey(21)) ->  (* -- rmoveto (21) -- *)
         pop stk >>= fun dy1 ->
