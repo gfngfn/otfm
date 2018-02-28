@@ -12,8 +12,9 @@ let debugfmt =
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
-let fmtCFF  = (* debugfmt *) Format.std_formatter
-
+(*
+let fmtCFF  = debugfmt
+*)
 
 module Alist : sig
   type 'a t
@@ -2823,13 +2824,17 @@ let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) :
         loop_data arr (i + 1) lentail
   in
   d_uint16 d >>= fun count ->
+(*
   Format.fprintf fmtCFF "INDEX count: %d\n" count;  (* for debug *)
+*)
   if count = 0 then
     return [| |]
   else
     let arr = Array.make count dummy in
     d_offsize d                       >>= fun offSize ->
+(*
     Format.fprintf fmtCFF "INDEX offSize: %a\n" pp_offsize offSize;  (* for debug *)
+*)
     d_cff_length_list offSize count d >>= fun lenlst ->
     loop_data arr 0 lenlst >>= fun () ->
     return arr
@@ -2843,7 +2848,9 @@ let d_charstring_data (len32 : int32) (d : decoder) : charstring_data ok =
 
 
 let d_cff_real d =
+(*
   Format.fprintf fmtCFF "d_cff_real\n";  (* for debug *)
+*)
   let to_float lst =
     float_of_string (String.concat "" lst)
   in
@@ -2880,7 +2887,9 @@ let d_cff_real d =
 
 let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
   d_uint16 d >>= fun count ->
+(*
   Format.fprintf fmtCFF "count = %d\n" count;  (* for debug *)
+*)
   if iaccess < 0 || count <= iaccess then
     return None
   else
@@ -2892,7 +2901,9 @@ let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d :
       | OffSize3 -> 3
       | OffSize4 -> 4
     in
+(*
     Format.fprintf fmtCFF "OffSize = %a\n" pp_offsize offSize;  (* for debug *)
+*)
     let offset_origin = (cur_pos d) + (count + 1) * ofszint - 1 in
     d_skip (iaccess * ofszint) d >>= fun () ->
     d_cff_offset offSize d >>= fun reloffset_access ->
@@ -2981,7 +2992,9 @@ let pp_element ppf = function
 let d_dict_keyval d : (int * cff_value list * cff_key) ok =
   let rec aux stepsum vacc =
     d_dict_element d >>= fun (step, elem) ->
+(*
       Format.fprintf fmtCFF "dict element: %d, %a\n" step pp_element elem;  (* for debug *)
+*)
       match elem with
       | Value(v) -> aux (stepsum + step) (Alist.extend vacc v)
       | Key(k)   -> return (stepsum + step, Alist.to_list vacc, k)
@@ -2996,7 +3009,9 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
       d_dict_keyval d >>= fun (step, vlst, k) ->
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
+(*
   Format.fprintf fmtCFF "length = %d\n" len;  (* for debug *)
+*)
   loop_keyval DictMap.empty len d
 
 
@@ -3059,16 +3074,22 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   let numarg = cstate.numarg in
   let numstem = cstate.numstem in
   let return_argument (step, cselem) =
+(*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
+*)
     return (step, { numarg = numarg + 1; numstem = numstem }, cselem)
   in
   let return_operator (step, cselem) =
+(*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
+*)
     return (step, { numarg = 0; numstem = numstem }, cselem)
   in
   let return_stem (step, cselem) =
+(*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "  # step = %d, numarg = %d\n" step numarg;  (* for debug *)
+*)
     return (step, { numarg = 0; numstem = numstem + numarg / 2 }, cselem)
   in
     (* -- 'numarg' may be an odd number, but it is due to the width value -- *)
@@ -3087,12 +3108,8 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
       return_operator (1, Operator(ShortKey(b0)))
 
   | 19 ->
-      Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
 (*
-      if numarg = 0 then
-        d_stem_argument numstem d >>= fun (step, bits) ->
-        return_operator (1 + step, HintMaskOperator(bits))
-      else
+      Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
 *)
         d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
         return_stem (1 + step, HintMaskOperator(bits))
@@ -3132,48 +3149,46 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
       assert false
         (* -- uint8 value must be in [0 .. 255] -- *)
 
-(*
-let d_charstring (cstate : charstring_state) (len32 : int32) (d : decoder) : (charstring_state * charstring_element list) ok =
-  let rec aux cstate len acc d =
-    Format.fprintf fmtCFF "$ length = %d\n" len;  (* for debug *)
-    if len = 0 then
-      let () = Format.fprintf fmtCFF "$ end\n" in  (* for debug *)
-      return (cstate, Alist.to_list acc)
-    else
-      if len < 0 then err `Invalid_charstring else
-      d_charstring_element cstate d >>= fun (step, cstate, cselem) ->
-      aux cstate (len - step) (Alist.extend acc cselem) d
-  in
-  aux cstate (?@ len32) Alist.empty d
-*)
 
 let cff_first (d : decoder) : cff_first ok =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   let offset_CFF = cur_pos d in
   (* -- Header -- *)
+(*
     Format.fprintf fmtCFF "* Header\n";  (* for debug *)
+*)
     d_uint8 d              >>= fun major ->
     d_uint8 d              >>= fun minor ->
+(*
     Format.fprintf fmtCFF "version = %d.%d\n" major minor;  (* for debug *)
+*)
     d_uint8 d              >>= fun hdrSize ->
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
 
   (* -- Name INDEX (which should contain only one element) -- *)
+(*
     Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
+*)
     d_index_singleton (fun len32 -> d_bytes (?@ len32)) d >>= fun name ->
 
   (* -- Top DICT INDEX (which should contain only one DICT) -- *)
+(*
     Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
+*)
     d_index_singleton (fun len32 -> d_dict (?@ len32)) d >>= fun dictmap ->
 
   (* -- String INDEX -- *)
+(*
     Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
+*)
     d_index "(dummy)" (fun len32 -> d_bytes (?@ len32)) d >>= fun stridx ->
 
   (* -- Global Subr INDEX -- *)
+(*
     Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
+*)
     d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun gsubridx ->
       (* temporary; should be decoded *)
 
@@ -3254,7 +3269,9 @@ let d_single_private offset_CFF dictmap d : single_private ok =
   get_integer_pair_opt dictmap (ShortKey(18)) >>= fun privateopt ->
     match privateopt with
     | None ->
+(*
         Format.fprintf fmtCFF "No Private DICT\n";  (* for debug *)
+*)
         err `Invalid_cff_no_private_dict
 
     | Some(size_private, reloffset_private) ->
@@ -3268,9 +3285,13 @@ let d_single_private offset_CFF dictmap d : single_private ok =
       (* -- Local Subr INDEX -- *)
         let offset_lsubrs = offset_private + selfoffset_lsubrs in
         seek_pos offset_lsubrs d >>= fun () ->
+(*
         Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
+*)
         d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun lsubridx ->
+(*
         Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
+*)
         return { default_width_x; nominal_width_x; local_subr_index = lsubridx }
 
 
@@ -3586,7 +3607,9 @@ let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
       if arrlen < 33900 then 1131 else
         32768
   in
+(*
   Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
+*)
   try
     let CharStringData(offset, len32) = idx.(bias + i) in
     return (offset, ?@ len32)
@@ -3691,20 +3714,14 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
                 match lst with
                 | w :: [] -> return (lenrest, Some(Some(w)), cstate, [])
                 | []      -> return (lenrest, Some(None), cstate, [])
-                | _       ->
-                    Format.fprintf fmtCFF "remain1\n";  (* for debug *)
-                    err `Invalid_charstring
+                | _       -> err `Invalid_charstring
               end
 
           | Some(_) ->
               begin
                 match lst with
                 | [] -> return_cleared []
-                | _  ->
-                    Format.fprintf fmtCFF "remain2\n";  (* for debug *)
-                    lst |> List.iter (Format.fprintf fmtCFF "%d,@ ");  (* for debug *)
-                    Format.fprintf fmtCFF "\n";  (* for debug *)
-                    err `Invalid_charstring
+                | _  -> err `Invalid_charstring
               end
         end
 
@@ -4043,7 +4060,9 @@ let charstring_absolute (csinfo : charstring_info) (gid : glyph_id) =
   | Some((_, pcs)) ->
       pcs |> List.fold_left (fun prevres pcselem ->
         prevres >>= fun (curv, accopt) ->
+(*
         Format.fprintf fmtCFF "%a\n" pp_parsed_charstring pcselem;  (* for debug *)
+*)
         match pcselem with
         | HintMask(_)
         | CntrMask(_)
