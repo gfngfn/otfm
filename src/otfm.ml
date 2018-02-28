@@ -12,8 +12,9 @@ let debugfmt =
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
+(*
 let fmtCFF  = Format.std_formatter
-
+*)
 
 module Alist : sig
   type 'a t
@@ -3073,32 +3074,32 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   let numarg = cstate.numarg in
   let numstem = cstate.numstem in
   let return_argument (step, cselem) =
-
+(*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "\n  # numarg = %d ---> %d\n" numarg (numarg + 1);  (* for debug *)
-
+*)
     return (step, { numarg = numarg + 1; numstem = numstem }, cselem)
   in
   let return_flushing_operator (step, cselem) =
-
+(*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-
+*)
     return (step, { numarg = 0; numstem = numstem }, cselem)
   in
   let return_subroutine_operator cselem =
-
+(*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "  # numarg = %d ---> %d\n" numarg (numarg - 1);  (* for debug *)
-
+*)
     return (1, { numarg = numarg - 1; numstem = numstem }, cselem)
 
   in
   let return_stem (step, cselem) =
-
+(*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "  # step = %d, numarg = %d\n" step numarg;  (* for debug *)
     Format.fprintf fmtCFF "  # stem = %d ----> %d\n" numstem (numstem + numarg / 2);  (* for debug *)
-
+*)
     return (step, { numarg = 0; numstem = numstem + numarg / 2 }, cselem)
   in
     (* -- 'numarg' may be an odd number, but it is due to the width value -- *)
@@ -3126,9 +3127,9 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
       return_flushing_operator (1, Operator(ShortKey(b0)))
 
   | 19 ->
-
+(*
       Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
-
+*)
         d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
         return_stem (1 + step, HintMaskOperator(bits))
 
@@ -3625,9 +3626,9 @@ let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
       if arrlen < 33900 then 1131 else
         32768
   in
-
+(*
   Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
-
+*)
   try
     let CharStringData(offset, len32) = idx.(bias + i) in
     return (offset, ?@ len32)
