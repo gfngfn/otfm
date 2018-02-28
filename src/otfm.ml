@@ -12,9 +12,8 @@ let debugfmt =
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
-(*
 let fmtCFF  = Format.std_formatter
-*)
+
 
 module Alist : sig
   type 'a t
@@ -3074,24 +3073,32 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   let numarg = cstate.numarg in
   let numstem = cstate.numstem in
   let return_argument (step, cselem) =
-(*
+
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "\n  # numarg = %d ---> %d\n" numarg (numarg + 1);  (* for debug *)
-*)
+
     return (step, { numarg = numarg + 1; numstem = numstem }, cselem)
   in
-  let return_operator (step, cselem) =
-(*
+  let return_flushing_operator (step, cselem) =
+
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-*)
+
     return (step, { numarg = 0; numstem = numstem }, cselem)
   in
+  let return_subroutine_operator cselem =
+
+    Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
+    Format.fprintf fmtCFF "  # numarg = %d ---> %d\n" numarg (numarg - 1);  (* for debug *)
+
+    return (1, { numarg = numarg - 1; numstem = numstem }, cselem)
+
+  in
   let return_stem (step, cselem) =
-(*
+
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "  # step = %d, numarg = %d\n" step numarg;  (* for debug *)
     Format.fprintf fmtCFF "  # stem = %d ----> %d\n" numstem (numstem + numarg / 2);  (* for debug *)
-*)
+
     return (step, { numarg = 0; numstem = numstem + numarg / 2 }, cselem)
   in
     (* -- 'numarg' may be an odd number, but it is due to the width value -- *)
@@ -3100,8 +3107,12 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
     (* -- stem operators -- *)
       return_stem (1, Operator(ShortKey(b0)))
 
-  | b0  when b0 |> is_in_range 0 10 ->
-      return_operator (1, Operator(ShortKey(b0)))
+  | b0  when b0 |> is_in_range 0 9 ->
+      return_flushing_operator (1, Operator(ShortKey(b0)))
+
+  | (10 | 29) as b0 ->
+    (* -- callsubr / callgsubr operator -- *)
+      return_subroutine_operator (Operator(ShortKey(b0)))
 
   | 11 ->
     (* -- return operator -- *)
@@ -3109,31 +3120,31 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
 
   | 12 ->
       d_uint8 d >>= fun b1 ->
-      return_operator (2, Operator(LongKey(b1)))
+      return_flushing_operator (2, Operator(LongKey(b1)))
 
   | b0  when b0 |> is_in_range 13 18 ->
-      return_operator (1, Operator(ShortKey(b0)))
+      return_flushing_operator (1, Operator(ShortKey(b0)))
 
   | 19 ->
-(*
+
       Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
-*)
+
         d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
         return_stem (1 + step, HintMaskOperator(bits))
 
   | 20 ->
       d_stem_argument numstem d >>= fun (step, arg) ->
-      return_operator (1 + step, CntrMaskOperator(arg))
+      return_flushing_operator (1 + step, CntrMaskOperator(arg))
 
   | b0  when b0 |> is_in_range 21 27 ->
-      return_operator (1, Operator(ShortKey(b0)))
+      return_flushing_operator (1, Operator(ShortKey(b0)))
 
   | 28 ->
       d_twoscompl2 d >>= fun ret ->
       return_argument (3, ArgumentInteger(ret))
 
-  | b0  when b0 |> is_in_range 29 31 ->
-      return_operator (1, Operator(ShortKey(b0)))
+  | b0  when b0 |> is_in_range 30 31 ->
+      return_flushing_operator (1, Operator(ShortKey(b0)))
 
   | b0  when b0 |> is_in_range 32 246 ->
       return_argument (1, ArgumentInteger(b0 - 139))
@@ -3614,9 +3625,9 @@ let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
       if arrlen < 33900 then 1131 else
         32768
   in
-(*
+
   Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
-*)
+
   try
     let CharStringData(offset, len32) = idx.(bias + i) in
     return (offset, ?@ len32)
