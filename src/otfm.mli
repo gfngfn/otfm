@@ -220,6 +220,10 @@ type error =
   | `Missing_required_dict_short_key  of int
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Invalid_cff_no_private_dict
+  | `Unknown_fdselect_format          of int
+  | `Invalid_fd_select                of int
+  | `Invalid_fd_index                 of int
   | `Invalid_charstring_type          of int
   | `Invalid_charstring
   | `Invalid_sid                      of int
@@ -801,8 +805,7 @@ type cff_info =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
-    default_width_x     : int option;
-    nominal_width_x     : int option;
+    number_of_glyphs    : int;
     charstring_info     : charstring_info;
   }
 

@@ -46,12 +46,12 @@ let svgy y = 1000 - y
 
 
 let output_bbox fmt fout (xmin, xmax, ymin, ymax) =
-  let xmins = svgx xmin in
-  let ymins = min (svgy ymin) (svgy ymax) in
-  let wid = svgx xmax - xmins in
+  let sxmins = svgx xmin in
+  let symins = min (svgy ymin) (svgy ymax) in
+  let wid = svgx xmax - sxmins in
   let hgt = abs (svgy ymax - svgy ymin) in
   Format.fprintf fmt "bbox: %d, %d, %d, %d\n" xmin xmax ymin ymax;
-  Printf.fprintf fout "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"none\" stroke=\"red\" />" xmins ymins wid hgt
+  Printf.fprintf fout "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"none\" stroke=\"red\" />" sxmins symins wid hgt
 
 
 let output_path_element fout csptacc pe =
@@ -120,8 +120,12 @@ let main fmt =
         let fout = open_out outname in
         Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
         Printf.fprintf fout "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">";
-        Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"1000\" height=\"1000\" viewBox=\"0 300 1000 1000\">";
-        Printf.fprintf fout "<rect x=\"0\" y=\"0\" width=\"1000\" height=\"1000\" fill=\"none\" stroke=\"blue\" />";
+        let sx1 = svgx x1 in
+        let sy1 = svgx y1 in
+        let sx2 = svgx x2 in
+        let sy2 = svgx y2 in
+        Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"%d\" height=\"%d\" viewBox=\"%d %d %d %d\">" (sx2 - sx1) (sy2 - sy1) sx1 sy1 sx2 sy2;
+        Printf.fprintf fout "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"none\" stroke=\"blue\" />" sx1 sy1 (sx2 - sx1) (sy2 - sy1);
 
         pcs |> List.iter (output_path fout);
         output_bbox fmt fout bbox;

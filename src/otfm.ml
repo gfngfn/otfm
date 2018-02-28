@@ -12,10 +12,33 @@ let debugfmt =
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
 let fmtMATH = debugfmt
+(*
 let fmtCFF  = debugfmt
+*)
 
+module Alist : sig
+  type 'a t
+  val empty : 'a t
+  val extend : 'a t -> 'a -> 'a t
+  val append : 'a t -> 'a list -> 'a t
+  val to_list : 'a t -> 'a list
+end = struct
 
-open Result
+  type 'a t = 'a list
+
+  let empty = []
+
+  let extend acc x =
+    x :: acc
+
+  let append acc lst =
+    List.rev_append lst acc
+
+  let to_list acc =
+    List.rev acc
+
+end
+
 
 (* Error strings *)
 
@@ -169,10 +192,14 @@ type error =
   | `Invalid_cff_not_an_element
   | `Invalid_cff_not_an_offsize       of int
   | `Invalid_cff_not_a_singleton
-  | `Missing_required_dict_short_key  of int
   | `Missing_required_dict_long_key   of int
+  | `Missing_required_dict_short_key  of int
   | `Invalid_cff_inconsistent_length
   | `Invalid_cff_invalid_first_offset
+  | `Invalid_cff_no_private_dict
+  | `Unknown_fdselect_format          of int
+  | `Invalid_fd_select                of int
+  | `Invalid_fd_index                 of int
   | `Invalid_charstring_type          of int
   | `Invalid_charstring
   | `Invalid_sid                      of int
@@ -260,6 +287,14 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ CFF@ table;@ inconsistent@ length@]"
 | `Invalid_cff_invalid_first_offset ->
     pp ppf "@[Invalid@ CFF@ table;@ invalid@ first@ offset@]"
+| `Invalid_cff_no_private_dict ->
+    pp ppf "@[Invalid@ CFF@ table;@ no@ Private@ DICT@]"
+| `Unknown_fdselect_format n ->
+    pp ppf "@[Unknown@ FDSelect@ format@ (%d)@]" n
+| `Invalid_fd_select gid ->
+    pp ppf "@[Invalid@ FDSelect;@ it@ lacks@ a@ necessary@ glyph@ ID (%d)@]" gid
+| `Invalid_fd_index fdi ->
+    pp ppf "@[Invalid@ FD@ index@ (%d)]" fdi
 | `Invalid_charstring_type csty ->
     pp ppf "@[Invalid@ CharString@ type@ (%d)@]" csty
 | `Invalid_charstring ->
@@ -462,11 +497,11 @@ let confirm_version d version versionreq =
 
 let d_repeat n df d =
   let rec aux acc i =
-    if i <= 0 then return (List.rev acc) else
+    if i <= 0 then return (Alist.to_list acc) else
     df d >>= fun data ->
-    aux (data :: acc) (i - 1)
+    aux (Alist.extend acc data) (i - 1)
   in
-  aux [] n
+  aux Alist.empty n
 
 
 let d_list df d =
@@ -477,16 +512,16 @@ let d_list df d =
 
 let d_list_filtered df predicate d =
   let rec aux acc imax i =
-    if i >= imax then return (List.rev acc) else
+    if i >= imax then return (Alist.to_list acc) else
     df d >>= fun data ->
     if predicate i then
-      aux (data :: acc) imax (i + 1)
+      aux (Alist.extend acc data) imax (i + 1)
     else
       aux acc imax (i + 1)
   in
     d_uint16 d >>= fun count ->
     Format.fprintf fmtgen "(d_list_filtered) count = %d\n" count;
-    aux [] count 0
+    aux Alist.empty count 0
 
 
 let d_list_access df ireq d =
@@ -1539,13 +1574,13 @@ let seek_pos_from_list origin scriptTag d =
 
 let d_range_record d =
   let rec range acc i j =
-    if i > j then List.rev acc else
-      range (i :: acc) (i + 1) j
+    if i > j then Alist.to_list acc else
+      range (Alist.extend acc i) (i + 1) j
   in
   d_uint16 d >>= fun start_gid ->
   d_uint16 d >>= fun end_gid ->
   d_uint16 d >>= fun _ -> (* -- startCoverageIndex; can be ignored -- *)
-  return (range [] start_gid end_gid)
+  return (range Alist.empty start_gid end_gid)
 
 
 let d_coverage d : (glyph_id list) ok =
@@ -1627,14 +1662,14 @@ let d_fetch_list offset_origin df d =
 let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : decoder) : (a list) ok =
   let rec aux acc offsetlst =
   match offsetlst with
-  | []             -> return (List.rev acc)
+  | []             -> return (Alist.to_list acc)
   | offset :: tail ->
 (*      let () = Format.fprintf fmtgen ("| offset = " ^ (string_of_int offset)) in  (* for debug *) *)
       seek_pos offset d >>= fun () ->
       df d >>= fun data ->
-      aux (data :: acc) tail
+      aux (Alist.extend acc data) tail
   in
-    aux [] offsetlst
+    aux Alist.empty offsetlst
 
 
 let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> a ok) d : ((glyph_id * a) list) ok =
@@ -2043,10 +2078,10 @@ let d_class_2_record valfmt1 valfmt2 d : (value_record * value_record) ok =
 let numbering lst =
   let rec aux acc i lst =
     match lst with
-    | []           -> List.rev acc
-    | head :: tail -> aux ((i, head) :: acc) (i + 1) tail
+    | []           -> Alist.to_list acc
+    | head :: tail -> aux (Alist.extend acc (i, head)) (i + 1) tail
   in
-    aux [] 0 lst
+    aux Alist.empty 0 lst
 
 
 let d_class_1_record class2Count valfmt1 valfmt2 d : ((class_value * value_record * value_record) list) ok =
@@ -2058,12 +2093,12 @@ let d_class_1_record class2Count valfmt1 valfmt2 d : ((class_value * value_recor
 let d_class_definition_format_1 d : (class_definition list) ok =
   let rec aux acc gidstt lst =
     match lst with
-    | []          -> return (List.rev acc)
-    | cls :: tail -> aux (GlyphToClass(gidstt, cls) :: acc) (gidstt + 1) tail
+    | []          -> return (Alist.to_list acc)
+    | cls :: tail -> aux (Alist.extend acc (GlyphToClass(gidstt, cls))) (gidstt + 1) tail
   in
     d_uint16 d >>= fun startGlyph ->
     d_list d_class d >>= fun classValueArray ->
-    aux [] startGlyph classValueArray
+    aux Alist.empty startGlyph classValueArray
 
 
 let d_class_range_record d : class_definition ok =
@@ -2666,7 +2701,10 @@ type charstring_element =
   | HintMaskOperator of stem_argument
   | CntrMaskOperator of stem_argument
 
-type subroutine_index = (charstring_element list) array
+type charstring_data =
+  | CharStringData of int * int32
+
+type subroutine_index = charstring_data array
 
 type cff_first = string * dict * string_index * subroutine_index * int
 
@@ -2681,7 +2719,25 @@ type cff_cid_info =
     cid_count         : int;
   }
 
-type charstring_info = decoder * subroutine_index * subroutine_index * int
+type single_private = {
+  default_width_x  : int;
+  nominal_width_x  : int;
+  local_subr_index : subroutine_index;
+}
+
+type fdarray = single_private array
+
+type fdindex = int
+
+type fdselect =
+  | FDSelectFormat0 of fdindex array
+  | FDSelectFormat3 of (glyph_id * fdindex) list * glyph_id
+
+type private_info =
+  | SinglePrivate of single_private
+  | FontDicts     of fdarray * fdselect
+
+type charstring_info = decoder * subroutine_index * private_info * int
 
 type cff_info =
   {
@@ -2695,8 +2751,7 @@ type cff_info =
     font_bbox           : int * int * int * int;
     stroke_width        : int;
     cid_info            : cff_cid_info option;
-    default_width_x     : int option;
-    nominal_width_x     : int option;
+    number_of_glyphs    : int;
     charstring_info     : charstring_info;
   }
 
@@ -2750,14 +2805,14 @@ let d_index_singleton dl d =
 let d_cff_length_list ofsz count d =
   let rec aux offsetprev acc i =
     if i >= count then
-      return (List.rev acc)
+      return (Alist.to_list acc)
     else
       d_cff_offset ofsz d >>= fun offset ->
-      aux offset ((offset -@ offsetprev) :: acc) (i + 1)
+      aux offset (Alist.extend acc (offset -@ offsetprev)) (i + 1)
   in
   d_cff_offset ofsz d                                        >>= fun offset1 ->
   confirm (offset1 = ~@ 1) `Invalid_cff_invalid_first_offset >>= fun () ->
-  aux (~@ 1) [] 0
+  aux (~@ 1) Alist.empty 0
 
 
 let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) : (a array) ok =
@@ -2769,20 +2824,33 @@ let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) :
         loop_data arr (i + 1) lentail
   in
   d_uint16 d >>= fun count ->
+(*
   Format.fprintf fmtCFF "INDEX count: %d\n" count;  (* for debug *)
+*)
   if count = 0 then
     return [| |]
   else
     let arr = Array.make count dummy in
     d_offsize d                       >>= fun offSize ->
+(*
     Format.fprintf fmtCFF "INDEX offSize: %a\n" pp_offsize offSize;  (* for debug *)
+*)
     d_cff_length_list offSize count d >>= fun lenlst ->
     loop_data arr 0 lenlst >>= fun () ->
     return arr
 
 
+
+let d_charstring_data (len32 : int32) (d : decoder) : charstring_data ok =
+  let offset = cur_pos d in
+  seek_pos (offset + (?@ len32)) d >>= fun () ->
+  return (CharStringData(offset, len32))
+
+
 let d_cff_real d =
+(*
   Format.fprintf fmtCFF "d_cff_real\n";  (* for debug *)
+*)
   let to_float lst =
     float_of_string (String.concat "" lst)
   in
@@ -2802,24 +2870,26 @@ let d_cff_real d =
     let q2 = raw mod 16 in
     if q1 = 15 then
       if q2 = 15 then
-        return (step + 1, to_float (List.rev acc))
+        return (step + 1, to_float (Alist.to_list acc))
       else
         err `Invalid_cff_not_an_element
     else
       if q2 = 15 then
         nibble q1 >>= fun nb1 ->
-        return (step + 1, to_float (List.rev (nb1 :: acc)))
+        return (step + 1, to_float (Alist.to_list (Alist.extend acc nb1)))
       else
         nibble q2 >>= fun nb2 ->
         nibble q1 >>= fun nb1 ->
-        aux (step + 1) (nb2 :: nb1 :: acc)
+        aux (step + 1) (Alist.extend (Alist.extend acc nb1) nb2)
   in
-  aux 0 []
+  aux 0 Alist.empty
 
 
 let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
   d_uint16 d >>= fun count ->
+(*
   Format.fprintf fmtCFF "count = %d\n" count;  (* for debug *)
+*)
   if iaccess < 0 || count <= iaccess then
     return None
   else
@@ -2831,7 +2901,9 @@ let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d :
       | OffSize3 -> 3
       | OffSize4 -> 4
     in
+(*
     Format.fprintf fmtCFF "OffSize = %a\n" pp_offsize offSize;  (* for debug *)
+*)
     let offset_origin = (cur_pos d) + (count + 1) * ofszint - 1 in
     d_skip (iaccess * ofszint) d >>= fun () ->
     d_cff_offset offSize d >>= fun reloffset_access ->
@@ -2920,12 +2992,14 @@ let pp_element ppf = function
 let d_dict_keyval d : (int * cff_value list * cff_key) ok =
   let rec aux stepsum vacc =
     d_dict_element d >>= fun (step, elem) ->
+(*
       Format.fprintf fmtCFF "dict element: %d, %a\n" step pp_element elem;  (* for debug *)
+*)
       match elem with
-      | Value(v) -> aux (stepsum + step) (v :: vacc)
-      | Key(k)   -> return (stepsum + step, List.rev vacc, k)
+      | Value(v) -> aux (stepsum + step) (Alist.extend vacc v)
+      | Key(k)   -> return (stepsum + step, Alist.to_list vacc, k)
   in
-    aux 0 []
+    aux 0 Alist.empty
 
 
 let d_dict len d : ((cff_value list) DictMap.t) ok =
@@ -2935,22 +3009,51 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
       d_dict_keyval d >>= fun (step, vlst, k) ->
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
+(*
   Format.fprintf fmtCFF "length = %d\n" len;  (* for debug *)
+*)
   loop_keyval DictMap.empty len d
 
 
+let pp_short_key fmt key =
+  let f = Format.fprintf fmt "%s" in
+  match key with
+  | 1  -> f "hstem"
+  | 3  -> f "vstem"
+  | 4  -> f "vmoveto"
+  | 5  -> f "rlineto"
+  | 6  -> f "hlineto"
+  | 7  -> f "vlineto"
+  | 8  -> f "rrcurveto"
+  | 10 -> f "CALLSUBR"
+  | 11 -> f "RETURN"
+  | 14 -> f "endchar"
+  | 18 -> f "hstemhm"
+  | 19 -> f "HINTMASK"
+  | 20 -> f "CNTRMASK"
+  | 21 -> f "rmoveto"
+  | 22 -> f "hmoveto"
+  | 23 -> f "vstemhm"
+  | 24 -> f "rcurveline"
+  | 25 -> f "rlinecurve"
+  | 26 -> f "vvcurveto"
+  | 27 -> f "hhcurveto"
+  | 29 -> f "CALLGSUBR"
+  | 30 -> f "vhcurveto"
+  | 31 -> f "hvcurveto"
+  | i  -> Format.fprintf fmt "!OP(%d)" i
+
+
 let pp_charstring_element fmt = function
-  | ArgumentInteger(i)     -> Format.fprintf fmt "  ArgumentInteger(%d)" i
-  | ArgumentReal(r)        -> Format.fprintf fmt "  ArgumentReal(%f)" r
-  | Operator(ShortKey(10)) -> Format.fprintf fmt "CallSubr"
-  | Operator(ShortKey(29)) -> Format.fprintf fmt "CallGSubr"
-  | Operator(ShortKey(i))  -> Format.fprintf fmt "Operator(%d)" i
-  | Operator(LongKey(i))   -> Format.fprintf fmt "Operator(12 %d)" i
-  | HintMaskOperator(arg)  -> Format.fprintf fmt "HintMaskOperator(...)"
-  | CntrMaskOperator(arg)  -> Format.fprintf fmt "CntrMaskOperator(...)"
+  | ArgumentInteger(i)     -> Format.fprintf fmt "%d " i
+  | ArgumentReal(r)        -> Format.fprintf fmt "%f " r
+  | Operator(ShortKey(i))  -> Format.fprintf fmt "%a\n" pp_short_key i
+  | Operator(LongKey(i))   -> Format.fprintf fmt "OP(12 %d)\n" i
+  | HintMaskOperator(arg)  -> Format.fprintf fmt "HINTMASK(...)\n"
+  | CntrMaskOperator(arg)  -> Format.fprintf fmt "CNTRMASK(...)\n"
 
 
-let d_stem_argument numstem d : (int * stem_argument) ok =
+let d_stem_argument (numstem : int) (d : decoder) : (int * stem_argument) ok =
   let arglen =
     if numstem mod 8 = 0 then
       numstem / 8
@@ -2961,16 +3064,33 @@ let d_stem_argument numstem d : (int * stem_argument) ok =
   return (arglen, arg)
 
 
-let d_charstring_element numarg numstem d =
+type charstring_state = {
+  numarg : int;
+  numstem : int;
+}
+
+
+let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * charstring_state * charstring_element) ok =
+  let numarg = cstate.numarg in
+  let numstem = cstate.numstem in
   let return_argument (step, cselem) =
-    return (step, numarg + 1, numstem, cselem)
+(*
+    Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
+*)
+    return (step, { numarg = numarg + 1; numstem = numstem }, cselem)
   in
   let return_operator (step, cselem) =
-    return (step, 0, numstem, cselem)
+(*
+    Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
+*)
+    return (step, { numarg = 0; numstem = numstem }, cselem)
   in
-  let return_stem   (step, cselem) =
-    Format.fprintf fmtCFF "step = %d, numarg = %d\n" step numarg;  (* for debug *)
-    return (step, 0, numstem + numarg / 2, cselem)
+  let return_stem (step, cselem) =
+(*
+    Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
+    Format.fprintf fmtCFF "  # step = %d, numarg = %d\n" step numarg;  (* for debug *)
+*)
+    return (step, { numarg = 0; numstem = numstem + numarg / 2 }, cselem)
   in
     (* -- 'numarg' may be an odd number, but it is due to the width value -- *)
   d_uint8 d >>= function
@@ -2988,11 +3108,9 @@ let d_charstring_element numarg numstem d =
       return_operator (1, Operator(ShortKey(b0)))
 
   | 19 ->
+(*
       Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
-      if numarg = 0 then
-        d_stem_argument numstem d >>= fun (step, bits) ->
-        return_operator (1 + step, HintMaskOperator(bits))
-      else
+*)
         d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
         return_stem (1 + step, HintMaskOperator(bits))
 
@@ -3032,44 +3150,46 @@ let d_charstring_element numarg numstem d =
         (* -- uint8 value must be in [0 .. 255] -- *)
 
 
-let d_charstring len32 d : (charstring_element list) ok =
-  let rec aux numarg numstem len acc d =
-    if len = 0 then return (List.rev acc) else
-    if len < 0 then err `Invalid_charstring else
-    d_charstring_element numarg numstem d >>= fun (step, numargnew, numstemnew, cselem) ->
-    aux numargnew numstemnew (len - step) (cselem :: acc) d
-  in
-  aux 0 0 (?@ len32) [] d
-
-
-let cff_first d : cff_first ok =
+let cff_first (d : decoder) : cff_first ok =
   init_decoder d >>=
   seek_required_table Tag.cff d >>= fun () ->
   let offset_CFF = cur_pos d in
   (* -- Header -- *)
+(*
     Format.fprintf fmtCFF "* Header\n";  (* for debug *)
+*)
     d_uint8 d              >>= fun major ->
     d_uint8 d              >>= fun minor ->
+(*
     Format.fprintf fmtCFF "version = %d.%d\n" major minor;  (* for debug *)
+*)
     d_uint8 d              >>= fun hdrSize ->
     d_offsize d            >>= fun offSizeGlobal ->
     d_skip (hdrSize - 4) d >>= fun () ->
 
   (* -- Name INDEX (which should contain only one element) -- *)
+(*
     Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
+*)
     d_index_singleton (fun len32 -> d_bytes (?@ len32)) d >>= fun name ->
 
   (* -- Top DICT INDEX (which should contain only one DICT) -- *)
+(*
     Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
+*)
     d_index_singleton (fun len32 -> d_dict (?@ len32)) d >>= fun dictmap ->
 
   (* -- String INDEX -- *)
+(*
     Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
+*)
     d_index "(dummy)" (fun len32 -> d_bytes (?@ len32)) d >>= fun stridx ->
 
   (* -- Global Subr INDEX -- *)
+(*
     Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
-    d_index [] d_charstring d >>= fun gsubridx ->
+*)
+    d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun gsubridx ->
       (* temporary; should be decoded *)
 
     return (name, dictmap, stridx, gsubridx, offset_CFF)
@@ -3144,6 +3264,102 @@ let get_ros dictmap key =
   | None                                                     -> err `Invalid_ros
 
 
+let d_single_private offset_CFF dictmap d : single_private ok =
+(* -- Private DICT -- *)
+  get_integer_pair_opt dictmap (ShortKey(18)) >>= fun privateopt ->
+    match privateopt with
+    | None ->
+(*
+        Format.fprintf fmtCFF "No Private DICT\n";  (* for debug *)
+*)
+        err `Invalid_cff_no_private_dict
+
+    | Some(size_private, reloffset_private) ->
+        let offset_private = offset_CFF + reloffset_private in
+        seek_pos offset_private d >>= fun () ->
+        d_dict size_private d >>= fun dictmap_private ->
+        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_lsubrs ->
+        get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
+        get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
+
+      (* -- Local Subr INDEX -- *)
+        let offset_lsubrs = offset_private + selfoffset_lsubrs in
+        seek_pos offset_lsubrs d >>= fun () ->
+(*
+        Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
+*)
+        d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun lsubridx ->
+(*
+        Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
+*)
+        return { default_width_x; nominal_width_x; local_subr_index = lsubridx }
+
+
+let seek_number_of_glyphs offset_CharString_INDEX d =
+  seek_pos offset_CharString_INDEX d >>= fun () ->
+  d_uint16 d
+
+
+exception Internal of error
+
+
+let seek_fdarray offset_CFF offset_FDArray d : fdarray ok =
+  seek_pos offset_FDArray d >>= fun () ->
+  d_index DictMap.empty (fun len32 -> d_dict (?@ len32)) d >>= fun arrraw ->
+  try
+    let arr =
+      arrraw |> Array.map (fun dictmap ->
+        let res =
+          d_single_private offset_CFF dictmap d
+        in
+        match res with
+        | Error(e)       -> raise (Internal(e))
+        | Ok(singlepriv) -> singlepriv
+      )
+    in
+    return arr
+  with
+  | Internal(e) -> err e
+
+
+let d_fdselect_format_0 nGlyphs d : fdselect ok =
+  let idx = Array.make nGlyphs 0 in
+  let rec aux i =
+    if i >= nGlyphs then
+      return (FDSelectFormat0(idx))
+    else
+      begin
+        d_uint8 d >>= fun v ->
+        idx.(i) <- v;
+        aux (i + 1)
+      end
+
+  in
+  aux 0
+
+
+let d_fdselect_format_3 d : fdselect ok =
+  let rec aux num i acc =
+    if i >= num then
+      d_uint16 d >>= fun gid_sentinel ->
+      return (FDSelectFormat3(Alist.to_list acc, gid_sentinel))
+    else
+      d_uint16 d >>= fun gid ->
+      d_uint8 d >>= fun v ->
+      aux num (i + 1) (Alist.extend acc (gid, v))
+  in
+  d_uint16 d >>= fun nRanges ->
+  aux nRanges 0 Alist.empty
+
+
+let seek_fdselect nGlyphs offset_FDSelect d : fdselect ok =
+  seek_pos offset_FDSelect d >>= fun () ->
+  d_uint8 d >>= function
+  | 0 -> d_fdselect_format_0 nGlyphs d
+  | 3 -> d_fdselect_format_3 d
+  | n -> err (`Unknown_fdselect_format(n))
+
+
 let cff d =
   cff_first d >>= fun (font_name, dictmap, stridx, gsubridx, offset_CFF) ->
 (*
@@ -3163,12 +3379,14 @@ let cff d =
   confirm (charstring_type = 2)
     (`Invalid_charstring_type(charstring_type))      >>= fun () ->
 
-  (* -- have not implemented 'LongKey(7) --> font_matrix' yet *)
+  (* -- have not implemented 'LongKey(7) --> font_matrix' yet; maybe it is not necessary -- *)
 
   get_iquad_opt        dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
   get_integer_opt      dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
-  get_integer          dictmap (ShortKey(17))             >>= fun reloffset_charstring ->
-  let cidoptres =
+  get_integer          dictmap (ShortKey(17))             >>= fun reloffset_CharString_INDEX ->
+  let offset_CharString_INDEX = offset_CFF + reloffset_CharString_INDEX in
+  seek_number_of_glyphs offset_CharString_INDEX d >>= fun number_of_glyphs ->
+  let pairres =
     if DictMap.mem (LongKey(30)) dictmap then
     (* -- when the font is a CIDFont -- *)
       get_ros         dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
@@ -3176,46 +3394,27 @@ let cff d =
       get_integer_opt dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
       get_integer_opt dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
       get_integer_opt dictmap (LongKey(34)) 8720 >>= fun cid_count ->
+      get_integer     dictmap (LongKey(36))      >>= fun reloffset_FDArray ->
+      get_integer     dictmap (LongKey(37))      >>= fun reloffset_FDSelect ->
       get_string stridx sid_registry >>= fun registry ->
       get_string stridx sid_ordering >>= fun ordering ->
+      let offset_FDArray = offset_CFF + reloffset_FDArray in
+      let offset_FDSelect = offset_CFF + reloffset_FDSelect in
+      seek_fdarray offset_CFF offset_FDArray d >>= fun fdarray ->
+      seek_fdselect number_of_glyphs offset_FDSelect d >>= fun fdselect ->
       return (Some{
         registry; ordering; supplement;
         cid_font_version;
         cid_font_revision;
         cid_font_type;
         cid_count;
-      })
+      }, FontDicts(fdarray, fdselect))
     else
     (* -- when the font is not a CIDFont -- *)
-      return None
+      d_single_private offset_CFF dictmap d >>= fun singlepriv ->
+      return (None, SinglePrivate(singlepriv))
   in
-  cidoptres >>= fun cid_info ->
-
-(* -- Private DICT -- *)
-  get_integer_pair_opt dictmap (ShortKey(18)) >>= fun privateopt ->
-  begin
-    match privateopt with
-    | None ->
-        Format.fprintf fmtCFF "No Private DICT\n";  (* for debug *)
-        return (None, None, [| |])
-
-    | Some(size_private, reloffset_private) ->
-        let offset_private = offset_CFF + reloffset_private in
-        seek_pos offset_private d >>= fun () ->
-        d_dict size_private d >>= fun dictmap_private ->
-        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_lsubrs ->
-        get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
-        get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
-
-      (* -- Local Subr INDEX -- *)
-        let offset_lsubrs = offset_private + selfoffset_lsubrs in
-        seek_pos offset_lsubrs d >>= fun () ->
-        Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
-        d_index [] d_charstring d >>= fun lsubridx ->
-        Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
-        return (Some(default_width_x), Some(nominal_width_x), lsubridx)
-
-  end >>= fun (default_width_x_opt, nominal_width_x_opt, lsubridx) ->
+  pairres >>= fun (cid_info, private_info) ->
   return {
     font_name;
     is_fixed_pitch;
@@ -3226,9 +3425,8 @@ let cff d =
     font_bbox;
     stroke_width;
     cid_info;
-    default_width_x = default_width_x_opt;
-    nominal_width_x = default_width_x_opt;
-    charstring_info = (d, gsubridx, lsubridx, offset_CFF + reloffset_charstring);
+    number_of_glyphs;
+    charstring_info = (d, gsubridx, private_info, offset_CharString_INDEX);
   }
 
 
@@ -3402,34 +3600,41 @@ let pp_parsed_charstring fmt = function
   | Flex1(p1, p2, p3, p4, p5, d6)      -> pp fmt "Flex1(%a, %a, %a, %a, %a, %d)" pp_cspoint p1 pp_cspoint p2 pp_cspoint p3 pp_cspoint p4 pp_cspoint p5 d6
 
 
-let access_subroutine idx i =
-  let len = Array.length idx in
+let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
+  let arrlen = Array.length idx in
   let bias =
-    if len < 1240 then 107 else
-      if len < 33900 then 1131 else
+    if arrlen < 1240 then 107 else
+      if arrlen < 33900 then 1131 else
         32768
   in
-  Format.fprintf fmtCFF "[G/L SUBR] length = %d, bias = %d, i = %d, ---> %d\n" len bias i (bias + i);  (* for debug *)
-  try return idx.(bias + i) with
-  | Invalid_argument(_) ->
-      err `Invalid_charstring
+(*
+  Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
+*)
+  try
+    let CharStringData(offset, len32) = idx.(bias + i) in
+    return (offset, ?@ len32)
+  with
+  | Invalid_argument(_) -> err `Invalid_charstring
 
 
-let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (stk : int Stack.t) (cselem : charstring_element) =
+let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (lenrest : int) (cstate : charstring_state) (stk : int Stack.t) (d : decoder) : (int * (int option) option * charstring_state * parsed_charstring list) ok =
+  d_charstring_element cstate d >>= fun (step, cstate, cselem) ->
+  let lenrest = lenrest - step in
+(*
   let () =  (* for debug *)
     match woptoptprev with
-    | None    -> Format.fprintf fmtCFF "X %a\n" pp_charstring_element cselem;  (* for debug *)
-    | Some(_) -> Format.fprintf fmtCFF "O %a\n" pp_charstring_element cselem;  (* for debug *)
+    | None    -> Format.fprintf fmtCFF "# X %a\n" pp_charstring_element cselem;  (* for debug *)
+    | Some(_) -> Format.fprintf fmtCFF "# O %a\n" pp_charstring_element cselem;  (* for debug *)
   in  (* for debug *)
-
+*)
   let return_with_width ret =
     match woptoptprev with
-    | None    -> let wopt = pop_opt stk in return (Some(wopt), ret)
-    | Some(_) -> return (woptoptprev, ret)
+    | None    -> let wopt = pop_opt stk in return (lenrest, Some(wopt), cstate, ret)
+    | Some(_) -> return (lenrest, woptoptprev, cstate, ret)
   in
 
   let return_cleared ret =
-    return (woptoptprev, ret)
+    return (lenrest, woptoptprev, cstate, ret)
   in
 
     match cselem with
@@ -3490,9 +3695,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(10)) ->  (* -- callsubr (10) -- *)
         pop stk >>= fun i ->
-        access_subroutine lsubridx i >>= fun rawcs ->
-        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs >>= fun (woptoptsubr, accsubr) ->
-        return (woptoptsubr, List.rev accsubr)
+        access_subroutine lsubridx i >>= fun (offset, len) ->
+        let offset_init = cur_pos d in
+        seek_pos offset d >>= fun () ->
+        parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
+        seek_pos offset_init d >>= fun () ->
+        return (lenrest, woptoptsubr, cstate, Alist.to_list accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -3504,22 +3712,16 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
           | None ->
               begin
                 match lst with
-                | w :: [] -> return (Some(Some(w)), [])
-                | []      -> return (Some(None), [])
-                | _       ->
-                    Format.fprintf fmtCFF "remain1\n";  (* for debug *)
-                    err `Invalid_charstring
+                | w :: [] -> return (lenrest, Some(Some(w)), cstate, [])
+                | []      -> return (lenrest, Some(None), cstate, [])
+                | _       -> err `Invalid_charstring
               end
 
           | Some(_) ->
               begin
                 match lst with
                 | [] -> return_cleared []
-                | _  ->
-                    Format.fprintf fmtCFF "remain2\n";  (* for debug *)
-                    lst |> List.iter (Format.fprintf fmtCFF "%d,@ ");  (* for debug *)
-                    Format.fprintf fmtCFF "\n";  (* for debug *)
-                    err `Invalid_charstring
+                | _  -> err `Invalid_charstring
               end
         end
 
@@ -3535,16 +3737,24 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         if Stack.length stk = 0 then
           return_with_width [HintMask(arg)]
         else
-        let pairlst = pop_iter pop_pair_opt stk in
-        begin
-          match pairlst with
-          | []                 -> err `Invalid_charstring
-          | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); HintMask(arg)]
-        end
+          let pairlst = pop_iter pop_pair_opt stk in
+          begin
+            match pairlst with
+            | []                 -> err `Invalid_charstring
+            | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); HintMask(arg)]
+          end
 
 
     | CntrMaskOperator(arg) ->
-        return_with_width [CntrMask(arg)]
+        if Stack.length stk = 0 then
+          return_with_width [CntrMask(arg)]
+        else
+          let pairlst = pop_iter pop_pair_opt stk in
+          begin
+            match pairlst with
+            | []                 -> err `Invalid_charstring
+            | (x, dx) :: csptlst -> return_with_width [VStemHM(x, dx, csptlst); CntrMask(arg)]
+          end
 
     | Operator(ShortKey(21)) ->  (* -- rmoveto (21) -- *)
         pop stk >>= fun dy1 ->
@@ -3594,9 +3804,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 
     | Operator(ShortKey(29)) ->  (* -- callgsubr (29) -- *)
         pop stk >>= fun i ->
-        access_subroutine gsubridx i >>= fun rawcs ->
-        parse_charstring stk gsubridx lsubridx (woptoptprev, []) rawcs >>= fun (woptoptsubr, accsubr) ->
-        return (woptoptsubr, List.rev accsubr)
+        access_subroutine gsubridx i >>= fun (offset, len) ->
+        let offset_init = cur_pos d in
+        seek_pos offset d >>= fun () ->
+        parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
+        seek_pos offset_init d >>= fun () ->
+        return (lenrest, woptoptsubr, cstate, Alist.to_list accsubr)
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -3685,28 +3898,75 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(LongKey(i)) ->
         err `Invalid_charstring
 
-and parse_charstring (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (init : (int option) option * parsed_charstring list) (cs : charstring_element list) : ((int option) option * parsed_charstring list) ok =
-  cs |> List.fold_left (fun res cselem ->
-    res >>= fun (woptoptprev, acc) ->
-    parse_progress gsubridx lsubridx woptoptprev stk cselem >>= fun (woptopt, parsed) ->
-    let accnew = List.rev_append parsed acc in
-    match woptopt with
-    | None    -> return (woptoptprev, accnew)
-    | Some(_) -> return (woptopt, accnew)
-  ) (return init)
+
+and parse_charstring (len : int) (cstate : charstring_state) (d : decoder) (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptinit : (int option) option) : ((int option) option * charstring_state * parsed_charstring Alist.t) ok =
+  let rec aux lenrest (woptoptprev, cstate, acc) =
+    parse_progress gsubridx lsubridx woptoptprev lenrest cstate stk d >>= fun (lenrest, woptopt, cstate, parsed) ->
+    let accnew = Alist.append acc parsed in
+    if lenrest = 0 then
+      return (woptopt, cstate, accnew)
+    else
+      if lenrest < 0 then err `Invalid_charstring else
+        match woptopt with
+        | None    -> aux lenrest (woptoptprev, cstate, accnew)
+        | Some(_) -> aux lenrest (woptopt, cstate, accnew)
+  in
+    aux len (woptoptinit, cstate, Alist.empty)
 
 
-let charstring ((d, gsubridx, lsubridx, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
+let select_fd_index (fdselect : fdselect) (gid : glyph_id) : fdindex ok =
+  match fdselect with
+  | FDSelectFormat0(arr) ->
+      begin
+        try return arr.(gid) with
+        | Invalid_argument(_) -> err (`Invalid_fd_select(gid))
+      end
+
+  | FDSelectFormat3(lst, gid_sentinel) ->
+      if gid >= gid_sentinel then
+        err (`Invalid_fd_select(gid))
+      else
+        let opt =
+          lst |> List.fold_left (fun opt (gidc, fdi) ->
+            if gidc <= gid then
+              Some(fdi)
+            else
+              opt
+          ) None
+        in
+        begin
+          match opt with
+          | None      -> err (`Invalid_fd_select(gid))
+          | Some(fdi) -> return fdi
+        end
+
+
+let select_local_subr_index (privinfo : private_info) (gid : glyph_id) : subroutine_index ok =
+  match privinfo with
+  | SinglePrivate(singlepriv) -> return singlepriv.local_subr_index
+  | FontDicts(fdarray, fdselect) ->
+      select_fd_index fdselect gid >>= fun fdindex ->
+      try
+        let singlepriv = fdarray.(fdindex) in
+        return singlepriv.local_subr_index
+      with
+      | Invalid_argument(_) -> err (`Invalid_fd_index(fdindex))
+
+
+let charstring ((d, gsubridx, privinfo, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
+  let cstate = { numarg = 0; numstem = 0 } in
   seek_pos offset_CharString_INDEX d >>= fun () ->
-  d_index_access d_charstring gid d >>= function
+  d_index_access d_charstring_data gid d >>= function
   | None ->
       return None
 
-  | Some(cs) ->
+  | Some(CharStringData(offset, len32)) ->
       let stk : int Stack.t = Stack.create () in
-      parse_charstring stk gsubridx lsubridx (None, []) cs >>= function
-      | (None, acc)       -> err `Invalid_charstring
-      | (Some(wopt), acc) -> return (Some((wopt, List.rev acc)))
+      seek_pos offset d >>= fun () ->
+      select_local_subr_index privinfo gid >>= fun lsubridx ->
+      parse_charstring (?@ len32) cstate d stk gsubridx lsubridx None >>= function
+      | (None, _, acc)       -> err `Invalid_charstring
+      | (Some(wopt), _, acc) -> return (Some((wopt, Alist.to_list acc)))
 
 
 type path_element =
@@ -3721,7 +3981,7 @@ let ( +@- ) (x, y) dx = (x + dx, y)
 let ( +@| ) (x, y) dy = (x, y + dy)
 
 
-let line_parity is_horizontal_init peacc lst curv =
+let line_parity (is_horizontal_init : bool) (peacc : path_element Alist.t) lst curv =
   let rec aux is_horizontal peacc lst curv =
     match lst with
     | [] ->
@@ -3730,16 +3990,16 @@ let line_parity is_horizontal_init peacc lst curv =
     | dt :: tail ->
         if is_horizontal then
           let curvnew = curv +@- dt in
-          aux (not is_horizontal) (LineTo(curvnew) :: peacc) tail curvnew
+          aux (not is_horizontal) (Alist.extend peacc (LineTo(curvnew))) tail curvnew
         else
           let curvnew = curv +@| dt in
-          aux (not is_horizontal) (LineTo(curvnew) :: peacc) tail curvnew
+          aux (not is_horizontal) (Alist.extend peacc (LineTo(curvnew))) tail curvnew
   in
   aux is_horizontal_init peacc lst curv
 
 
-let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
-  let rec aux  is_horizontal acc lst curv =
+let curve_parity (is_horizontal : bool) (peacc : path_element Alist.t) lst (dtD, dvE, dsF) dtFopt curv =
+  let rec aux  is_horizontal peacc lst curv =
     match lst with
     | [] ->
         if is_horizontal then
@@ -3751,7 +4011,7 @@ let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
             | None      -> vE +@| dsF
             | Some(dtF) -> vE +@ (dtF, dsF)
           in
-            (vF, BezierTo(vD, vE, vF) :: acc)
+            (vF, Alist.extend peacc (BezierTo(vD, vE, vF)))
         else
           let vD = curv +@| dtD in
           let vE = vD +@ dvE in
@@ -3760,22 +4020,22 @@ let curve_parity is_horizontal acc lst (dtD, dvE, dsF) dtFopt curv =
             | None      -> vE +@- dsF
             | Some(dtF) -> vE +@ (dsF, dtF)
           in
-            (vF, BezierTo(vD, vE, vF) :: acc)
+            (vF, Alist.extend peacc (BezierTo(vD, vE, vF)))
 
     | (dtA, dvB, dsC) :: tail ->
         if is_horizontal then
           let vA = curv +@- dtA in
           let vB = vA +@ dvB in
           let vC = vB +@| dsC in
-            aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
+            aux (not is_horizontal) (Alist.extend peacc (BezierTo(vA, vB, vC))) tail vC
         else
           let vA = curv +@| dtA in
           let vB = vA +@ dvB in
           let vC = vB +@- dsC in
-            aux (not is_horizontal) (BezierTo(vA, vB, vC) :: acc) tail vC
+            aux (not is_horizontal) (Alist.extend peacc (BezierTo(vA, vB, vC))) tail vC
 
   in
-  aux is_horizontal acc lst curv
+  aux is_horizontal peacc lst curv
 
 
 let flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 =
@@ -3792,7 +4052,7 @@ let flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 =
 type path = cspoint * path_element list
 
 
-let charstring_absolute csinfo gid =
+let charstring_absolute (csinfo : charstring_info) (gid : glyph_id) =
   charstring csinfo gid >>= function
   | None ->
       return None
@@ -3800,7 +4060,9 @@ let charstring_absolute csinfo gid =
   | Some((_, pcs)) ->
       pcs |> List.fold_left (fun prevres pcselem ->
         prevres >>= fun (curv, accopt) ->
+(*
         Format.fprintf fmtCFF "%a\n" pp_parsed_charstring pcselem;  (* for debug *)
+*)
         match pcselem with
         | HintMask(_)
         | CntrMask(_)
@@ -3815,10 +4077,10 @@ let charstring_absolute csinfo gid =
             begin
               match accopt with
               | None ->
-                  return (curvnew, Some((curvnew, []), []))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.empty))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.extend pathacc (cspt, Alist.to_list peacc)))
             end
 
         | HMoveTo(dx) ->
@@ -3826,10 +4088,10 @@ let charstring_absolute csinfo gid =
             begin
               match accopt with
               | None ->
-                  return (curvnew, Some((curvnew, []), []))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.empty))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.extend pathacc (cspt, Alist.to_list peacc)))
             end
 
         | RMoveTo(dv) ->
@@ -3837,10 +4099,10 @@ let charstring_absolute csinfo gid =
             begin
               match accopt with
               | None ->
-                  return (curvnew, Some((curvnew, []), []))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.empty))
 
               | Some(((cspt, peacc), pathacc)) ->
-                  return (curvnew, Some((curvnew, []), (cspt, List.rev peacc) :: pathacc))
+                  return (curvnew, Some((curvnew, Alist.empty), Alist.extend pathacc (cspt, Alist.to_list peacc)))
             end
 
         | RLineTo(csptlst) ->
@@ -3850,7 +4112,7 @@ let charstring_absolute csinfo gid =
               | Some(((cspt, peacc), pathacc)) ->
                   let (curvnew, peaccnew) =
                     csptlst |> List.fold_left (fun (curv, peacc) dv ->
-                      (curv +@ dv, LineTo(curv +@ dv) :: peacc)
+                      (curv +@ dv, Alist.extend peacc (LineTo(curv +@ dv)))
                     ) (curv, peacc)
                   in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
@@ -3880,11 +4142,11 @@ let charstring_absolute csinfo gid =
               | None -> err `Invalid_charstring
               | Some(((cspt, peacc), pathacc)) ->
                   let (curvnew, peaccnew) =
-                    tricsptlst |> List.fold_left (fun (curv, acc) (dvA, dvB, dvC) ->
+                    tricsptlst |> List.fold_left (fun (curv, peacc) (dvA, dvB, dvC) ->
                       let vA = curv +@ dvA in
                       let vB = vA +@ dvB in
                       let vC = vB +@ dvC in
-                        (vC, BezierTo(vA, vB, vC) :: acc)
+                        (vC, Alist.extend peacc (BezierTo(vA, vB, vC)))
                     ) (curv, peacc)
                   in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
@@ -3907,8 +4169,8 @@ let charstring_absolute csinfo gid =
                       let vA = curv +@| dyA in
                       let vB = vA +@ dvB in
                       let vC = vB +@| dyC in
-                      (vC, BezierTo(vA, vB, vC) :: peacc)
-                    ) (v3, BezierTo(v1, v2, v3) :: peacc)
+                      (vC, Alist.extend peacc (BezierTo(vA, vB, vC)))
+                    ) (v3, Alist.extend peacc (BezierTo(v1, v2, v3)))
                   in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
@@ -3933,8 +4195,8 @@ let charstring_absolute csinfo gid =
                     let vA = curv +@- dxA in
                     let vB = vA +@ dvB in
                     let vC = vB +@- dxC in
-                    (vC, BezierTo(vA, vB, vC) :: peacc)
-                  ) (v3, BezierTo(v1, v2, v3) :: peacc)
+                    (vC, Alist.extend peacc (BezierTo(vA, vB, vC)))
+                  ) (v3, Alist.extend peacc (BezierTo(v1, v2, v3)))
                 in
                 return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
@@ -3970,7 +4232,7 @@ let charstring_absolute csinfo gid =
               | None -> err `Invalid_charstring
               | Some(((cspt, peacc), pathacc)) ->
                   let (curvnew, pelstflex) = flex_path curv pt1 pt2 pt3 pt4 pt5 pt6 in
-                  let peaccnew = List.rev_append pelstflex peacc in
+                  let peaccnew = Alist.append peacc pelstflex in
                   return (curvnew, Some((cspt, peaccnew), pathacc))
             end
 
@@ -3980,7 +4242,7 @@ let charstring_absolute csinfo gid =
               | None -> err `Invalid_charstring
               | Some(((cspt, peacc), pathacc)) ->
                   let (curvnew, pelstflex) = flex_path curv (dx1, 0) (dx2, dy2) (dx3, 0) (dx4, 0) (dx5, -dy2) (dx6, 0) in
-                  let peaccnew = List.rev_append pelstflex peacc in
+                  let peaccnew = Alist.append peacc pelstflex in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
 
@@ -3991,7 +4253,7 @@ let charstring_absolute csinfo gid =
               | Some(((cspt, peacc), pathacc)) ->
                   let dy6 = - (dy1 + dy2 + dy5) in
                   let (curvnew, pelstflex) = flex_path curv (dx1, dy1) (dx2, dy2) (dx3, 0) (dx4, 0) (dx5, dy5) (dx6, dy6) in
-                  let peaccnew = List.rev_append pelstflex peacc in
+                  let peaccnew = Alist.append peacc pelstflex in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
 
@@ -4016,14 +4278,14 @@ let charstring_absolute csinfo gid =
                   in
                   let curvnew = abspt6 in
                   let pelstflex = [BezierTo(abspt1, abspt2, abspt3); BezierTo(abspt4, abspt5, abspt6)] in
-                  let peaccnew = List.rev_append pelstflex peacc in
+                  let peaccnew = Alist.append peacc pelstflex in
                   return (curvnew, Some(((cspt, peaccnew), pathacc)))
             end
 
       ) (return ((0, 0), None))
     >>= function
     | (_, None)                           -> return (Some([]))
-    | (_, Some(((cspt, peacc), pathacc))) -> return (Some(List.rev ((cspt, List.rev peacc) :: pathacc)))
+    | (_, Some(((cspt, peacc), pathacc))) -> return (Some(Alist.to_list (Alist.extend pathacc (cspt, Alist.to_list peacc))))
 
 
 type bbox =
