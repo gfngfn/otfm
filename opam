@@ -3,7 +3,7 @@ maintainer: "Daniel Bünzli <daniel.buenzl i@erratique.ch>"
 homepage: "http://erratique.ch/software/otfm"
 authors: [
   "Daniel Bünzli <daniel.buenzl i@erratique.ch>"
-  "gfngfn"
+  "Takashi Suwa"
 ]
 doc: "http://erratique.ch/software/otfm/doc/Otfm"
 dev-repo: "http://erratique.ch/repos/otfm.git"
@@ -26,4 +26,3 @@ build-test: [
   ["ocaml" "pkg/pkg.ml" "build" "--dev-pkg" "%{pinned}%" "--tests" "true"]
   ["ocaml" "pkg/pkg.ml" "test"]
 ]
-
