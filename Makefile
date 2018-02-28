@@ -12,7 +12,9 @@ cff:
 	ocamlbuild -use-ocamlfind cfftrip.native
 	mv cfftrip.native cfftrip
 
+examples:
+	ocamlbuild -use-ocamlfind examples.native
+
 install:
 	sudo install otftrip-local $(PREFIX)
 	sudo install gsubtrip $(PREFIX)
-
