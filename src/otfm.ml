@@ -3117,7 +3117,11 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
 
   | 11 ->
     (* -- return operator -- *)
-      return (1, cstate, Operator(ShortKey(11)))
+      let cselem = Operator(ShortKey(11)) in
+(*
+      Format.fprintf fmtCFF "%a" pp_charstring_element cselem;
+*)
+      return (1, cstate, cselem)
 
   | 12 ->
       d_uint8 d >>= fun b1 ->
@@ -3129,7 +3133,7 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   | 19 ->
     (* -- hintmask operator -- *)
 (*
-      Format.fprintf fmtCFF "hintmask (%d argument)\n" numarg;  (*for debug *)
+      Format.fprintf fmtCFF "hintmask (numstem = %d (numarg = %d) ---> %d)\n" numstem numarg (numstem + numarg / 2);  (*for debug *)
 *)
         d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
         return_stem (1 + step, HintMaskOperator(bits))
@@ -3137,10 +3141,10 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   | 20 ->
     (* -- cntrmask operator -- *)
 (*
-      Format.fprintf fmtCFF "cntrmask (%d argument)\n" numarg;  (*for debug *)
+      Format.fprintf fmtCFF "  # cntrmask (numstem = %d (numarg = %d) ---> %d)\n" numstem numarg (numstem + numarg / 2);  (*for debug *)
 *)
       d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
-      return_flushing_operator (1 + step, CntrMaskOperator(bits))
+      return_stem (1 + step, CntrMaskOperator(bits))
 
   | b0  when b0 |> is_in_range 21 27 ->
       return_flushing_operator (1, Operator(ShortKey(b0)))
@@ -3738,14 +3742,24 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
                 match lst with
                 | w :: [] -> return (lenrest, Some(Some(w)), cstate, [])
                 | []      -> return (lenrest, Some(None), cstate, [])
-                | _       -> err `Invalid_charstring
+                | _       ->
+(*
+                    Format.fprintf fmtCFF "!!endchar1\n";
+                    Format.pp_print_list pp_int fmtCFF lst;
+*)
+                    err `Invalid_charstring
               end
 
           | Some(_) ->
               begin
                 match lst with
                 | [] -> return_cleared []
-                | _  -> err `Invalid_charstring
+                | _  ->
+(*
+                    Format.fprintf fmtCFF "!!endchar2\n";
+                    Format.pp_print_list pp_int fmtCFF lst;
+*)
+                    err `Invalid_charstring
               end
         end
 
