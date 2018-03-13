@@ -7,7 +7,8 @@
 
 
 let debugfmt =
-  Format.formatter_of_out_channel (open_out "/dev/null")
+  let dev_null = if Sys.os_type = "Win32" then "NUL" else "/dev/null" in
+  Format.formatter_of_out_channel (open_out dev_null)
 
 let fmtgen  = debugfmt
 let fmtGSUB = debugfmt
