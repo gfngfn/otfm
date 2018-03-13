@@ -3239,20 +3239,24 @@ let get_string stridx sid =
     | Invalid_argument(_) -> err (`Invalid_sid(sid))
 
 
-let get_integer_opt dictmap key dflt =
+let get_integer_opt dictmap key =
     match DictMap.find_opt key dictmap with
-    | Some(Integer(i) :: []) -> return i
-    | Some(Real(fl) :: [])   -> return (int_of_float fl)  (* -- rounds a float value -- *)
+    | Some(Integer(i) :: []) -> return (Some(i))
+    | Some(Real(fl) :: [])   -> return (Some(int_of_float fl))  (* -- rounds a float value -- *)
     | Some(_)                -> err `Invalid_cff_not_an_integer
-    | None                   -> return dflt
+    | None                   -> return None
+
+
+let get_integer_with_default dictmap key dflt =
+  get_integer_opt dictmap key >>= function
+  | Some(i) -> return i
+  | None    -> return dflt
 
 
 let get_integer dictmap key =
-  match DictMap.find_opt key dictmap with
-  | Some(Integer(i) :: []) -> return i
-  | Some(Real(fl) :: [])   -> return (int_of_float fl)  (* -- rounds a float value -- *)
-  | Some(_)                -> err `Invalid_cff_not_an_integer
-  | None                   -> err_dict_key key
+  get_integer_opt dictmap key >>= function
+  | Some(i) -> return i
+  | None    -> err_dict_key key
 
 
 let get_integer_pair_opt dictmap key =
@@ -3268,15 +3272,15 @@ let get_integer_pair_opt dictmap key =
 let get_sid = get_integer
 
 
-let get_real_opt dictmap key dflt =
+let get_real_with_default dictmap key dflt =
     match DictMap.find_opt key dictmap with
     | Some(Real(r) :: []) -> return r
     | Some(_)             -> err `Invalid_cff_not_an_integer
     | None                -> return dflt
 
 
-let get_boolean_opt dictmap key dflt =
-  get_integer_opt dictmap key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
+let get_boolean_with_defautlt dictmap key dflt =
+  get_integer_with_default dictmap key (if dflt then 1 else 0) >>= fun i -> return (i <> 0)
 
 
 let get_iquad_opt dictmap key dflt =
@@ -3307,17 +3311,25 @@ let d_single_private offset_CFF dictmap d : single_private ok =
         let offset_private = offset_CFF + reloffset_private in
         seek_pos offset_private d >>= fun () ->
         d_dict size_private d >>= fun dictmap_private ->
-        get_integer     dictmap_private (ShortKey(19))   >>= fun selfoffset_lsubrs ->
-        get_integer_opt dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
-        get_integer_opt dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
+        get_integer_opt          dictmap_private (ShortKey(19))   >>= fun selfoffset_lsubrs_opt ->
+        get_integer_with_default dictmap_private (ShortKey(20)) 0 >>= fun default_width_x ->
+        get_integer_with_default dictmap_private (ShortKey(21)) 0 >>= fun nominal_width_x ->
 
       (* -- Local Subr INDEX -- *)
-        let offset_lsubrs = offset_private + selfoffset_lsubrs in
-        seek_pos offset_lsubrs d >>= fun () ->
-(*
-        Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
-*)
-        d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun lsubridx ->
+        let lsubrsidx_res =
+          match selfoffset_lsubrs_opt with
+          | None ->
+              return [||]
+
+          | Some(selfoffset_lsubrs) ->
+              let offset_lsubrs = offset_private + selfoffset_lsubrs in
+              seek_pos offset_lsubrs d >>= fun () ->
+      (*
+              Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
+      *)
+              d_index (CharStringData(0, 0l)) d_charstring_data d
+        in
+        lsubrsidx_res >>= fun lsubridx ->
 (*
         Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
 *)
@@ -3399,30 +3411,30 @@ let cff d =
   get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
   get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
   get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
-  get_boolean_opt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
-  get_integer_opt dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
-  get_integer_opt dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
-  get_integer_opt dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
-  get_integer_opt dictmap (LongKey(5) ) 0            >>= fun paint_type ->
-  get_integer_opt dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
+  get_boolean_with_defautlt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
+  get_integer_with_default  dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
+  get_integer_with_default  dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
+  get_integer_with_default  dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
+  get_integer_with_default  dictmap (LongKey(5) ) 0            >>= fun paint_type ->
+  get_integer_with_default  dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
   confirm (charstring_type = 2)
     (`Invalid_charstring_type(charstring_type))      >>= fun () ->
 
   (* -- have not implemented 'LongKey(7) --> font_matrix' yet; maybe it is not necessary -- *)
 
   get_iquad_opt        dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-  get_integer_opt      dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
+  get_integer_with_default      dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
   get_integer          dictmap (ShortKey(17))             >>= fun reloffset_CharString_INDEX ->
   let offset_CharString_INDEX = offset_CFF + reloffset_CharString_INDEX in
   seek_number_of_glyphs offset_CharString_INDEX d >>= fun number_of_glyphs ->
   let pairres =
     if DictMap.mem (LongKey(30)) dictmap then
     (* -- when the font is a CIDFont -- *)
-      get_ros         dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
-      get_real_opt    dictmap (LongKey(31)) 0.   >>= fun cid_font_version ->
-      get_integer_opt dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
-      get_integer_opt dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
-      get_integer_opt dictmap (LongKey(34)) 8720 >>= fun cid_count ->
+      get_ros                  dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
+      get_real_with_default    dictmap (LongKey(31)) 0.   >>= fun cid_font_version ->
+      get_integer_with_default dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
+      get_integer_with_default dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
+      get_integer_with_default dictmap (LongKey(34)) 8720 >>= fun cid_count ->
       get_integer     dictmap (LongKey(36))      >>= fun reloffset_FDArray ->
       get_integer     dictmap (LongKey(37))      >>= fun reloffset_FDSelect ->
       get_string stridx sid_registry >>= fun registry ->
