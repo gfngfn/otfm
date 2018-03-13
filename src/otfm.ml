@@ -3407,10 +3407,10 @@ let cff d =
   get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
   get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
   get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
-*)
   get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
   get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
   get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
+*)
   get_boolean_with_defautlt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
   get_integer_with_default  dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
   get_integer_with_default  dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
