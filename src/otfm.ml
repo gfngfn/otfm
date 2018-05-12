@@ -4491,9 +4491,11 @@ let charstring_bbox (pathlst : path list) =
 module Encode = struct
 
   type raw_table = {
-    table_tag    : tag;
-    table_length : int;
-    table_data   : string;
+    table_tag            : tag;
+    table_content_length : int;
+    table_padded_length  : int;
+    table_checksum       : int;
+    table_data           : string;
   }
 
   type encoder = {
@@ -4506,11 +4508,42 @@ module Encode = struct
       (* -- the initial size is an arbitrary positive number -- *)
 
 
+  let pad_data s len =
+    let r = (4 - len mod 4) mod 4 in
+    let sp = s ^ (String.make r (Char.chr 0)) in
+    (sp, len + r)
+
+
+  let table_checksum sp lenp =
+    let rec aux acc i =
+      if i >= lenp then acc else
+        let b0 = Char.code (String.get sp i) in
+        let b1 = Char.code (String.get sp (i + 1)) in
+        let b2 = Char.code (String.get sp (i + 2)) in
+        let b3 = Char.code (String.get sp (i + 3)) in
+        let ui = (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3 in
+        aux (acc + ui) (i + 4)
+    in
+    aux 0 0
+
+
   let to_raw_table tag enc =
     let buf = enc.buffer in
     let len = Buffer.length buf in
     let s = Buffer.contents buf in
-    { table_tag = tag; table_length = len; table_data = s; }
+    let (sp, lenp) = pad_data s len in
+    let chksum = table_checksum sp lenp in
+      {
+        table_tag            = tag;
+        table_content_length = len;
+        table_padded_length  = lenp;
+        table_checksum       = chksum;
+        table_data           = sp;
+      }
+
+
+  let compare_table rawtbl1 rawtbl2 =
+    Tag.compare rawtbl1.table_tag rawtbl2.table_tag
 
 
   let enc_uint8_unsafe enc ui =
@@ -4605,6 +4638,60 @@ module Encode = struct
         enc_uint32_unsafe enc (Int64.to_int q1_64);
         return ()
       end
+
+
+  let enc_direct enc s =
+    begin
+      Buffer.add_string enc.buffer s;
+      return ()
+    end
+
+
+  let calculate_header_constants numTables =
+    let rec aux n a =
+      let anext = a * 2 in
+      if anext <= numTables then
+        aux (n + 1) anext
+      else
+        (a * 16, n)
+    in
+    aux 0 1
+
+
+  let make_font_file rawtbllst =
+    let sfntVersion = 0x00010000 in
+    let numTables = List.length rawtbllst in
+    let (searchRange, entrySelector) = calculate_header_constants numTables in
+    let rangeShift = numTables * 16 - searchRange in
+    let rawtbllst = List.sort compare_table rawtbllst in
+    let enc = create_encoder () in
+
+  (* -- outputs the header -- *)
+    enc_uint32 enc sfntVersion   >>= fun () ->
+    enc_uint16 enc numTables     >>= fun () ->
+    enc_uint16 enc searchRange   >>= fun () ->
+    enc_uint16 enc entrySelector >>= fun () ->
+    enc_uint16 enc rangeShift    >>= fun () ->
+
+  (* -- outputs all table directories -- *)
+    let offset_init = 12 + numTables * 16 in
+    rawtbllst |> List.fold_left (fun res rawtbl ->
+      res >>= fun offset ->
+      enc_uint32 enc (Int32.to_int rawtbl.table_tag) >>= fun () ->
+      enc_uint32 enc rawtbl.table_checksum           >>= fun () ->
+      enc_uint32 enc offset                          >>= fun () ->
+      enc_uint32 enc rawtbl.table_content_length     >>= fun () ->
+      return (offset + rawtbl.table_padded_length)
+    ) (return offset_init) >>= fun _ ->
+
+  (* -- outputs all tables -- *)
+    rawtbllst |> List.fold_left (fun res rawtbl ->
+      res >>= fun () ->
+      enc_direct enc rawtbl.table_data
+    ) (return ()) >>= fun () ->
+
+    let data = Buffer.contents enc.buffer in
+    return data
 
 
   let empty_cmap () : raw_table ok =

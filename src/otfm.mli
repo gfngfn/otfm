@@ -918,6 +918,8 @@ module Encode : sig
 
   type raw_table
 
+  val make_font_file : raw_table list -> (string, error) result
+
   val empty_cmap : unit -> (raw_table, error) result
 
   val head : head -> (raw_table, error) result
