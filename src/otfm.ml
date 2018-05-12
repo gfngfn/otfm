@@ -206,6 +206,7 @@ type error =
   | `Invalid_sid                      of int
   | `Invalid_ros
   | `Layered_ttc
+
   | `Not_encodable_as_uint8
   | `Not_encodable_as_int8
   | `Not_encodable_as_uint16
@@ -313,6 +314,21 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ ROS@]"
 | `Layered_ttc ->
     pp ppf "@[Layered@ TTC@]"
+
+| `Not_encodable_as_uint8 ->
+    pp ppf "@[Not@ encodable@ as@ uint8@]"
+| `Not_encodable_as_int8 ->
+    pp ppf "@[Not@ encodable@ as@ int8@]"
+| `Not_encodable_as_uint16 ->
+    pp ppf "@[Not@ encodable@ as@ uint16@]"
+| `Not_encodable_as_int16 ->
+    pp ppf "@[Not@ encodable@ as@ int16@]"
+| `Not_encodable_as_uint32 ->
+    pp ppf "@[Not@ encodable@ as@ uint32@]"
+| `Not_encodable_as_int32 ->
+    pp ppf "@[Not@ encodable@ as@ int32@]"
+| `Not_encodable_as_time ->
+    pp ppf "@[Not@ encodable@ as@ LONGDATETIME@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
@@ -4543,7 +4559,7 @@ module Encode = struct
     enc_uint32 enc 0x00010000          >>= fun () ->  (* -- Table Version Number -- *)
     enc_uint32 enc fontRevision        >>= fun () ->
     enc_uint32 enc checkSumAdjustment  >>= fun () ->
-    enc_uint32 enc 0x5F0F3CF5          >>= fun () ->  (* -- magicNumber -- *)
+    enc_uint32 enc 0x5F0F3CF5          >>= fun () ->  (* -- 'magicNumber' -- *)
     enc_uint16 enc h.head_flags        >>= fun () ->
     enc_uint16 enc h.head_units_per_em >>= fun () ->
     enc_time   enc h.head_created      >>= fun () ->
@@ -4554,14 +4570,33 @@ module Encode = struct
     enc_int16  enc h.head_ymax         >>= fun () ->
     enc_uint16 enc h.head_mac_style    >>= fun () ->
     enc_uint16 enc h.head_lowest_rec_ppem     >>= fun () ->
-    enc_int16  enc 0                          >>= fun () ->  (* -- fontDirectionHint -- *)
+    enc_int16  enc 0                          >>= fun () ->  (* -- 'fontDirectionHint' -- *)
     enc_int16  enc h.head_index_to_loc_format >>= fun () ->
-    enc_int16  enc 0                          >>= fun () ->  (* -- glyphDataFormat -- *)
+    enc_int16  enc 0                          >>= fun () ->  (* -- 'glyphDataFormat' -- *)
     let (len, data) = to_string enc in
     return { table_tag = Tag.head; table_length = len; table_data = data; }
 
-(*
-  let hhea (h : hhea) : raw_table ok =
-    return { table_tag = Tag.hhea; table_data = data; }
-*)
+
+  let hhea (numberOfHMetrics : int) (h : hhea) : raw_table ok =
+    let enc = create_encoder () in
+    enc_uint32 enc 0x00010000                    >>= fun () ->
+    enc_int16  enc h.hhea_ascender               >>= fun () ->
+    enc_int16  enc h.hhea_descender              >>= fun () ->
+    enc_int16  enc h.hhea_line_gap               >>= fun () ->
+    enc_uint16 enc h.hhea_advance_width_max      >>= fun () ->
+    enc_int16  enc h.hhea_min_left_side_bearing  >>= fun () ->
+    enc_int16  enc h.hhea_min_right_side_bearing >>= fun () ->
+    enc_int16  enc h.hhea_xmax_extent            >>= fun () ->
+    enc_int16  enc h.hhea_caret_slope_rise       >>= fun () ->
+    enc_int16  enc h.hhea_caret_slope_run        >>= fun () ->
+    enc_int16  enc h.hhea_caret_offset           >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->  (* -- 'metricDataFormat' -- *)
+    enc_uint16 enc numberOfHMetrics              >>= fun () ->
+    let (len, data) = to_string enc in
+    return { table_tag = Tag.hhea; table_length = len; table_data = data; }
+
 end

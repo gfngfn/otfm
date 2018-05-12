@@ -229,6 +229,14 @@ type error =
   | `Invalid_sid                      of int
   | `Invalid_ros
   | `Layered_ttc
+
+  | `Not_encodable_as_uint8
+  | `Not_encodable_as_int8
+  | `Not_encodable_as_uint16
+  | `Not_encodable_as_int16
+  | `Not_encodable_as_uint32
+  | `Not_encodable_as_int32
+  | `Not_encodable_as_time
 ]
 (** The type for decoding errors.
 
