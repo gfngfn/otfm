@@ -4408,3 +4408,99 @@ let charstring_bbox (pathlst : path list) =
   match bbox with
   | BBoxInital                   -> None  (* needs reconsideration *)
   | BBox(xmin, xmax, ymin, ymax) -> (Some((xmin, xmax, ymin, ymax)))
+
+
+module Encode = struct
+
+  type raw_table = {
+    table_tag  : tag;
+    table_data : string;
+  }
+
+  type encoder = {
+    buffer : Buffer.t;
+  }
+
+
+  let enc_uint8_unsafe enc ui =
+    Buffer.add_char enc.buffer (Char.chr ui)
+
+
+  let enc_uint16_unsafe enc ui =
+    let b0 = ui lsr 8 in
+    let b1 = ui - (b0 lsl 8) in
+    begin
+      enc_uint8_unsafe enc b0;
+      enc_uint8_unsafe enc b1;
+    end
+
+
+  let enc_uint32_unsafe enc ui =
+    let b0 = ui lsr 24 in
+    let r0 = ui - (b0 lsl 24) in
+    let b1 = r0 lsr 16 in
+    let r1 = r0 - (b1 lsl 16) in
+    let b2 = r1 lsr 8 in
+    let b3 = r1 - (b2 lsl 8) in
+    begin
+      enc_uint8_unsafe enc b0;
+      enc_uint8_unsafe enc b1;
+      enc_uint8_unsafe enc b2;
+      enc_uint8_unsafe enc b3;
+    end
+
+
+  let enc_uint8 enc ui =
+    try
+      enc_uint8_unsafe enc ui;
+      return ()
+    with
+    | Invalid_argument(_) -> err `Not_encodable_as_uint8
+
+
+  let enc_uint16 enc ui =
+    if not (0 <= ui && ui < 0x10000) then
+      err `Not_encodable_as_uint16
+    else
+      begin
+        enc_uint16_unsafe enc ui;
+        return ()
+      end
+
+
+  let enc_int16 enc i =
+    if not (-0x8000 <= i && i < 0x8000) then
+      err `Not_encodable_as_int16
+    else
+      let ui = if i < 0 then i + 0x10000 else i in
+      begin
+        enc_uint16_unsafe enc ui;
+        return ()
+      end
+
+
+  let enc_uint32 enc ui =
+    if not (0 <= ui && ui < 0x100000000) then
+      err `Not_encodable_as_uint32
+    else
+      begin
+        enc_uint32_unsafe enc ui;
+        return ()
+      end
+
+
+  let enc_int32 (enc : encoder) (i : int) =
+    if not (-0x80000000 <= i && i < 0x80000000) then
+      err `Not_encodable_as_int32
+    else
+      let ui = if i < 0 then i + 0x100000000 else i in
+      begin
+        enc_uint32_unsafe enc ui;
+        return ()
+      end
+
+(*
+  let head (h : head) =
+    ()
+*)
+end
