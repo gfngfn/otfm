@@ -1239,6 +1239,61 @@ let hmtx d f acc =
   d_hmetric hm_count hm_count f acc (-1) d >>= fun (acc, last_adv) ->
   d_hlsb glyph_count (glyph_count - hm_count) f acc last_adv d
 
+(* maxp table *)
+
+type maxp = {
+  maxp_num_glyphs : int;
+  maxp_max_points : int;
+  maxp_max_contours : int;
+  maxp_max_composite_points : int;
+  maxp_max_composite_contours : int;
+  maxp_max_zones : int;
+  maxp_max_twilight_points : int;
+  maxp_max_storage : int;
+  maxp_max_function_defs : int;
+  maxp_max_instruction_defs : int;
+  maxp_max_stack_elements : int;
+  maxp_max_size_of_instructions : int;
+  maxp_max_component_elements : int;
+  maxp_max_component_depth : int;
+}
+
+let maxp d =
+  init_decoder d >>=
+  seek_required_table Tag.maxp d >>= fun () ->
+  d_uint32 d >>= fun version ->
+  if version <> 0x00010000l then err_version d version else
+  d_uint16 d >>= fun maxp_num_glyphs ->
+  d_uint16 d >>= fun maxp_max_points ->
+  d_uint16 d >>= fun maxp_max_contours ->
+  d_uint16 d >>= fun maxp_max_composite_points ->
+  d_uint16 d >>= fun maxp_max_composite_contours ->
+  d_uint16 d >>= fun maxp_max_zones ->
+  d_uint16 d >>= fun maxp_max_twilight_points ->
+  d_uint16 d >>= fun maxp_max_storage ->
+  d_uint16 d >>= fun maxp_max_function_defs ->
+  d_uint16 d >>= fun maxp_max_instruction_defs ->
+  d_uint16 d >>= fun maxp_max_stack_elements ->
+  d_uint16 d >>= fun maxp_max_size_of_instructions ->
+  d_uint16 d >>= fun maxp_max_component_elements ->
+  d_uint16 d >>= fun maxp_max_component_depth ->
+  return {
+    maxp_num_glyphs;
+    maxp_max_points;
+    maxp_max_contours;
+    maxp_max_composite_points;
+    maxp_max_composite_contours;
+    maxp_max_zones;
+    maxp_max_twilight_points;
+    maxp_max_storage;
+    maxp_max_function_defs;
+    maxp_max_instruction_defs;
+    maxp_max_stack_elements;
+    maxp_max_size_of_instructions;
+    maxp_max_component_elements;
+    maxp_max_component_depth;
+  }
+
 (* name table *)
 
 (* Source: https://skia.googlecode.com/svn/trunk/src/sfnt/SkOTTable_name.cpp
@@ -4451,11 +4506,11 @@ module Encode = struct
       (* -- the initial size is an arbitrary positive number -- *)
 
 
-  let to_string enc =
+  let to_raw_table tag enc =
     let buf = enc.buffer in
     let len = Buffer.length buf in
     let s = Buffer.contents buf in
-    (len, s)
+    { table_tag = tag; table_length = len; table_data = s; }
 
 
   let enc_uint8_unsafe enc ui =
@@ -4552,6 +4607,14 @@ module Encode = struct
       end
 
 
+  let empty_cmap () : raw_table ok =
+    let enc = create_encoder () in
+    enc_uint16 enc 0 >>= fun () ->  (* -- 'Version' -- *)
+    enc_uint16 enc 0 >>= fun () ->  (* -- 'numTables' -- *)
+    let rawtbl = to_raw_table Tag.cmap enc in
+    return rawtbl
+
+
   let head (h : head) : raw_table ok =
     let enc = create_encoder () in
     let fontRevision = Int32.to_int h.head_font_revision in
@@ -4573,8 +4636,8 @@ module Encode = struct
     enc_int16  enc 0                          >>= fun () ->  (* -- 'fontDirectionHint' -- *)
     enc_int16  enc h.head_index_to_loc_format >>= fun () ->
     enc_int16  enc 0                          >>= fun () ->  (* -- 'glyphDataFormat' -- *)
-    let (len, data) = to_string enc in
-    return { table_tag = Tag.head; table_length = len; table_data = data; }
+    let rawtbl = to_raw_table Tag.head enc in
+    return rawtbl
 
 
   let hhea (numberOfHMetrics : int) (h : hhea) : raw_table ok =
@@ -4596,7 +4659,28 @@ module Encode = struct
     enc_int16  enc 0                             >>= fun () ->
     enc_int16  enc 0                             >>= fun () ->  (* -- 'metricDataFormat' -- *)
     enc_uint16 enc numberOfHMetrics              >>= fun () ->
-    let (len, data) = to_string enc in
-    return { table_tag = Tag.hhea; table_length = len; table_data = data; }
+    let rawtbl = to_raw_table Tag.hhea enc in
+    return rawtbl
+
+
+  let maxp (m : maxp) : raw_table ok =
+    let enc = create_encoder () in
+    enc_uint32 enc 0x00010000                      >>= fun () ->  (* -- Table version number -- *)
+    enc_uint16 enc m.maxp_num_glyphs               >>= fun () ->
+    enc_uint16 enc m.maxp_max_points               >>= fun () ->
+    enc_uint16 enc m.maxp_max_contours             >>= fun () ->
+    enc_uint16 enc m.maxp_max_composite_points     >>= fun () ->
+    enc_uint16 enc m.maxp_max_composite_contours   >>= fun () ->
+    enc_uint16 enc m.maxp_max_zones                >>= fun () ->
+    enc_uint16 enc m.maxp_max_twilight_points      >>= fun () ->
+    enc_uint16 enc m.maxp_max_storage              >>= fun () ->
+    enc_uint16 enc m.maxp_max_function_defs        >>= fun () ->
+    enc_uint16 enc m.maxp_max_instruction_defs     >>= fun () ->
+    enc_uint16 enc m.maxp_max_stack_elements       >>= fun () ->
+    enc_uint16 enc m.maxp_max_size_of_instructions >>= fun () ->
+    enc_uint16 enc m.maxp_max_component_elements   >>= fun () ->
+    enc_uint16 enc m.maxp_max_component_depth      >>= fun () ->
+    let rawtbl = to_raw_table Tag.maxp enc in
+    return rawtbl
 
 end

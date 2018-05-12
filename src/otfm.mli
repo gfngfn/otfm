@@ -421,6 +421,29 @@ val hmtx :
     [0] to glyph count minus one), [adv] the (unsigned) advance width,
     and [lsb] the (signed) left side bearing. *)
 
+(** {2:maxp max table} *)
+
+type maxp =
+  { maxp_num_glyphs : int;
+    maxp_max_points : int;
+    maxp_max_contours : int;
+    maxp_max_composite_points : int;
+    maxp_max_composite_contours : int;
+    maxp_max_zones : int;
+    maxp_max_twilight_points : int;
+    maxp_max_storage : int;
+    maxp_max_function_defs : int;
+    maxp_max_instruction_defs : int;
+    maxp_max_stack_elements : int;
+    maxp_max_size_of_instructions : int;
+    maxp_max_component_elements : int;
+    maxp_max_component_depth : int; }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/maxp.htm}maxp} tables. *)
+
+val maxp : decoder -> (maxp, error) result
+(** [maxp d] is the maxp table. *)
+
 (** {2:name name table} *)
 
 type lang = string
@@ -889,6 +912,21 @@ type path = cspoint * path_element list
 val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, error) result
 
 val charstring_bbox : path list -> (csx * csx * csy * csy) option
+
+
+module Encode : sig
+
+  type raw_table
+
+  val empty_cmap : unit -> (raw_table, error) result
+
+  val head : head -> (raw_table, error) result
+
+  val hhea : int -> hhea -> (raw_table, error) result
+
+  val maxp : maxp -> (raw_table, error) result
+
+end
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa
