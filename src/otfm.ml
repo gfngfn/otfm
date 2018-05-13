@@ -208,15 +208,16 @@ type error =
   | `Layered_ttc
   | `Invalid_index_to_loc_format      of int
 
-  | `Not_encodable_as_uint8
-  | `Not_encodable_as_int8
-  | `Not_encodable_as_uint16
-  | `Not_encodable_as_int16
-  | `Not_encodable_as_uint32
-  | `Not_encodable_as_int32
-  | `Not_encodable_as_time
+  | `Not_encodable_as_uint8           of int
+  | `Not_encodable_as_int8            of int
+  | `Not_encodable_as_uint16          of int
+  | `Not_encodable_as_int16           of int
+  | `Not_encodable_as_uint32          of int
+  | `Not_encodable_as_int32           of int
+  | `Not_encodable_as_time            of Int64.t
   | `Too_many_glyphs_for_encoding     of int
   | `No_glyph_for_encoding
+  | `Missing_head_table_for_encoding
 ]
 
 let pp_ctx ppf = function
@@ -320,24 +321,26 @@ let pp_error ppf = function
 | `Invalid_index_to_loc_format locfmt ->
     pp ppf "@[Invalid@ IndexToLocFormat@ entry@ in@ the@ 'head'@ table@ (%d)@]" locfmt
 
-| `Not_encodable_as_uint8 ->
-    pp ppf "@[Not@ encodable@ as@ uint8@]"
-| `Not_encodable_as_int8 ->
-    pp ppf "@[Not@ encodable@ as@ int8@]"
-| `Not_encodable_as_uint16 ->
-    pp ppf "@[Not@ encodable@ as@ uint16@]"
-| `Not_encodable_as_int16 ->
-    pp ppf "@[Not@ encodable@ as@ int16@]"
-| `Not_encodable_as_uint32 ->
-    pp ppf "@[Not@ encodable@ as@ uint32@]"
-| `Not_encodable_as_int32 ->
-    pp ppf "@[Not@ encodable@ as@ int32@]"
-| `Not_encodable_as_time ->
-    pp ppf "@[Not@ encodable@ as@ LONGDATETIME@]"
+| `Not_encodable_as_uint8 ui ->
+    pp ppf "@[Not@ encodable@ as@ uint8@ (%d)@]" ui
+| `Not_encodable_as_int8 i ->
+    pp ppf "@[Not@ encodable@ as@ int8@ (%d)@]" i
+| `Not_encodable_as_uint16 ui ->
+    pp ppf "@[Not@ encodable@ as@ uint16@ (%d)@]" ui
+| `Not_encodable_as_int16 i ->
+    pp ppf "@[Not@ encodable@ as@ int16@ (%d)@]" i
+| `Not_encodable_as_uint32 ui ->
+    pp ppf "@[Not@ encodable@ as@ uint32@ (%d)@]" ui
+| `Not_encodable_as_int32 i ->
+    pp ppf "@[Not@ encodable@ as@ int32@ (%d)@]" i
+| `Not_encodable_as_time i64 ->
+    pp ppf "@[Not@ encodable@ as@ LONGDATETIME@ (%s)@]" (Int64.to_string i64)
 | `Too_many_glyphs_for_encoding num ->
     pp ppf "@[Too@ many@ glyphs@ for@ encoding@ (%d)@]" num
 | `No_glyph_for_encoding ->
     pp ppf "@[No@ glyph@ for@ encoding@]"
+| `Missing_head_table_for_encoding ->
+    pp ppf "@[Missing@ 'head'@ table@ for@ encoding@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
@@ -4617,6 +4620,10 @@ module Encode = struct
     (sp, len + r)
 
 
+  let add_checksum x y =
+    (x + y) mod (1 lsl 32)
+
+
   let table_checksum sp lenp =
     let rec aux acc i =
       if i >= lenp then acc else
@@ -4625,7 +4632,7 @@ module Encode = struct
         let b2 = Char.code (String.get sp (i + 2)) in
         let b3 = Char.code (String.get sp (i + 3)) in
         let ui = (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3 in
-        aux (acc + ui) (i + 4)
+        aux (add_checksum acc ui) (i + 4)
     in
     aux 0 0
 
@@ -4636,6 +4643,7 @@ module Encode = struct
     let s = Buffer.contents buf in
     let (sp, lenp) = pad_data s len in
     let chksum = table_checksum sp lenp in
+    Printf.printf "table checksum: %d\n" chksum;
       {
         table_tag            = tag;
         table_content_length = len;
@@ -4650,25 +4658,35 @@ module Encode = struct
 
 
   let enc_uint8_unsafe enc ui =
-    Buffer.add_char enc.buffer (Char.chr ui)
+    try
+      Buffer.add_char enc.buffer (Char.chr ui)
+    with
+    | Invalid_argument(_) -> failwith (Printf.sprintf "fail: %d" ui)
 
 
   let enc_uint16_unsafe enc ui =
     let b0 = ui lsr 8 in
     let b1 = ui - (b0 lsl 8) in
+    Printf.printf "uint16 %d --> (%d, %d)\n" ui b0 b1;
     begin
       enc_uint8_unsafe enc b0;
       enc_uint8_unsafe enc b1;
     end
 
 
-  let enc_uint32_unsafe enc ui =
+  let cut_uint32 ui =
     let b0 = ui lsr 24 in
     let r0 = ui - (b0 lsl 24) in
     let b1 = r0 lsr 16 in
     let r1 = r0 - (b1 lsl 16) in
     let b2 = r1 lsr 8 in
     let b3 = r1 - (b2 lsl 8) in
+    Printf.printf "uint32 %d --> (%d, %d, %d, %d)\n" ui b0 b1 b2 b3;
+    (b0, b1, b2, b3)
+
+
+  let enc_uint32_unsafe enc ui =
+    let (b0, b1, b2, b3) = cut_uint32 ui in
     begin
       enc_uint8_unsafe enc b0;
       enc_uint8_unsafe enc b1;
@@ -4682,12 +4700,12 @@ module Encode = struct
       enc_uint8_unsafe enc ui;
       return ()
     with
-    | Invalid_argument(_) -> err `Not_encodable_as_uint8
+    | Invalid_argument(_) -> err (`Not_encodable_as_uint8(ui))
 
 
   let enc_uint16 enc ui =
     if not (0 <= ui && ui < 0x10000) then
-      err `Not_encodable_as_uint16
+      err (`Not_encodable_as_uint16(ui))
     else
       begin
         enc_uint16_unsafe enc ui;
@@ -4697,7 +4715,7 @@ module Encode = struct
 
   let enc_int16 enc i =
     if not (-0x8000 <= i && i < 0x8000) then
-      err `Not_encodable_as_int16
+      err (`Not_encodable_as_int16(i))
     else
       let ui = if i < 0 then i + 0x10000 else i in
       begin
@@ -4708,7 +4726,7 @@ module Encode = struct
 
   let enc_uint32 enc ui =
     if not (0 <= ui && ui < 0x100000000) then
-      err `Not_encodable_as_uint32
+      err (`Not_encodable_as_uint32(ui))
     else
       begin
         enc_uint32_unsafe enc ui;
@@ -4718,9 +4736,10 @@ module Encode = struct
 
   let enc_int32 enc i =
     if not (-0x80000000 <= i && i < 0x80000000) then
-      err `Not_encodable_as_int32
+      err (`Not_encodable_as_int32(i))
     else
       let ui = if i < 0 then i + 0x100000000 else i in
+      Printf.printf "i32 -> u32 (%d ---> %d)\n" i ui;
       begin
         enc_uint32_unsafe enc ui;
         return ()
@@ -4729,22 +4748,28 @@ module Encode = struct
 
   let enc_time enc ftime =
     let i64 = Int64.of_float ftime in
-    if not (Int64.zero <= Int64.min_int && i64 <= Int64.max_int) then
+    if not (Int64.min_int <= i64 && i64 <= Int64.max_int) then
       (* -- does NOT allow negative value for clarity -- *)
-      err `Not_encodable_as_time
+      err (`Not_encodable_as_time(i64))
     else
-      let ui64 = i64 in
+      let ui64 = if i64 < Int64.zero then Int64.zero else i64 in  (* temporary *)
       let q0_64 = Int64.shift_right ui64 32 in
-      let q1_64 = Int64.sub i64 (Int64.shift_left q0_64 32) in
+      let q1_64 = Int64.sub ui64 (Int64.shift_left q0_64 32) in
+      let q0 = Int64.to_int q0_64 in
+      let q1 = Int64.to_int q1_64 in
+      Printf.printf "time %s ---> (%d, %d)\n" (Int64.to_string ui64) q0 q1;
       begin
-        enc_uint32_unsafe enc (Int64.to_int q0_64);
-        enc_uint32_unsafe enc (Int64.to_int q1_64);
+        enc_uint32_unsafe enc q0;
+        enc_uint32_unsafe enc q1;
         return ()
       end
 
 
   let enc_direct enc s =
     begin
+(*
+      Printf.printf "direct \"%s\"\n" s;
+*)
       Buffer.add_string enc.buffer s;
       return ()
     end
@@ -4767,34 +4792,68 @@ module Encode = struct
     let (searchRange, entrySelector) = calculate_header_constants numTables in
     let rangeShift = numTables * 16 - searchRange in
     let rawtbllst = List.sort compare_table rawtbllst in
-    let enc = create_encoder () in
 
+    Printf.printf "# make_font_file: header\n";
   (* -- outputs the header -- *)
-    enc_uint32 enc sfntVersion   >>= fun () ->
-    enc_uint16 enc numTables     >>= fun () ->
-    enc_uint16 enc searchRange   >>= fun () ->
-    enc_uint16 enc entrySelector >>= fun () ->
-    enc_uint16 enc rangeShift    >>= fun () ->
+    let enc_header = create_encoder () in
+    enc_uint32 enc_header sfntVersion   >>= fun () ->
+    enc_uint16 enc_header numTables     >>= fun () ->
+    enc_uint16 enc_header searchRange   >>= fun () ->
+    enc_uint16 enc_header entrySelector >>= fun () ->
+    enc_uint16 enc_header rangeShift    >>= fun () ->
+    let data_header = Buffer.contents enc_header.buffer in
+    let chksum_init = table_checksum data_header 12 in
 
+    let enc = create_encoder () in
+    enc_direct enc data_header >>= fun () ->
+
+    Printf.printf "# make_font_file: table directories\n";
   (* -- outputs all table directories -- *)
+    let offset_checkSumAdjustment_ref = ref None in
     let offset_init = 12 + numTables * 16 in
     rawtbllst |> List.fold_left (fun res rawtbl ->
-      res >>= fun offset ->
-      enc_uint32 enc (Int32.to_int rawtbl.table_tag) >>= fun () ->
-      enc_uint32 enc rawtbl.table_checksum           >>= fun () ->
-      enc_uint32 enc offset                          >>= fun () ->
-      enc_uint32 enc rawtbl.table_content_length     >>= fun () ->
-      return (offset + rawtbl.table_padded_length)
-    ) (return offset_init) >>= fun _ ->
+      res >>= fun (offset, chksum) ->
+      let strtag = Tag.to_bytes rawtbl.table_tag in
+      Printf.printf "## for '%s'\n" strtag;
+      enc_direct enc strtag                      >>= fun () ->
+      enc_uint32 enc rawtbl.table_checksum       >>= fun () ->
+      enc_uint32 enc offset                      >>= fun () ->
+      enc_uint32 enc rawtbl.table_content_length >>= fun () ->
+      if strtag = "head" then
+        offset_checkSumAdjustment_ref := Some(offset + 8)
+      else
+        ();
+      let offsetnew = offset + rawtbl.table_padded_length in
+      let chksumnew = add_checksum chksum rawtbl.table_checksum in
+      Printf.printf "  $ checksum %d + %d ---> %d\n" chksum rawtbl.table_checksum chksumnew;
+      return (offsetnew, chksumnew)
+    ) (return (offset_init, chksum_init)) >>= fun (_, chksum) ->
 
+    Printf.printf "# make_font_file: tables\n";
   (* -- outputs all tables -- *)
     rawtbllst |> List.fold_left (fun res rawtbl ->
       res >>= fun () ->
       enc_direct enc rawtbl.table_data
     ) (return ()) >>= fun () ->
 
-    let data = Buffer.contents enc.buffer in
-    return data
+    Printf.printf "# make_font_file: update 'checkSumAdjustment'\n";
+    let checkSumAdjustment =
+      let temp = 0xB1B0AFBA - chksum in
+        if temp < 0 then temp + (1 lsl 32) else temp
+    in
+    match !offset_checkSumAdjustment_ref with
+    | None ->
+        err `Missing_head_table_for_encoding
+
+    | Some(offset) ->
+        let bytes = Buffer.to_bytes enc.buffer in
+        let (b0, b1, b2, b3) = cut_uint32 checkSumAdjustment in
+        Bytes.set bytes offset       (Char.chr b0);
+        Bytes.set bytes (offset + 1) (Char.chr b1);
+        Bytes.set bytes (offset + 2) (Char.chr b2);
+        Bytes.set bytes (offset + 3) (Char.chr b3);
+        let data = Bytes.to_string bytes in
+        return data
 
 
   let empty_cmap () : raw_table ok =
@@ -4806,6 +4865,7 @@ module Encode = struct
 
 
   let head (h : head) : raw_table ok =
+    Printf.printf "# 'head' table\n";
     let enc = create_encoder () in
     let fontRevision = Int32.to_int h.head_font_revision in
     let ilocfmt =
@@ -4813,10 +4873,9 @@ module Encode = struct
       | ShortLocFormat -> 0
       | LongLocFormat  -> 1
     in
-    let checkSumAdjustment = 0 in  (* TEMPORARY *)
     enc_uint32 enc 0x00010000          >>= fun () ->  (* -- Table Version Number -- *)
     enc_uint32 enc fontRevision        >>= fun () ->
-    enc_uint32 enc checkSumAdjustment  >>= fun () ->
+    enc_uint32 enc 0                   >>= fun () ->  (* -- 'checkSumAdjustment': will be updated afterwards -- *)
     enc_uint32 enc 0x5F0F3CF5          >>= fun () ->  (* -- 'magicNumber' -- *)
     enc_uint16 enc h.head_flags        >>= fun () ->
     enc_uint16 enc h.head_units_per_em >>= fun () ->
@@ -4836,6 +4895,7 @@ module Encode = struct
 
 
   let hhea (numberOfHMetrics : int) (h : hhea) : raw_table ok =
+    Printf.printf "# 'hhea' table\n";
     let enc = create_encoder () in
     enc_uint32 enc 0x00010000                    >>= fun () ->
     enc_int16  enc h.hhea_ascender               >>= fun () ->
@@ -4854,11 +4914,13 @@ module Encode = struct
     enc_int16  enc 0                             >>= fun () ->
     enc_int16  enc 0                             >>= fun () ->  (* -- 'metricDataFormat' -- *)
     enc_uint16 enc numberOfHMetrics              >>= fun () ->
+    Printf.printf "# end 'hhea' table\n";
     let rawtbl = to_raw_table Tag.hhea enc in
     return rawtbl
 
 
   let maxp (m : maxp) : raw_table ok =
+    Printf.printf "# 'maxp' table\n";
     let enc = create_encoder () in
     enc_uint32 enc 0x00010000                      >>= fun () ->  (* -- Table version number -- *)
     enc_uint16 enc m.maxp_num_glyphs               >>= fun () ->
@@ -4875,6 +4937,7 @@ module Encode = struct
     enc_uint16 enc m.maxp_max_size_of_instructions >>= fun () ->
     enc_uint16 enc m.maxp_max_component_elements   >>= fun () ->
     enc_uint16 enc m.maxp_max_component_depth      >>= fun () ->
+    Printf.printf "# end 'maxp' table\n";
     let rawtbl = to_raw_table Tag.maxp enc in
     return rawtbl
 
@@ -4890,10 +4953,10 @@ module Encode = struct
     number_of_glyphs : int;
 
   (* -- for 'head' table -- *)
-    x_min               : int;
-    y_min               : int;
-    x_max               : int;
-    y_max               : int;
+    xmin                : int;
+    ymin                : int;
+    xmax                : int;
+    ymax                : int;
     index_to_loc_format : loc_format;
 
   (* -- for 'hhea' table -- *)
@@ -4920,6 +4983,7 @@ module Encode = struct
 
 
   let truetype_outline_tables (glyphlst : raw_glyph list) =
+    Printf.printf "# 'hmtx', 'glyf', and 'loca' table\n";
 
     let numGlyphs = List.length glyphlst in
 
@@ -4943,8 +5007,8 @@ module Encode = struct
       let aw_init = 0 in
       glyphlst |> List.fold_left (fun res g ->
         res >>= fun (bbox, aw, lsb, rsb, xext) ->
-        enc_uint32 enc_hmtx g.glyph_aw  >>= fun () ->
-        enc_int32  enc_hmtx g.glyph_lsb >>= fun () ->
+        enc_uint16 enc_hmtx g.glyph_aw  >>= fun () ->
+        enc_int16  enc_hmtx g.glyph_lsb >>= fun () ->
         let bboxnew = update_bbox bbox g.glyph_bbox in
         let awnew = max aw g.glyph_aw in
         let lsbnew = min lsb g.glyph_lsb in
@@ -4986,10 +5050,10 @@ module Encode = struct
 
         number_of_glyphs = numGlyphs;
 
-        x_min = xMin;
-        y_min = yMin;
-        x_max = xMax;
-        y_max = yMax;
+        xmin = xMin;
+        ymin = yMin;
+        xmax = xMax;
+        ymax = yMax;
         index_to_loc_format = locfmt;
 
         advance_width_max      = awmax;

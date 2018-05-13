@@ -231,15 +231,16 @@ type error =
   | `Layered_ttc
   | `Invalid_index_to_loc_format      of int
 
-  | `Not_encodable_as_uint8
-  | `Not_encodable_as_int8
-  | `Not_encodable_as_uint16
-  | `Not_encodable_as_int16
-  | `Not_encodable_as_uint32
-  | `Not_encodable_as_int32
-  | `Not_encodable_as_time
+  | `Not_encodable_as_uint8           of int
+  | `Not_encodable_as_int8            of int
+  | `Not_encodable_as_uint16          of int
+  | `Not_encodable_as_int16           of int
+  | `Not_encodable_as_uint32          of int
+  | `Not_encodable_as_int32           of int
+  | `Not_encodable_as_time            of Int64.t
   | `Too_many_glyphs_for_encoding     of int
   | `No_glyph_for_encoding
+  | `Missing_head_table_for_encoding
 ]
 (** The type for decoding errors.
 
@@ -950,10 +951,10 @@ module Encode : sig
     number_of_glyphs : int;
 
   (* -- for 'head' table -- *)
-    x_min               : int;
-    y_min               : int;
-    x_max               : int;
-    y_max               : int;
+    xmin                : int;
+    ymin                : int;
+    xmax                : int;
+    ymax                : int;
     index_to_loc_format : loc_format;
 
   (* -- for 'hhea' table -- *)

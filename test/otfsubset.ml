@@ -88,10 +88,10 @@ let main () =
   Otfm.head d >>= fun head ->
   let headnew =
     { head with
-      Otfm.head_xmin = info.Otfm.Encode.x_min;
-      Otfm.head_ymin = info.Otfm.Encode.x_max;
-      Otfm.head_xmax = info.Otfm.Encode.y_min;
-      Otfm.head_ymax = info.Otfm.Encode.y_max;
+      Otfm.head_xmin = info.Otfm.Encode.xmin;
+      Otfm.head_ymin = info.Otfm.Encode.ymin;
+      Otfm.head_xmax = info.Otfm.Encode.xmax;
+      Otfm.head_ymax = info.Otfm.Encode.ymax;
       Otfm.head_index_to_loc_format = info.Otfm.Encode.index_to_loc_format;
     }
   in
