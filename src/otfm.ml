@@ -1258,6 +1258,25 @@ let hmtx d f acc =
   d_hmetric hm_count hm_count f acc (-1) d >>= fun (acc, last_adv) ->
   d_hlsb glyph_count (glyph_count - hm_count) f acc last_adv d
 
+
+let hmtx_single d gid =
+  glyph_count d >>= fun glyph_count ->
+  d_hm_count  d >>= fun hm_count ->
+  seek_required_table Tag.hmtx d () >>= fun () ->
+  if gid < hm_count then
+    d_skip (4 * gid) d >>= fun () ->
+    d_uint16 d >>= fun aw ->
+    d_int16  d >>= fun lsb ->
+    return (aw, lsb)
+  else
+    d_skip (4 * (hm_count - 1)) d >>= fun () ->
+    d_uint16 d >>= fun aw ->
+    d_skip 2 d >>= fun () ->
+    d_skip (2 * (gid - hm_count)) d >>= fun () ->
+    d_int16  d >>= fun lsb ->
+    return (aw, lsb)
+
+
 (* maxp table *)
 
 type maxp = {
@@ -1591,35 +1610,48 @@ let d_loca_format d () =
   d_uint16 d >>= fun f -> if f > 1 then err_loca_format d f else return f
 
 let init_loca d () =
-  if d.loca_pos <> -1 then return () else
-  seek_required_table Tag.head d ()
-  >>= fun () -> d_skip 50 d
-  >>= d_loca_format d
-  >>= fun loca_format ->
-  d.loca_format <- loca_format;
-  seek_required_table Tag.loca d ()
-  >>= fun () -> d.loca_pos <- d.i_pos;
-  return ()
+  if d.loca_pos <> -1 then
+    return ()
+  else
+    seek_required_table Tag.head d () >>= fun () ->
+    d_skip 50 d >>=
+    d_loca_format d >>= fun loca_format ->
+    d.loca_format <- loca_format;
+    seek_required_table Tag.loca d () >>= fun () ->
+    d.loca_pos <- d.i_pos;
+    return ()
+
 
 let loca_short d gid =
-  seek_pos (d.loca_pos + gid * 2) d
-  >>= fun () -> d_uint16 d
-  >>= fun o1 -> d_uint16 d
-  >>= fun o2 ->
+  seek_pos (d.loca_pos + gid * 2) d >>= fun () ->
+  d_uint16 d >>= fun o1 ->
+  d_uint16 d >>= fun o2 ->
   let o1 = o1 * 2 in
   let o2 = o2 * 2 in
-  if o1 = o2 then return None else return (Some o1)
+  if o1 = o2 then return None else return (Some(o1, o2 - o1))
+
 
 let loca_long d gid =
-  seek_pos (d.loca_pos + gid * 4) d
-  >>= fun () -> d_uint32_int d
-  >>= fun o1 -> d_uint32_int d
-  >>= fun o2 -> if o1 = o2 then return None else return (Some o1)
+  seek_pos (d.loca_pos + gid * 4) d >>= fun () ->
+  d_uint32_int d >>= fun o1 ->
+  d_uint32_int d >>= fun o2 ->
+  if o1 = o2 then return None else return (Some(o1, o2 - o1))
+
+
+let loca_with_length d gid =
+  init_decoder d >>=
+  init_loca d >>= fun () ->
+  if d.loca_format = 0 then
+    loca_short d gid
+  else
+    loca_long d gid
+
 
 let loca d gid =
-  init_decoder d
-  >>= init_loca d
-  >>= fun () -> if d.loca_format = 0 then loca_short d gid else loca_long d gid
+  loca_with_length d gid >>= function
+  | Some((loc, _)) -> return (Some(loc))
+  | None           -> return None
+
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2013 Daniel C. Bünzli
@@ -1636,6 +1668,7 @@ let loca d gid =
    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
+
 
 (* -- GSUB table -- *)
 
@@ -4507,6 +4540,48 @@ let charstring_bbox (pathlst : path list) =
   | BBox(xmin, xmax, ymin, ymax) -> (Some((xmin, xmax, ymin, ymax)))
 
 
+type raw_glyph = {
+  glyph_aw          : int;
+  glyph_lsb         : int;
+  glyph_bbox        : int * int * int * int;
+  glyph_data        : string;
+  glyph_data_length : int;
+}
+
+
+let get_raw_glyph d gid =
+  loca_with_length d gid >>= function
+  | None ->
+      return {
+        glyph_aw = 0;
+        glyph_lsb = 0;
+        glyph_bbox = (0, 0, 0, 0);
+        glyph_data = "";
+        glyph_data_length = 0;
+      }
+
+  | Some((loc, len)) ->
+      init_decoder d >>=
+      init_glyf d >>= fun () ->
+      let pos = d.glyf_pos + loc in
+      seek_pos pos d >>= fun () ->
+      d_int16 d >>= fun _ ->
+      d_int16 d >>= fun xmin ->
+      d_int16 d >>= fun ymin ->
+      d_int16 d >>= fun xmax ->
+      d_int16 d >>= fun ymax ->
+      seek_pos pos d >>= fun () ->
+      d_bytes len d >>= fun data ->
+      hmtx_single d gid >>= fun (aw, lsb) ->
+      return {
+        glyph_aw = aw;
+        glyph_lsb = lsb;
+        glyph_bbox = (xmin, ymin, xmax, ymax);
+        glyph_data = data;
+        glyph_data_length = len;
+      }
+
+
 module Encode = struct
 
   type raw_table = {
@@ -4520,15 +4595,6 @@ module Encode = struct
   type encoder = {
     buffer : Buffer.t;
   }
-
-  type raw_glyph = {
-    glyph_aw          : int;
-    glyph_lsb         : int;
-    glyph_bbox        : int * int * int * int;
-    glyph_data        : string;
-    glyph_data_length : int;
-  }
-
 
   let create_encoder () =
     { buffer = Buffer.create 0x10000; }

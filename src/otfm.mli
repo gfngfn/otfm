@@ -920,12 +920,14 @@ val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, er
 
 val charstring_bbox : path list -> (csx * csx * csy * csy) option
 
+type raw_glyph
+
+val get_raw_glyph : decoder -> glyph_id -> (raw_glyph, error) result
+
 
 module Encode : sig
 
   type raw_table
-
-  type raw_glyph
 
   val make_font_file : raw_table list -> (string, error) result
 

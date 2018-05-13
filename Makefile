@@ -15,6 +15,10 @@ cff:
 examples:
 	ocamlbuild -use-ocamlfind examples.native
 
+subset:
+	ocamlbuild -use-ocamlfind otfsubset.native
+	mv otfsubset.native otfsubset
+
 install:
 	sudo install otftrip-local $(PREFIX)
 	sudo install gsubtrip $(PREFIX)
