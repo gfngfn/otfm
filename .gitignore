@@ -16,4 +16,6 @@ otftrip-local
 gsubtrip
 cfftrip
 mathtrip
+otfgensubset
 .DS_Store
+data/

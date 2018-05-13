@@ -5,62 +5,7 @@
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
 
-
-let debugfmt =
-  let dev_null = if Sys.os_type = "Win32" then "NUL" else "/dev/null" in
-  Format.formatter_of_out_channel (open_out dev_null)
-
-let fmtgen  = debugfmt
-let fmtGSUB = debugfmt
-let fmtMATH = debugfmt
-(*
-let fmtCFF  = Format.std_formatter
-*)
-
-module Alist : sig
-  type 'a t
-  val empty : 'a t
-  val extend : 'a t -> 'a -> 'a t
-  val append : 'a t -> 'a list -> 'a t
-  val to_list : 'a t -> 'a list
-end = struct
-
-  type 'a t = 'a list
-
-  let empty = []
-
-  let extend acc x =
-    x :: acc
-
-  let append acc lst =
-    List.rev_append lst acc
-
-  let to_list acc =
-    List.rev acc
-
-end
-
-
-(* Error strings *)
-
-let err_invalid_tag s = Printf.sprintf "invalid OpenType tag (%S)" s
-
-(* Unsafe string byte manipulations.
-
-   If you don't believe the author's invariants, replacing with safe
-   versions makes everything safe in the module. He won't be
-   upset. *)
-
-let unsafe_chr = Char.unsafe_chr
-let unsafe_byte s j = Char.code (String.unsafe_get s j)
-
-(* Pretty printers *)
-
-let pp = Format.fprintf
-let rec pp_list ?(pp_sep = Format.pp_print_cut) pp_v ppf = function
-| [] -> ()
-| v :: vs ->
-    pp_v ppf v; if vs <> [] then (pp_sep ppf (); pp_list ~pp_sep pp_v ppf vs)
+open OtfUtils
 
 (* OpenType tags *)
 
@@ -206,6 +151,18 @@ type error =
   | `Invalid_sid                      of int
   | `Invalid_ros
   | `Layered_ttc
+  | `Invalid_index_to_loc_format      of int
+
+  | `Not_encodable_as_uint8           of int
+  | `Not_encodable_as_int8            of int
+  | `Not_encodable_as_uint16          of int
+  | `Not_encodable_as_int16           of int
+  | `Not_encodable_as_uint32          of int
+  | `Not_encodable_as_int32           of int
+  | `Not_encodable_as_time            of Int64.t
+  | `Too_many_glyphs_for_encoding     of int
+  | `No_glyph_for_encoding
+  | `Missing_head_table_for_encoding
 ]
 
 let pp_ctx ppf = function
@@ -306,6 +263,29 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ ROS@]"
 | `Layered_ttc ->
     pp ppf "@[Layered@ TTC@]"
+| `Invalid_index_to_loc_format locfmt ->
+    pp ppf "@[Invalid@ IndexToLocFormat@ entry@ in@ the@ 'head'@ table@ (%d)@]" locfmt
+
+| `Not_encodable_as_uint8 ui ->
+    pp ppf "@[Not@ encodable@ as@ uint8@ (%d)@]" ui
+| `Not_encodable_as_int8 i ->
+    pp ppf "@[Not@ encodable@ as@ int8@ (%d)@]" i
+| `Not_encodable_as_uint16 ui ->
+    pp ppf "@[Not@ encodable@ as@ uint16@ (%d)@]" ui
+| `Not_encodable_as_int16 i ->
+    pp ppf "@[Not@ encodable@ as@ int16@ (%d)@]" i
+| `Not_encodable_as_uint32 ui ->
+    pp ppf "@[Not@ encodable@ as@ uint32@ (%d)@]" ui
+| `Not_encodable_as_int32 i ->
+    pp ppf "@[Not@ encodable@ as@ int32@ (%d)@]" i
+| `Not_encodable_as_time i64 ->
+    pp ppf "@[Not@ encodable@ as@ LONGDATETIME@ (%s)@]" (Int64.to_string i64)
+| `Too_many_glyphs_for_encoding num ->
+    pp ppf "@[Too@ many@ glyphs@ for@ encoding@ (%d)@]" num
+| `No_glyph_for_encoding ->
+    pp ppf "@[No@ glyph@ for@ encoding@]"
+| `Missing_head_table_for_encoding ->
+    pp ppf "@[Missing@ 'head'@ table@ for@ encoding@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
@@ -344,10 +324,6 @@ type decoder_scheme =
   | TrueTypeCollection of ttc_element list
 
 let decoder_src d = `String(d.i)
-
-let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
-let return x                 = Ok(x)
-let err e                    = Error(e)
 
 let err_eoi d                = err (`Unexpected_eoi(d.ctx))
 let e_version d v            = `Unknown_version(d.ctx, v)
@@ -1111,6 +1087,10 @@ let glyf d loc =
 
 (* head table *)
 
+type loc_format =
+  | ShortLocFormat
+  | LongLocFormat
+
 type head = {
   head_font_revision : int32;
   head_flags : int;
@@ -1123,7 +1103,7 @@ type head = {
   head_ymax : int;
   head_mac_style : int;
   head_lowest_rec_ppem : int;
-  head_index_to_loc_format : int;
+  head_index_to_loc_format : loc_format;
 }
 
 let head d =
@@ -1144,7 +1124,13 @@ let head d =
   d_uint16 d >>= fun head_mac_style ->
   d_uint16 d >>= fun head_lowest_rec_ppem ->
   d_skip 2 d >>= fun () -> (* fontDirectionHint *)
-  d_uint16 d >>= fun head_index_to_loc_format ->
+  d_uint16 d >>= fun locfmt ->
+  begin
+    match locfmt with
+    | 0 -> return ShortLocFormat
+    | 1 -> return LongLocFormat
+    | _ -> err (`Invalid_index_to_loc_format(locfmt))
+  end >>= fun head_index_to_loc_format ->
   return {
     head_font_revision; head_flags; head_units_per_em; head_created;
     head_modified; head_xmin; head_ymin; head_xmax; head_ymax;
@@ -1215,6 +1201,80 @@ let hmtx d f acc =
   seek_required_table Tag.hmtx d () >>= fun () ->
   d_hmetric hm_count hm_count f acc (-1) d >>= fun (acc, last_adv) ->
   d_hlsb glyph_count (glyph_count - hm_count) f acc last_adv d
+
+
+let hmtx_single d gid =
+  glyph_count d >>= fun glyph_count ->
+  d_hm_count  d >>= fun hm_count ->
+  seek_required_table Tag.hmtx d () >>= fun () ->
+  if gid < hm_count then
+    d_skip (4 * gid) d >>= fun () ->
+    d_uint16 d >>= fun aw ->
+    d_int16  d >>= fun lsb ->
+    return (aw, lsb)
+  else
+    d_skip (4 * (hm_count - 1)) d >>= fun () ->
+    d_uint16 d >>= fun aw ->
+    d_skip 2 d >>= fun () ->
+    d_skip (2 * (gid - hm_count)) d >>= fun () ->
+    d_int16  d >>= fun lsb ->
+    return (aw, lsb)
+
+
+(* maxp table *)
+
+type maxp = {
+  maxp_num_glyphs : int;
+  maxp_max_points : int;
+  maxp_max_contours : int;
+  maxp_max_composite_points : int;
+  maxp_max_composite_contours : int;
+  maxp_max_zones : int;
+  maxp_max_twilight_points : int;
+  maxp_max_storage : int;
+  maxp_max_function_defs : int;
+  maxp_max_instruction_defs : int;
+  maxp_max_stack_elements : int;
+  maxp_max_size_of_instructions : int;
+  maxp_max_component_elements : int;
+  maxp_max_component_depth : int;
+}
+
+let maxp d =
+  init_decoder d >>=
+  seek_required_table Tag.maxp d >>= fun () ->
+  d_uint32 d >>= fun version ->
+  if version <> 0x00010000l then err_version d version else
+  d_uint16 d >>= fun maxp_num_glyphs ->
+  d_uint16 d >>= fun maxp_max_points ->
+  d_uint16 d >>= fun maxp_max_contours ->
+  d_uint16 d >>= fun maxp_max_composite_points ->
+  d_uint16 d >>= fun maxp_max_composite_contours ->
+  d_uint16 d >>= fun maxp_max_zones ->
+  d_uint16 d >>= fun maxp_max_twilight_points ->
+  d_uint16 d >>= fun maxp_max_storage ->
+  d_uint16 d >>= fun maxp_max_function_defs ->
+  d_uint16 d >>= fun maxp_max_instruction_defs ->
+  d_uint16 d >>= fun maxp_max_stack_elements ->
+  d_uint16 d >>= fun maxp_max_size_of_instructions ->
+  d_uint16 d >>= fun maxp_max_component_elements ->
+  d_uint16 d >>= fun maxp_max_component_depth ->
+  return {
+    maxp_num_glyphs;
+    maxp_max_points;
+    maxp_max_contours;
+    maxp_max_composite_points;
+    maxp_max_composite_contours;
+    maxp_max_zones;
+    maxp_max_twilight_points;
+    maxp_max_storage;
+    maxp_max_function_defs;
+    maxp_max_instruction_defs;
+    maxp_max_stack_elements;
+    maxp_max_size_of_instructions;
+    maxp_max_component_elements;
+    maxp_max_component_depth;
+  }
 
 (* name table *)
 
@@ -1494,35 +1554,48 @@ let d_loca_format d () =
   d_uint16 d >>= fun f -> if f > 1 then err_loca_format d f else return f
 
 let init_loca d () =
-  if d.loca_pos <> -1 then return () else
-  seek_required_table Tag.head d ()
-  >>= fun () -> d_skip 50 d
-  >>= d_loca_format d
-  >>= fun loca_format ->
-  d.loca_format <- loca_format;
-  seek_required_table Tag.loca d ()
-  >>= fun () -> d.loca_pos <- d.i_pos;
-  return ()
+  if d.loca_pos <> -1 then
+    return ()
+  else
+    seek_required_table Tag.head d () >>= fun () ->
+    d_skip 50 d >>=
+    d_loca_format d >>= fun loca_format ->
+    d.loca_format <- loca_format;
+    seek_required_table Tag.loca d () >>= fun () ->
+    d.loca_pos <- d.i_pos;
+    return ()
+
 
 let loca_short d gid =
-  seek_pos (d.loca_pos + gid * 2) d
-  >>= fun () -> d_uint16 d
-  >>= fun o1 -> d_uint16 d
-  >>= fun o2 ->
+  seek_pos (d.loca_pos + gid * 2) d >>= fun () ->
+  d_uint16 d >>= fun o1 ->
+  d_uint16 d >>= fun o2 ->
   let o1 = o1 * 2 in
   let o2 = o2 * 2 in
-  if o1 = o2 then return None else return (Some o1)
+  if o1 = o2 then return None else return (Some(o1, o2 - o1))
+
 
 let loca_long d gid =
-  seek_pos (d.loca_pos + gid * 4) d
-  >>= fun () -> d_uint32_int d
-  >>= fun o1 -> d_uint32_int d
-  >>= fun o2 -> if o1 = o2 then return None else return (Some o1)
+  seek_pos (d.loca_pos + gid * 4) d >>= fun () ->
+  d_uint32_int d >>= fun o1 ->
+  d_uint32_int d >>= fun o2 ->
+  if o1 = o2 then return None else return (Some(o1, o2 - o1))
+
+
+let loca_with_length d gid =
+  init_decoder d >>=
+  init_loca d >>= fun () ->
+  if d.loca_format = 0 then
+    loca_short d gid
+  else
+    loca_long d gid
+
 
 let loca d gid =
-  init_decoder d
-  >>= init_loca d
-  >>= fun () -> if d.loca_format = 0 then loca_short d gid else loca_long d gid
+  loca_with_length d gid >>= function
+  | Some((loc, _)) -> return (Some(loc))
+  | None           -> return None
+
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2013 Daniel C. Bünzli
@@ -1539,6 +1612,7 @@ let loca d gid =
    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   ---------------------------------------------------------------------------*)
+
 
 (* -- GSUB table -- *)
 
@@ -4408,3 +4482,526 @@ let charstring_bbox (pathlst : path list) =
   match bbox with
   | BBoxInital                   -> None  (* needs reconsideration *)
   | BBox(xmin, xmax, ymin, ymax) -> (Some((xmin, xmax, ymin, ymax)))
+
+
+type raw_glyph = {
+  glyph_aw          : int;
+  glyph_lsb         : int;
+  glyph_bbox        : int * int * int * int;
+  glyph_data        : string;
+  glyph_data_length : int;
+}
+
+
+let get_raw_glyph d gid =
+  loca_with_length d gid >>= function
+  | None ->
+      return {
+        glyph_aw = 0;
+        glyph_lsb = 0;
+        glyph_bbox = (0, 0, 0, 0);
+        glyph_data = "";
+        glyph_data_length = 0;
+      }
+
+  | Some((loc, len)) ->
+      init_decoder d >>=
+      init_glyf d >>= fun () ->
+      let pos = d.glyf_pos + loc in
+      seek_pos pos d >>= fun () ->
+      d_int16 d >>= fun _ ->
+      d_int16 d >>= fun xmin ->
+      d_int16 d >>= fun ymin ->
+      d_int16 d >>= fun xmax ->
+      d_int16 d >>= fun ymax ->
+      seek_pos pos d >>= fun () ->
+      d_bytes len d >>= fun data ->
+      hmtx_single d gid >>= fun (aw, lsb) ->
+      return {
+        glyph_aw = aw;
+        glyph_lsb = lsb;
+        glyph_bbox = (xmin, ymin, xmax, ymax);
+        glyph_data = data;
+        glyph_data_length = len;
+      }
+
+
+module Encode = struct
+
+  type raw_table = {
+    table_tag            : tag;
+    table_content_length : int;
+    table_padded_length  : int;
+    table_checksum       : int;
+    table_data           : string;
+  }
+
+  type encoder = {
+    buffer : Buffer.t;
+  }
+
+  let create_encoder () =
+    { buffer = Buffer.create 0x10000; }
+      (* -- the initial size is an arbitrary positive number -- *)
+
+
+  let make_raw_glyph aw lsb bbox data =
+    let len = String.length data in
+      {
+        glyph_aw          = aw;
+        glyph_lsb         = lsb;
+        glyph_bbox        = bbox;
+        glyph_data        = data;
+        glyph_data_length = len;
+      }
+
+  let pad_data s len =
+    let r = (4 - len mod 4) mod 4 in
+    let sp = s ^ (String.make r (Char.chr 0)) in
+    (sp, len + r)
+
+
+  let add_checksum x y =
+    (x + y) mod (1 lsl 32)
+
+
+  let table_checksum sp lenp =
+    let rec aux acc i =
+      if i >= lenp then acc else
+        let b0 = Char.code (String.get sp i) in
+        let b1 = Char.code (String.get sp (i + 1)) in
+        let b2 = Char.code (String.get sp (i + 2)) in
+        let b3 = Char.code (String.get sp (i + 3)) in
+        let ui = (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3 in
+        aux (add_checksum acc ui) (i + 4)
+    in
+    aux 0 0
+
+
+  let to_raw_table tag enc =
+    let buf = enc.buffer in
+    let len = Buffer.length buf in
+    let s = Buffer.contents buf in
+    let (sp, lenp) = pad_data s len in
+    let chksum = table_checksum sp lenp in
+    Printf.printf "table checksum: %d\n" chksum;
+      {
+        table_tag            = tag;
+        table_content_length = len;
+        table_padded_length  = lenp;
+        table_checksum       = chksum;
+        table_data           = sp;
+      }
+
+
+  let compare_table rawtbl1 rawtbl2 =
+    Tag.compare rawtbl1.table_tag rawtbl2.table_tag
+
+
+  let enc_uint8_unsafe enc ui =
+    try
+      Buffer.add_char enc.buffer (Char.chr ui)
+    with
+    | Invalid_argument(_) -> failwith (Printf.sprintf "fail: %d" ui)
+
+
+  let enc_uint16_unsafe enc ui =
+    let b0 = ui lsr 8 in
+    let b1 = ui - (b0 lsl 8) in
+    Printf.printf "uint16 %d --> (%d, %d)\n" ui b0 b1;
+    begin
+      enc_uint8_unsafe enc b0;
+      enc_uint8_unsafe enc b1;
+    end
+
+
+  let cut_uint32 ui =
+    let b0 = ui lsr 24 in
+    let r0 = ui - (b0 lsl 24) in
+    let b1 = r0 lsr 16 in
+    let r1 = r0 - (b1 lsl 16) in
+    let b2 = r1 lsr 8 in
+    let b3 = r1 - (b2 lsl 8) in
+    Printf.printf "uint32 %d --> (%d, %d, %d, %d)\n" ui b0 b1 b2 b3;
+    (b0, b1, b2, b3)
+
+
+  let enc_uint32_unsafe enc ui =
+    let (b0, b1, b2, b3) = cut_uint32 ui in
+    begin
+      enc_uint8_unsafe enc b0;
+      enc_uint8_unsafe enc b1;
+      enc_uint8_unsafe enc b2;
+      enc_uint8_unsafe enc b3;
+    end
+
+
+  let enc_uint8 enc ui =
+    try
+      enc_uint8_unsafe enc ui;
+      return ()
+    with
+    | Invalid_argument(_) -> err (`Not_encodable_as_uint8(ui))
+
+
+  let enc_uint16 enc ui =
+    if not (0 <= ui && ui < 0x10000) then
+      err (`Not_encodable_as_uint16(ui))
+    else
+      begin
+        enc_uint16_unsafe enc ui;
+        return ()
+      end
+
+
+  let enc_int16 enc i =
+    if not (-0x8000 <= i && i < 0x8000) then
+      err (`Not_encodable_as_int16(i))
+    else
+      let ui = if i < 0 then i + 0x10000 else i in
+      begin
+        enc_uint16_unsafe enc ui;
+        return ()
+      end
+
+
+  let enc_uint32 enc ui =
+    if not (0 <= ui && ui < 0x100000000) then
+      err (`Not_encodable_as_uint32(ui))
+    else
+      begin
+        enc_uint32_unsafe enc ui;
+        return ()
+      end
+
+
+  let enc_int32 enc i =
+    if not (-0x80000000 <= i && i < 0x80000000) then
+      err (`Not_encodable_as_int32(i))
+    else
+      let ui = if i < 0 then i + 0x100000000 else i in
+      Printf.printf "i32 -> u32 (%d ---> %d)\n" i ui;
+      begin
+        enc_uint32_unsafe enc ui;
+        return ()
+      end
+
+
+  let enc_time enc ftime =
+    let i64 = Int64.of_float ftime in
+    if not (Int64.min_int <= i64 && i64 <= Int64.max_int) then
+      (* -- does NOT allow negative value for clarity -- *)
+      err (`Not_encodable_as_time(i64))
+    else
+      let ui64 = if i64 < Int64.zero then Int64.zero else i64 in  (* temporary *)
+      let q0_64 = Int64.shift_right ui64 32 in
+      let q1_64 = Int64.sub ui64 (Int64.shift_left q0_64 32) in
+      let q0 = Int64.to_int q0_64 in
+      let q1 = Int64.to_int q1_64 in
+      Printf.printf "time %s ---> (%d, %d)\n" (Int64.to_string ui64) q0 q1;
+      begin
+        enc_uint32_unsafe enc q0;
+        enc_uint32_unsafe enc q1;
+        return ()
+      end
+
+
+  let enc_direct enc s =
+    begin
+(*
+      Printf.printf "direct \"%s\"\n" s;
+*)
+      Buffer.add_string enc.buffer s;
+      return ()
+    end
+
+
+  let calculate_header_constants numTables =
+    let rec aux n a =
+      let anext = a * 2 in
+      if anext <= numTables then
+        aux (n + 1) anext
+      else
+        (a * 16, n)
+    in
+    aux 0 1
+
+
+  let make_font_file rawtbllst =
+    let sfntVersion = 0x00010000 in
+    let numTables = List.length rawtbllst in
+    let (searchRange, entrySelector) = calculate_header_constants numTables in
+    let rangeShift = numTables * 16 - searchRange in
+    let rawtbllst = List.sort compare_table rawtbllst in
+
+    Printf.printf "# make_font_file: header\n";
+  (* -- outputs the header -- *)
+    let enc_header = create_encoder () in
+    enc_uint32 enc_header sfntVersion   >>= fun () ->
+    enc_uint16 enc_header numTables     >>= fun () ->
+    enc_uint16 enc_header searchRange   >>= fun () ->
+    enc_uint16 enc_header entrySelector >>= fun () ->
+    enc_uint16 enc_header rangeShift    >>= fun () ->
+    let data_header = Buffer.contents enc_header.buffer in
+    let chksum_init = table_checksum data_header 12 in
+
+    let enc = create_encoder () in
+    enc_direct enc data_header >>= fun () ->
+
+    Printf.printf "# make_font_file: table directories\n";
+  (* -- outputs all table directories -- *)
+    let offset_checkSumAdjustment_ref = ref None in
+    let offset_init = 12 + numTables * 16 in
+    rawtbllst |> List.fold_left (fun res rawtbl ->
+      res >>= fun (offset, chksum) ->
+      let strtag = Tag.to_bytes rawtbl.table_tag in
+      Printf.printf "## for '%s'\n" strtag;
+      enc_direct enc strtag                      >>= fun () ->
+      enc_uint32 enc rawtbl.table_checksum       >>= fun () ->
+      enc_uint32 enc offset                      >>= fun () ->
+      enc_uint32 enc rawtbl.table_content_length >>= fun () ->
+      if strtag = "head" then
+        offset_checkSumAdjustment_ref := Some(offset + 8)
+      else
+        ();
+      let offsetnew = offset + rawtbl.table_padded_length in
+      let chksumnew = add_checksum chksum rawtbl.table_checksum in
+      Printf.printf "  $ checksum %d + %d ---> %d\n" chksum rawtbl.table_checksum chksumnew;
+      return (offsetnew, chksumnew)
+    ) (return (offset_init, chksum_init)) >>= fun (_, chksum) ->
+
+    Printf.printf "# make_font_file: tables\n";
+  (* -- outputs all tables -- *)
+    rawtbllst |> List.fold_left (fun res rawtbl ->
+      res >>= fun () ->
+      enc_direct enc rawtbl.table_data
+    ) (return ()) >>= fun () ->
+
+    Printf.printf "# make_font_file: update 'checkSumAdjustment'\n";
+    let checkSumAdjustment =
+      let temp = 0xB1B0AFBA - chksum in
+        if temp < 0 then temp + (1 lsl 32) else temp
+    in
+    match !offset_checkSumAdjustment_ref with
+    | None ->
+        err `Missing_head_table_for_encoding
+
+    | Some(offset) ->
+        let bytes = Buffer.to_bytes enc.buffer in
+        let (b0, b1, b2, b3) = cut_uint32 checkSumAdjustment in
+        Bytes.set bytes offset       (Char.chr b0);
+        Bytes.set bytes (offset + 1) (Char.chr b1);
+        Bytes.set bytes (offset + 2) (Char.chr b2);
+        Bytes.set bytes (offset + 3) (Char.chr b3);
+        let data = Bytes.to_string bytes in
+        return data
+
+
+  let empty_cmap () : raw_table ok =
+    let enc = create_encoder () in
+    enc_uint16 enc 0 >>= fun () ->  (* -- 'Version' -- *)
+    enc_uint16 enc 0 >>= fun () ->  (* -- 'numTables' -- *)
+    let rawtbl = to_raw_table Tag.cmap enc in
+    return rawtbl
+
+
+  let head (h : head) : raw_table ok =
+    Printf.printf "# 'head' table\n";
+    let enc = create_encoder () in
+    let fontRevision = Int32.to_int h.head_font_revision in
+    let ilocfmt =
+      match h.head_index_to_loc_format with
+      | ShortLocFormat -> 0
+      | LongLocFormat  -> 1
+    in
+    enc_uint32 enc 0x00010000          >>= fun () ->  (* -- Table Version Number -- *)
+    enc_uint32 enc fontRevision        >>= fun () ->
+    enc_uint32 enc 0                   >>= fun () ->  (* -- 'checkSumAdjustment': will be updated afterwards -- *)
+    enc_uint32 enc 0x5F0F3CF5          >>= fun () ->  (* -- 'magicNumber' -- *)
+    enc_uint16 enc h.head_flags        >>= fun () ->
+    enc_uint16 enc h.head_units_per_em >>= fun () ->
+    enc_time   enc h.head_created      >>= fun () ->
+    enc_time   enc h.head_modified     >>= fun () ->
+    enc_int16  enc h.head_xmin         >>= fun () ->
+    enc_int16  enc h.head_ymin         >>= fun () ->
+    enc_int16  enc h.head_xmax         >>= fun () ->
+    enc_int16  enc h.head_ymax         >>= fun () ->
+    enc_uint16 enc h.head_mac_style    >>= fun () ->
+    enc_uint16 enc h.head_lowest_rec_ppem     >>= fun () ->
+    enc_int16  enc 0                          >>= fun () ->  (* -- 'fontDirectionHint' -- *)
+    enc_int16  enc ilocfmt                    >>= fun () ->
+    enc_int16  enc 0                          >>= fun () ->  (* -- 'glyphDataFormat' -- *)
+    let rawtbl = to_raw_table Tag.head enc in
+    return rawtbl
+
+
+  let hhea (numberOfHMetrics : int) (h : hhea) : raw_table ok =
+    Printf.printf "# 'hhea' table\n";
+    let enc = create_encoder () in
+    enc_uint32 enc 0x00010000                    >>= fun () ->
+    enc_int16  enc h.hhea_ascender               >>= fun () ->
+    enc_int16  enc h.hhea_descender              >>= fun () ->
+    enc_int16  enc h.hhea_line_gap               >>= fun () ->
+    enc_uint16 enc h.hhea_advance_width_max      >>= fun () ->
+    enc_int16  enc h.hhea_min_left_side_bearing  >>= fun () ->
+    enc_int16  enc h.hhea_min_right_side_bearing >>= fun () ->
+    enc_int16  enc h.hhea_xmax_extent            >>= fun () ->
+    enc_int16  enc h.hhea_caret_slope_rise       >>= fun () ->
+    enc_int16  enc h.hhea_caret_slope_run        >>= fun () ->
+    enc_int16  enc h.hhea_caret_offset           >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->
+    enc_int16  enc 0                             >>= fun () ->  (* -- 'metricDataFormat' -- *)
+    enc_uint16 enc numberOfHMetrics              >>= fun () ->
+    Printf.printf "# end 'hhea' table\n";
+    let rawtbl = to_raw_table Tag.hhea enc in
+    return rawtbl
+
+
+  let maxp (m : maxp) : raw_table ok =
+    Printf.printf "# 'maxp' table\n";
+    let enc = create_encoder () in
+    enc_uint32 enc 0x00010000                      >>= fun () ->  (* -- Table version number -- *)
+    enc_uint16 enc m.maxp_num_glyphs               >>= fun () ->
+    enc_uint16 enc m.maxp_max_points               >>= fun () ->
+    enc_uint16 enc m.maxp_max_contours             >>= fun () ->
+    enc_uint16 enc m.maxp_max_composite_points     >>= fun () ->
+    enc_uint16 enc m.maxp_max_composite_contours   >>= fun () ->
+    enc_uint16 enc m.maxp_max_zones                >>= fun () ->
+    enc_uint16 enc m.maxp_max_twilight_points      >>= fun () ->
+    enc_uint16 enc m.maxp_max_storage              >>= fun () ->
+    enc_uint16 enc m.maxp_max_function_defs        >>= fun () ->
+    enc_uint16 enc m.maxp_max_instruction_defs     >>= fun () ->
+    enc_uint16 enc m.maxp_max_stack_elements       >>= fun () ->
+    enc_uint16 enc m.maxp_max_size_of_instructions >>= fun () ->
+    enc_uint16 enc m.maxp_max_component_elements   >>= fun () ->
+    enc_uint16 enc m.maxp_max_component_depth      >>= fun () ->
+    Printf.printf "# end 'maxp' table\n";
+    let rawtbl = to_raw_table Tag.maxp enc in
+    return rawtbl
+
+
+  type glyph_output_info = {
+
+  (* -- main table data -- *)
+    hmtx : raw_table;
+    glyf : raw_table;
+    loca : raw_table;
+
+  (* -- for 'maxp' table -- *)
+    number_of_glyphs : int;
+
+  (* -- for 'head' table -- *)
+    xmin                : int;
+    ymin                : int;
+    xmax                : int;
+    ymax                : int;
+    index_to_loc_format : loc_format;
+
+  (* -- for 'hhea' table -- *)
+    advance_width_max      : int;
+    min_left_side_bearing  : int;
+    min_right_side_bearing : int;
+    x_max_extent           : int;
+    number_of_h_metrics    : int;
+  }
+
+
+  let update_bbox (xMin0, yMin0, xMax0, yMax0) (xMin1, yMin1, xMax1, yMax1) =
+    (min xMin0 xMin1, min yMin0 yMin1, max xMax0 xMax1, max yMax0 yMax1)
+
+
+  let get_right_side_bearing g =
+    let (xmin, _, xmax, _) = g.glyph_bbox in
+    g.glyph_aw - (g.glyph_lsb + xmax - xmin)
+
+
+  let get_x_extent g =
+    let (xmin, _, xmax, _) = g.glyph_bbox in
+    g.glyph_lsb + (xmax - xmin)
+
+
+  let truetype_outline_tables (glyphlst : raw_glyph list) =
+    Printf.printf "# 'hmtx', 'glyf', and 'loca' table\n";
+
+    let numGlyphs = List.length glyphlst in
+
+    if numGlyphs > 65536 then
+      err (`Too_many_glyphs_for_encoding(numGlyphs))
+    else
+      begin
+        match glyphlst with
+        | []          -> err `No_glyph_for_encoding
+        | gfirst :: _ -> return gfirst
+      end >>= fun gfirst ->
+      let lsb_init = gfirst.glyph_lsb in
+      let rsb_init = get_right_side_bearing gfirst in
+      let xext_init = get_x_extent gfirst in
+
+      let numberOfHMetrics = numGlyphs in
+
+    (* -- outputs 'hmtx' table and calculates (xMin, yMin, xMax, yMax) -- *)
+      let enc_hmtx = create_encoder () in
+      let bbox_init = (0, 0, 0, 0) in
+      let aw_init = 0 in
+      glyphlst |> List.fold_left (fun res g ->
+        res >>= fun (bbox, aw, lsb, rsb, xext) ->
+        enc_uint16 enc_hmtx g.glyph_aw  >>= fun () ->
+        enc_int16  enc_hmtx g.glyph_lsb >>= fun () ->
+        let bboxnew = update_bbox bbox g.glyph_bbox in
+        let awnew = max aw g.glyph_aw in
+        let lsbnew = min lsb g.glyph_lsb in
+        let rsbnew = min rsb (get_right_side_bearing g) in
+        let xextnew = max xext (get_x_extent g) in
+        return (bboxnew, awnew, lsbnew, rsbnew, xextnew)
+      ) (return (bbox_init, aw_init, lsb_init, rsb_init, xext_init))
+        >>= fun ((xMin, yMin, xMax, yMax), awmax, minlsb, minrsb, xmaxext) ->
+      let rawtbl_hmtx = to_raw_table Tag.hmtx enc_hmtx in
+
+    (* -- outputs 'glyf' table and 'loca' table -- *)
+      let enc_glyf = create_encoder () in
+      let enc_loca = create_encoder () in
+      let lenwhole =
+        glyphlst |> List.fold_left (fun acc g -> acc + g.glyph_data_length) 0
+      in
+      let (locfmt, enc_for_loca) =
+        if lenwhole <= 2 * (1 lsl 16) then
+          (ShortLocFormat, (fun offset -> enc_uint16 enc_loca (offset / 2)))
+        else
+          (LongLocFormat , (fun offset -> enc_uint32 enc_loca offset)      )
+      in
+      let offset_init = 0 in
+      glyphlst |> List.fold_left (fun res g ->
+        res >>= fun offset ->
+        enc_direct enc_glyf g.glyph_data >>= fun () ->
+        enc_for_loca offset >>= fun () ->
+        let len = g.glyph_data_length in
+        return (offset + len)
+      ) (return offset_init) >>= fun offset_last ->
+      enc_for_loca offset_last >>= fun () ->
+      let rawtbl_glyf = to_raw_table Tag.glyf enc_glyf in
+      let rawtbl_loca = to_raw_table Tag.loca enc_loca in
+
+      return {
+        hmtx = rawtbl_hmtx;
+        glyf = rawtbl_glyf;
+        loca = rawtbl_loca;
+
+        number_of_glyphs = numGlyphs;
+
+        xmin = xMin;
+        ymin = yMin;
+        xmax = xMax;
+        ymax = yMax;
+        index_to_loc_format = locfmt;
+
+        advance_width_max      = awmax;
+        min_left_side_bearing  = minlsb;
+        min_right_side_bearing = minrsb;
+        x_max_extent           = xmaxext;
+        number_of_h_metrics    = numberOfHMetrics;
+      }
+
+end

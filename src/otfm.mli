@@ -229,6 +229,18 @@ type error =
   | `Invalid_sid                      of int
   | `Invalid_ros
   | `Layered_ttc
+  | `Invalid_index_to_loc_format      of int
+
+  | `Not_encodable_as_uint8           of int
+  | `Not_encodable_as_int8            of int
+  | `Not_encodable_as_uint16          of int
+  | `Not_encodable_as_int16           of int
+  | `Not_encodable_as_uint32          of int
+  | `Not_encodable_as_int32           of int
+  | `Not_encodable_as_time            of Int64.t
+  | `Too_many_glyphs_for_encoding     of int
+  | `No_glyph_for_encoding
+  | `Missing_head_table_for_encoding
 ]
 (** The type for decoding errors.
 
@@ -363,6 +375,10 @@ val glyf : decoder -> glyf_loc -> (glyph_descr, error) result
 
 (** {2:head head table} *)
 
+type loc_format =
+  | ShortLocFormat
+  | LongLocFormat
+
 type head =
   { head_font_revision : int32;
     head_flags : int;
@@ -375,7 +391,7 @@ type head =
     head_ymax : int;
     head_mac_style : int;
     head_lowest_rec_ppem : int;
-    head_index_to_loc_format : int; }
+    head_index_to_loc_format : loc_format; }
 (** The type for representing
     {{:https://www.microsoft.com/typography/otspec/head.htm}head} tables. *)
 
@@ -412,6 +428,29 @@ val hmtx :
     with [gid] the glyph id (guaranteed to range, in order, from
     [0] to glyph count minus one), [adv] the (unsigned) advance width,
     and [lsb] the (signed) left side bearing. *)
+
+(** {2:maxp max table} *)
+
+type maxp =
+  { maxp_num_glyphs : int;
+    maxp_max_points : int;
+    maxp_max_contours : int;
+    maxp_max_composite_points : int;
+    maxp_max_composite_contours : int;
+    maxp_max_zones : int;
+    maxp_max_twilight_points : int;
+    maxp_max_storage : int;
+    maxp_max_function_defs : int;
+    maxp_max_instruction_defs : int;
+    maxp_max_stack_elements : int;
+    maxp_max_size_of_instructions : int;
+    maxp_max_component_elements : int;
+    maxp_max_component_depth : int; }
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/maxp.htm}maxp} tables. *)
+
+val maxp : decoder -> (maxp, error) result
+(** [maxp d] is the maxp table. *)
 
 (** {2:name name table} *)
 
@@ -881,6 +920,54 @@ type path = cspoint * path_element list
 val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, error) result
 
 val charstring_bbox : path list -> (csx * csx * csy * csy) option
+
+type raw_glyph
+
+val get_raw_glyph : decoder -> glyph_id -> (raw_glyph, error) result
+
+
+module Encode : sig
+
+  type raw_table
+
+  val make_font_file : raw_table list -> (string, error) result
+
+  val empty_cmap : unit -> (raw_table, error) result
+
+  val head : head -> (raw_table, error) result
+
+  val hhea : int -> hhea -> (raw_table, error) result
+
+  val maxp : maxp -> (raw_table, error) result
+
+  type glyph_output_info = {
+
+  (* -- main table data -- *)
+    hmtx : raw_table;
+    glyf : raw_table;
+    loca : raw_table;
+
+  (* -- for 'maxp' table -- *)
+    number_of_glyphs : int;
+
+  (* -- for 'head' table -- *)
+    xmin                : int;
+    ymin                : int;
+    xmax                : int;
+    ymax                : int;
+    index_to_loc_format : loc_format;
+
+  (* -- for 'hhea' table -- *)
+    advance_width_max      : int;
+    min_left_side_bearing  : int;
+    min_right_side_bearing : int;
+    x_max_extent           : int;
+    number_of_h_metrics    : int;
+  }
+
+  val truetype_outline_tables : raw_glyph list -> (glyph_output_info, error) result
+
+end
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2017 Takashi Suwa
