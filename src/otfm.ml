@@ -4516,10 +4516,11 @@ module Encode = struct
   }
 
   type raw_glyph = {
-    glyph_aw   : int;
-    glyph_lsb  : int;
-    glyph_bbox : int * int * int * int;
-    glyph_data : string;
+    glyph_aw          : int;
+    glyph_lsb         : int;
+    glyph_bbox        : int * int * int * int;
+    glyph_data        : string;
+    glyph_data_length : int;
   }
 
 
@@ -4527,6 +4528,16 @@ module Encode = struct
     { buffer = Buffer.create 0x10000; }
       (* -- the initial size is an arbitrary positive number -- *)
 
+
+  let make_raw_glyph aw lsb bbox data =
+    let len = String.length data in
+      {
+        glyph_aw          = aw;
+        glyph_lsb         = lsb;
+        glyph_bbox        = bbox;
+        glyph_data        = data;
+        glyph_data_length = len;
+      }
 
   let pad_data s len =
     let r = (4 - len mod 4) mod 4 in
@@ -4796,6 +4807,45 @@ module Encode = struct
     return rawtbl
 
 
+  type glyph_output_info = {
+
+  (* -- main table data -- *)
+    hmtx : raw_table;
+    glyf : raw_table;
+    loca : raw_table;
+
+  (* -- for 'maxp' table -- *)
+    number_of_glyphs : int;
+
+  (* -- for 'head' table -- *)
+    x_min : int;
+    y_min : int;
+    x_max : int;
+    y_max : int;
+
+  (* -- for 'hhea' table -- *)
+    advance_width_max      : int;
+    min_left_side_bearing  : int;
+    min_right_side_bearing : int;
+    x_max_extent           : int;
+    number_of_h_metrics : int;
+  }
+
+
+  let update_bbox (xMin0, yMin0, xMax0, yMax0) (xMin1, yMin1, xMax1, yMax1) =
+    (min xMin0 xMin1, min yMin0 yMin1, max xMax0 xMax1, max yMax0 yMax1)
+
+
+  let get_right_side_bearing g =
+    let (xmin, _, xmax, _) = g.glyph_bbox in
+    g.glyph_aw - (g.glyph_lsb + xmax - xmin)
+
+
+  let get_x_extent g =
+    let (xmin, _, xmax, _) = g.glyph_bbox in
+    g.glyph_lsb + (xmax - xmin)
+
+
   let truetype_outline_tables (locFormat : loc_format) (glyphlst : raw_glyph list) =
 
     let numGlyphs = List.length glyphlst in
@@ -4803,11 +4853,23 @@ module Encode = struct
 
   (* -- outputs 'hmtx' table and calculates (xMin, yMin, xMax, yMax) -- *)
     let enc_hmtx = create_encoder () in
+    let bbox_init = (0, 0, 0, 0) in
+    let aw_init = 0 in
+    let lsb_init = 1000 in  (* temporary *)
+    let rsb_init = 1000 in  (* temporary *)
+    let xext_init = -1000 in  (* temporary *)
     glyphlst |> List.fold_left (fun res g ->
-      res >>= fun () ->
+      res >>= fun (bbox, aw, lsb, rsb, xext) ->
       enc_uint32 enc_hmtx g.glyph_aw  >>= fun () ->
-      enc_int32  enc_hmtx g.glyph_lsb
-    ) (return ()) >>= fun () ->
+      enc_int32  enc_hmtx g.glyph_lsb >>= fun () ->
+      let bboxnew = update_bbox bbox g.glyph_bbox in
+      let awnew = max aw g.glyph_aw in
+      let lsbnew = min lsb g.glyph_lsb in
+      let rsbnew = min rsb (get_right_side_bearing g) in
+      let xextnew = max xext (get_x_extent g) in
+      return (bboxnew, awnew, lsbnew, rsbnew, xextnew)
+    ) (return (bbox_init, aw_init, lsb_init, rsb_init, xext_init))
+      >>= fun ((xMin, yMin, xMax, yMax), awmax, minlsb, minrsb, xmaxext) ->
     let rawtbl_hmtx = to_raw_table Tag.hmtx enc_hmtx in
 
   (* -- outputs 'glyf' table and 'loca' table -- *)
@@ -4823,13 +4885,30 @@ module Encode = struct
       res >>= fun offset ->
       enc_direct enc_glyf g.glyph_data >>= fun () ->
       enc_for_loca offset >>= fun () ->
-      let len = String.length g.glyph_data in
+      let len = g.glyph_data_length in
       return (offset + len)
     ) (return offset_init) >>= fun offset_last ->
     enc_for_loca offset_last >>= fun () ->
     let rawtbl_glyf = to_raw_table Tag.glyf enc_glyf in
     let rawtbl_loca = to_raw_table Tag.loca enc_loca in
 
-    return (numberOfHMetrics, rawtbl_hmtx, rawtbl_glyf, rawtbl_loca)
+    return {
+      hmtx = rawtbl_hmtx;
+      glyf = rawtbl_glyf;
+      loca = rawtbl_loca;
+
+      number_of_glyphs = numGlyphs;
+
+      x_min = xMin;
+      y_min = yMin;
+      x_max = xMax;
+      y_max = yMax;
+
+      advance_width_max      = awmax;
+      min_left_side_bearing  = minlsb;
+      min_right_side_bearing = minrsb;
+      x_max_extent           = xmaxext;
+      number_of_h_metrics    = numberOfHMetrics;
+    }
 
 end

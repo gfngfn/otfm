@@ -935,7 +935,31 @@ module Encode : sig
 
   val maxp : maxp -> (raw_table, error) result
 
-  val truetype_outline_tables : loc_format -> raw_glyph list -> (int * raw_table * raw_table * raw_table, error) result
+  type glyph_output_info = {
+
+  (* -- main table data -- *)
+    hmtx : raw_table;
+    glyf : raw_table;
+    loca : raw_table;
+
+  (* -- for 'maxp' table -- *)
+    number_of_glyphs : int;
+
+  (* -- for 'head' table -- *)
+    x_min : int;
+    y_min : int;
+    x_max : int;
+    y_max : int;
+
+  (* -- for 'hhea' table -- *)
+    advance_width_max      : int;
+    min_left_side_bearing  : int;
+    min_right_side_bearing : int;
+    x_max_extent           : int;
+    number_of_h_metrics : int;
+  }
+
+  val truetype_outline_tables : loc_format -> raw_glyph list -> (glyph_output_info, error) result
 
 end
 
