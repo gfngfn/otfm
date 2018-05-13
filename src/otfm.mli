@@ -229,6 +229,7 @@ type error =
   | `Invalid_sid                      of int
   | `Invalid_ros
   | `Layered_ttc
+  | `Invalid_index_to_loc_format      of int
 
   | `Not_encodable_as_uint8
   | `Not_encodable_as_int8
@@ -371,6 +372,10 @@ val glyf : decoder -> glyf_loc -> (glyph_descr, error) result
 
 (** {2:head head table} *)
 
+type loc_format =
+  | ShortLocFormat
+  | LongLocFormat
+
 type head =
   { head_font_revision : int32;
     head_flags : int;
@@ -383,7 +388,7 @@ type head =
     head_ymax : int;
     head_mac_style : int;
     head_lowest_rec_ppem : int;
-    head_index_to_loc_format : int; }
+    head_index_to_loc_format : loc_format; }
 (** The type for representing
     {{:https://www.microsoft.com/typography/otspec/head.htm}head} tables. *)
 
@@ -918,6 +923,8 @@ module Encode : sig
 
   type raw_table
 
+  type raw_glyph
+
   val make_font_file : raw_table list -> (string, error) result
 
   val empty_cmap : unit -> (raw_table, error) result
@@ -927,6 +934,8 @@ module Encode : sig
   val hhea : int -> hhea -> (raw_table, error) result
 
   val maxp : maxp -> (raw_table, error) result
+
+  val truetype_outline_tables : loc_format -> raw_glyph list -> (int * raw_table * raw_table * raw_table, error) result
 
 end
 

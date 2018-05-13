@@ -105,6 +105,10 @@ let pp_glyf ppf has_glyf d =
       in
       loop 0
 
+let pp_loc_format ppf = function
+  | Otfm.ShortLocFormat -> pp ppf "SHORT"
+  | Otfm.LongLocFormat  -> pp ppf "LONG"
+
 let pp_head ppf d =
   pp ppf "@,@[<v1>(head";
   match Otfm.head d with
@@ -121,7 +125,7 @@ let pp_head ppf d =
       pp ppf "@,(ymax %d)" h.Otfm.head_ymax;
       pp ppf "@,(mac-style 0x%04X)" h.Otfm.head_mac_style;
       pp ppf "@,(lowest_rec_ppem %d)" h.Otfm.head_lowest_rec_ppem;
-      pp ppf "@,(index_to_loc_format %d)" h.Otfm.head_index_to_loc_format;
+      pp ppf "@,(index_to_loc_format %a)" pp_loc_format h.Otfm.head_index_to_loc_format;
       pp ppf ")@]";
       Ok ()
 

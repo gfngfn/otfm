@@ -206,6 +206,7 @@ type error =
   | `Invalid_sid                      of int
   | `Invalid_ros
   | `Layered_ttc
+  | `Invalid_index_to_loc_format      of int
 
   | `Not_encodable_as_uint8
   | `Not_encodable_as_int8
@@ -314,6 +315,8 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ ROS@]"
 | `Layered_ttc ->
     pp ppf "@[Layered@ TTC@]"
+| `Invalid_index_to_loc_format locfmt ->
+    pp ppf "@[Invalid@ IndexToLocFormat@ entry@ in@ the@ 'head'@ table@ (%d)@]" locfmt
 
 | `Not_encodable_as_uint8 ->
     pp ppf "@[Not@ encodable@ as@ uint8@]"
@@ -1134,6 +1137,10 @@ let glyf d loc =
 
 (* head table *)
 
+type loc_format =
+  | ShortLocFormat
+  | LongLocFormat
+
 type head = {
   head_font_revision : int32;
   head_flags : int;
@@ -1146,7 +1153,7 @@ type head = {
   head_ymax : int;
   head_mac_style : int;
   head_lowest_rec_ppem : int;
-  head_index_to_loc_format : int;
+  head_index_to_loc_format : loc_format;
 }
 
 let head d =
@@ -1167,7 +1174,13 @@ let head d =
   d_uint16 d >>= fun head_mac_style ->
   d_uint16 d >>= fun head_lowest_rec_ppem ->
   d_skip 2 d >>= fun () -> (* fontDirectionHint *)
-  d_uint16 d >>= fun head_index_to_loc_format ->
+  d_uint16 d >>= fun locfmt ->
+  begin
+    match locfmt with
+    | 0 -> return ShortLocFormat
+    | 1 -> return LongLocFormat
+    | _ -> err (`Invalid_index_to_loc_format(locfmt))
+  end >>= fun head_index_to_loc_format ->
   return {
     head_font_revision; head_flags; head_units_per_em; head_created;
     head_modified; head_xmin; head_ymin; head_xmax; head_ymax;
@@ -4502,6 +4515,13 @@ module Encode = struct
     buffer : Buffer.t;
   }
 
+  type raw_glyph = {
+    glyph_aw   : int;
+    glyph_lsb  : int;
+    glyph_bbox : int * int * int * int;
+    glyph_data : string;
+  }
+
 
   let create_encoder () =
     { buffer = Buffer.create 0x10000; }
@@ -4705,6 +4725,11 @@ module Encode = struct
   let head (h : head) : raw_table ok =
     let enc = create_encoder () in
     let fontRevision = Int32.to_int h.head_font_revision in
+    let ilocfmt =
+      match h.head_index_to_loc_format with
+      | ShortLocFormat -> 0
+      | LongLocFormat  -> 1
+    in
     let checkSumAdjustment = 0 in  (* TEMPORARY *)
     enc_uint32 enc 0x00010000          >>= fun () ->  (* -- Table Version Number -- *)
     enc_uint32 enc fontRevision        >>= fun () ->
@@ -4721,7 +4746,7 @@ module Encode = struct
     enc_uint16 enc h.head_mac_style    >>= fun () ->
     enc_uint16 enc h.head_lowest_rec_ppem     >>= fun () ->
     enc_int16  enc 0                          >>= fun () ->  (* -- 'fontDirectionHint' -- *)
-    enc_int16  enc h.head_index_to_loc_format >>= fun () ->
+    enc_int16  enc ilocfmt                    >>= fun () ->
     enc_int16  enc 0                          >>= fun () ->  (* -- 'glyphDataFormat' -- *)
     let rawtbl = to_raw_table Tag.head enc in
     return rawtbl
@@ -4769,5 +4794,42 @@ module Encode = struct
     enc_uint16 enc m.maxp_max_component_depth      >>= fun () ->
     let rawtbl = to_raw_table Tag.maxp enc in
     return rawtbl
+
+
+  let truetype_outline_tables (locFormat : loc_format) (glyphlst : raw_glyph list) =
+
+    let numGlyphs = List.length glyphlst in
+    let numberOfHMetrics = numGlyphs in
+
+  (* -- outputs 'hmtx' table and calculates (xMin, yMin, xMax, yMax) -- *)
+    let enc_hmtx = create_encoder () in
+    glyphlst |> List.fold_left (fun res g ->
+      res >>= fun () ->
+      enc_uint32 enc_hmtx g.glyph_aw  >>= fun () ->
+      enc_int32  enc_hmtx g.glyph_lsb
+    ) (return ()) >>= fun () ->
+    let rawtbl_hmtx = to_raw_table Tag.hmtx enc_hmtx in
+
+  (* -- outputs 'glyf' table and 'loca' table -- *)
+    let enc_glyf = create_encoder () in
+    let enc_loca = create_encoder () in
+    let enc_for_loca offset =
+      match locFormat with
+      | ShortLocFormat -> enc_uint16 enc_loca (offset / 2)
+      | LongLocFormat  -> enc_uint32 enc_loca offset
+    in
+    let offset_init = 0 in
+    glyphlst |> List.fold_left (fun res g ->
+      res >>= fun offset ->
+      enc_direct enc_glyf g.glyph_data >>= fun () ->
+      enc_for_loca offset >>= fun () ->
+      let len = String.length g.glyph_data in
+      return (offset + len)
+    ) (return offset_init) >>= fun offset_last ->
+    enc_for_loca offset_last >>= fun () ->
+    let rawtbl_glyf = to_raw_table Tag.glyf enc_glyf in
+    let rawtbl_loca = to_raw_table Tag.loca enc_loca in
+
+    return (numberOfHMetrics, rawtbl_hmtx, rawtbl_glyf, rawtbl_loca)
 
 end
