@@ -4818,10 +4818,11 @@ module Encode = struct
     number_of_glyphs : int;
 
   (* -- for 'head' table -- *)
-    x_min : int;
-    y_min : int;
-    x_max : int;
-    y_max : int;
+    x_min               : int;
+    y_min               : int;
+    x_max               : int;
+    y_max               : int;
+    index_to_loc_format : loc_format;
 
   (* -- for 'hhea' table -- *)
     advance_width_max      : int;
@@ -4846,9 +4847,14 @@ module Encode = struct
     g.glyph_lsb + (xmax - xmin)
 
 
-  let truetype_outline_tables (locFormat : loc_format) (glyphlst : raw_glyph list) =
+  let truetype_outline_tables (glyphlst : raw_glyph list) =
 
     let numGlyphs = List.length glyphlst in
+(*
+    if numGlyphs > 65536 then
+      err `Too_many_glyphs
+    else
+*)
     let numberOfHMetrics = numGlyphs in
 
   (* -- outputs 'hmtx' table and calculates (xMin, yMin, xMax, yMax) -- *)
@@ -4875,10 +4881,14 @@ module Encode = struct
   (* -- outputs 'glyf' table and 'loca' table -- *)
     let enc_glyf = create_encoder () in
     let enc_loca = create_encoder () in
-    let enc_for_loca offset =
-      match locFormat with
-      | ShortLocFormat -> enc_uint16 enc_loca (offset / 2)
-      | LongLocFormat  -> enc_uint32 enc_loca offset
+    let lenwhole =
+      glyphlst |> List.fold_left (fun acc g -> acc + g.glyph_data_length) 0
+    in
+    let (locfmt, enc_for_loca) =
+      if lenwhole <= 2 * (1 lsl 16) then
+        (ShortLocFormat, (fun offset -> enc_uint16 enc_loca (offset / 2)))
+      else
+        (LongLocFormat , (fun offset -> enc_uint32 enc_loca offset)      )
     in
     let offset_init = 0 in
     glyphlst |> List.fold_left (fun res g ->
@@ -4903,6 +4913,7 @@ module Encode = struct
       y_min = yMin;
       x_max = xMax;
       y_max = yMax;
+      index_to_loc_format = locfmt;
 
       advance_width_max      = awmax;
       min_left_side_bearing  = minlsb;

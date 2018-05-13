@@ -946,10 +946,11 @@ module Encode : sig
     number_of_glyphs : int;
 
   (* -- for 'head' table -- *)
-    x_min : int;
-    y_min : int;
-    x_max : int;
-    y_max : int;
+    x_min               : int;
+    y_min               : int;
+    x_max               : int;
+    y_max               : int;
+    index_to_loc_format : loc_format;
 
   (* -- for 'hhea' table -- *)
     advance_width_max      : int;
@@ -959,7 +960,7 @@ module Encode : sig
     number_of_h_metrics : int;
   }
 
-  val truetype_outline_tables : loc_format -> raw_glyph list -> (glyph_output_info, error) result
+  val truetype_outline_tables : raw_glyph list -> (glyph_output_info, error) result
 
 end
 
