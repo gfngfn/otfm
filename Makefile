@@ -1,24 +1,28 @@
 PREFIX=/usr/local/bin
+OCB=ocamlbuild -use-ocamlfind
 
 all:
-	ocamlbuild -use-ocamlfind otftrip.native
+	$(OCB) otftrip.native
 	mv otftrip.native otftrip-local
 
 gsub:
-	ocamlbuild -use-ocamlfind gsubtrip.native
+	$(OCB) gsubtrip.native
 	mv gsubtrip.native gsubtrip
 
 cff:
-	ocamlbuild -use-ocamlfind cfftrip.native
+	$(OCB) cfftrip.native
 	mv cfftrip.native cfftrip
 
 examples:
-	ocamlbuild -use-ocamlfind examples.native
+	$(OCB) examples.native
 
 subset:
-	ocamlbuild -use-ocamlfind otfsubset.native
-	mv otfsubset.native otfsubset
+	$(OCB) otfgensubset.native
+	mv otfgensubset.native otfgensubset
 
 install:
-	sudo install otftrip-local $(PREFIX)
-	sudo install gsubtrip $(PREFIX)
+	install otftrip-local $(PREFIX)
+	install gsubtrip $(PREFIX)
+
+clean:
+	$(OCB) -clean
