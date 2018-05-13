@@ -215,6 +215,7 @@ type error =
   | `Not_encodable_as_uint32
   | `Not_encodable_as_int32
   | `Not_encodable_as_time
+  | `Too_many_glyphs                  of int
 ]
 
 let pp_ctx ppf = function
@@ -332,6 +333,8 @@ let pp_error ppf = function
     pp ppf "@[Not@ encodable@ as@ int32@]"
 | `Not_encodable_as_time ->
     pp ppf "@[Not@ encodable@ as@ LONGDATETIME@]"
+| `Too_many_glyphs num ->
+    pp ppf "@[Too@ many@ glyphs@ (%d)@]" num
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
@@ -4829,7 +4832,7 @@ module Encode = struct
     min_left_side_bearing  : int;
     min_right_side_bearing : int;
     x_max_extent           : int;
-    number_of_h_metrics : int;
+    number_of_h_metrics    : int;
   }
 
 
@@ -4850,76 +4853,76 @@ module Encode = struct
   let truetype_outline_tables (glyphlst : raw_glyph list) =
 
     let numGlyphs = List.length glyphlst in
-(*
+
     if numGlyphs > 65536 then
-      err `Too_many_glyphs
+      err (`Too_many_glyphs(numGlyphs))
     else
-*)
-    let numberOfHMetrics = numGlyphs in
 
-  (* -- outputs 'hmtx' table and calculates (xMin, yMin, xMax, yMax) -- *)
-    let enc_hmtx = create_encoder () in
-    let bbox_init = (0, 0, 0, 0) in
-    let aw_init = 0 in
-    let lsb_init = 1000 in  (* temporary *)
-    let rsb_init = 1000 in  (* temporary *)
-    let xext_init = -1000 in  (* temporary *)
-    glyphlst |> List.fold_left (fun res g ->
-      res >>= fun (bbox, aw, lsb, rsb, xext) ->
-      enc_uint32 enc_hmtx g.glyph_aw  >>= fun () ->
-      enc_int32  enc_hmtx g.glyph_lsb >>= fun () ->
-      let bboxnew = update_bbox bbox g.glyph_bbox in
-      let awnew = max aw g.glyph_aw in
-      let lsbnew = min lsb g.glyph_lsb in
-      let rsbnew = min rsb (get_right_side_bearing g) in
-      let xextnew = max xext (get_x_extent g) in
-      return (bboxnew, awnew, lsbnew, rsbnew, xextnew)
-    ) (return (bbox_init, aw_init, lsb_init, rsb_init, xext_init))
-      >>= fun ((xMin, yMin, xMax, yMax), awmax, minlsb, minrsb, xmaxext) ->
-    let rawtbl_hmtx = to_raw_table Tag.hmtx enc_hmtx in
+      let numberOfHMetrics = numGlyphs in
 
-  (* -- outputs 'glyf' table and 'loca' table -- *)
-    let enc_glyf = create_encoder () in
-    let enc_loca = create_encoder () in
-    let lenwhole =
-      glyphlst |> List.fold_left (fun acc g -> acc + g.glyph_data_length) 0
-    in
-    let (locfmt, enc_for_loca) =
-      if lenwhole <= 2 * (1 lsl 16) then
-        (ShortLocFormat, (fun offset -> enc_uint16 enc_loca (offset / 2)))
-      else
-        (LongLocFormat , (fun offset -> enc_uint32 enc_loca offset)      )
-    in
-    let offset_init = 0 in
-    glyphlst |> List.fold_left (fun res g ->
-      res >>= fun offset ->
-      enc_direct enc_glyf g.glyph_data >>= fun () ->
-      enc_for_loca offset >>= fun () ->
-      let len = g.glyph_data_length in
-      return (offset + len)
-    ) (return offset_init) >>= fun offset_last ->
-    enc_for_loca offset_last >>= fun () ->
-    let rawtbl_glyf = to_raw_table Tag.glyf enc_glyf in
-    let rawtbl_loca = to_raw_table Tag.loca enc_loca in
+    (* -- outputs 'hmtx' table and calculates (xMin, yMin, xMax, yMax) -- *)
+      let enc_hmtx = create_encoder () in
+      let bbox_init = (0, 0, 0, 0) in
+      let aw_init = 0 in
+      let lsb_init = 1000 in  (* temporary *)
+      let rsb_init = 1000 in  (* temporary *)
+      let xext_init = -1000 in  (* temporary *)
+      glyphlst |> List.fold_left (fun res g ->
+        res >>= fun (bbox, aw, lsb, rsb, xext) ->
+        enc_uint32 enc_hmtx g.glyph_aw  >>= fun () ->
+        enc_int32  enc_hmtx g.glyph_lsb >>= fun () ->
+        let bboxnew = update_bbox bbox g.glyph_bbox in
+        let awnew = max aw g.glyph_aw in
+        let lsbnew = min lsb g.glyph_lsb in
+        let rsbnew = min rsb (get_right_side_bearing g) in
+        let xextnew = max xext (get_x_extent g) in
+        return (bboxnew, awnew, lsbnew, rsbnew, xextnew)
+      ) (return (bbox_init, aw_init, lsb_init, rsb_init, xext_init))
+        >>= fun ((xMin, yMin, xMax, yMax), awmax, minlsb, minrsb, xmaxext) ->
+      let rawtbl_hmtx = to_raw_table Tag.hmtx enc_hmtx in
 
-    return {
-      hmtx = rawtbl_hmtx;
-      glyf = rawtbl_glyf;
-      loca = rawtbl_loca;
+    (* -- outputs 'glyf' table and 'loca' table -- *)
+      let enc_glyf = create_encoder () in
+      let enc_loca = create_encoder () in
+      let lenwhole =
+        glyphlst |> List.fold_left (fun acc g -> acc + g.glyph_data_length) 0
+      in
+      let (locfmt, enc_for_loca) =
+        if lenwhole <= 2 * (1 lsl 16) then
+          (ShortLocFormat, (fun offset -> enc_uint16 enc_loca (offset / 2)))
+        else
+          (LongLocFormat , (fun offset -> enc_uint32 enc_loca offset)      )
+      in
+      let offset_init = 0 in
+      glyphlst |> List.fold_left (fun res g ->
+        res >>= fun offset ->
+        enc_direct enc_glyf g.glyph_data >>= fun () ->
+        enc_for_loca offset >>= fun () ->
+        let len = g.glyph_data_length in
+        return (offset + len)
+      ) (return offset_init) >>= fun offset_last ->
+      enc_for_loca offset_last >>= fun () ->
+      let rawtbl_glyf = to_raw_table Tag.glyf enc_glyf in
+      let rawtbl_loca = to_raw_table Tag.loca enc_loca in
 
-      number_of_glyphs = numGlyphs;
+      return {
+        hmtx = rawtbl_hmtx;
+        glyf = rawtbl_glyf;
+        loca = rawtbl_loca;
 
-      x_min = xMin;
-      y_min = yMin;
-      x_max = xMax;
-      y_max = yMax;
-      index_to_loc_format = locfmt;
+        number_of_glyphs = numGlyphs;
 
-      advance_width_max      = awmax;
-      min_left_side_bearing  = minlsb;
-      min_right_side_bearing = minrsb;
-      x_max_extent           = xmaxext;
-      number_of_h_metrics    = numberOfHMetrics;
-    }
+        x_min = xMin;
+        y_min = yMin;
+        x_max = xMax;
+        y_max = yMax;
+        index_to_loc_format = locfmt;
+
+        advance_width_max      = awmax;
+        min_left_side_bearing  = minlsb;
+        min_right_side_bearing = minrsb;
+        x_max_extent           = xmaxext;
+        number_of_h_metrics    = numberOfHMetrics;
+      }
 
 end

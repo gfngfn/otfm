@@ -238,6 +238,7 @@ type error =
   | `Not_encodable_as_uint32
   | `Not_encodable_as_int32
   | `Not_encodable_as_time
+  | `Too_many_glyphs                  of int
 ]
 (** The type for decoding errors.
 
@@ -957,7 +958,7 @@ module Encode : sig
     min_left_side_bearing  : int;
     min_right_side_bearing : int;
     x_max_extent           : int;
-    number_of_h_metrics : int;
+    number_of_h_metrics    : int;
   }
 
   val truetype_outline_tables : raw_glyph list -> (glyph_output_info, error) result
