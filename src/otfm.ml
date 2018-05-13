@@ -215,7 +215,8 @@ type error =
   | `Not_encodable_as_uint32
   | `Not_encodable_as_int32
   | `Not_encodable_as_time
-  | `Too_many_glyphs                  of int
+  | `Too_many_glyphs_for_encoding     of int
+  | `No_glyph_for_encoding
 ]
 
 let pp_ctx ppf = function
@@ -333,8 +334,10 @@ let pp_error ppf = function
     pp ppf "@[Not@ encodable@ as@ int32@]"
 | `Not_encodable_as_time ->
     pp ppf "@[Not@ encodable@ as@ LONGDATETIME@]"
-| `Too_many_glyphs num ->
-    pp ppf "@[Too@ many@ glyphs@ (%d)@]" num
+| `Too_many_glyphs_for_encoding num ->
+    pp ppf "@[Too@ many@ glyphs@ for@ encoding@ (%d)@]" num
+| `No_glyph_for_encoding ->
+    pp ppf "@[No@ glyph@ for@ encoding@]"
 (* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
    platforms they fit, on 32 bits we are limited by string size
    anyway. *)
@@ -4855,8 +4858,16 @@ module Encode = struct
     let numGlyphs = List.length glyphlst in
 
     if numGlyphs > 65536 then
-      err (`Too_many_glyphs(numGlyphs))
+      err (`Too_many_glyphs_for_encoding(numGlyphs))
     else
+      begin
+        match glyphlst with
+        | []          -> err `No_glyph_for_encoding
+        | gfirst :: _ -> return gfirst
+      end >>= fun gfirst ->
+      let lsb_init = gfirst.glyph_lsb in
+      let rsb_init = get_right_side_bearing gfirst in
+      let xext_init = get_x_extent gfirst in
 
       let numberOfHMetrics = numGlyphs in
 
@@ -4864,9 +4875,6 @@ module Encode = struct
       let enc_hmtx = create_encoder () in
       let bbox_init = (0, 0, 0, 0) in
       let aw_init = 0 in
-      let lsb_init = 1000 in  (* temporary *)
-      let rsb_init = 1000 in  (* temporary *)
-      let xext_init = -1000 in  (* temporary *)
       glyphlst |> List.fold_left (fun res g ->
         res >>= fun (bbox, aw, lsb, rsb, xext) ->
         enc_uint32 enc_hmtx g.glyph_aw  >>= fun () ->

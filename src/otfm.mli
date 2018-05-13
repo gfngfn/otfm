@@ -238,7 +238,8 @@ type error =
   | `Not_encodable_as_uint32
   | `Not_encodable_as_int32
   | `Not_encodable_as_time
-  | `Too_many_glyphs                  of int
+  | `Too_many_glyphs_for_encoding     of int
+  | `No_glyph_for_encoding
 ]
 (** The type for decoding errors.
 
