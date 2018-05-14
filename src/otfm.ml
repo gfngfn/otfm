@@ -126,14 +126,9 @@ type error =
   | `Invalid_cp_range                 of int * int
   | `Invalid_postscript_name          of string
   | `Unexpected_eoi                   of error_ctx
-(* added by T. Suwa: *)
+
   | `Inconsistent_length_of_coverage  of error_ctx
   | `Inconsistent_length_of_class
-(*
-  | `Missing_required_script_tag      of string
-  | `Missing_required_langsys_tag     of string
-  | `Missing_required_feature_tag     of string
-*)
   | `Invalid_lookup_order             of int
   | `Invalid_feature_index            of int
   | `Invalid_feature_params           of int
@@ -182,17 +177,8 @@ let pp_error ppf = function
     pp ppf "@[Unknown@ OpenType@ flavour (%a)@]" Tag.pp tag
 | `Missing_required_table tag ->
     pp ppf "@[Missing@ required@ table (%a)@]" Tag.pp tag
-(*
-| `Unsupported_TTC ->
-    pp ppf "@[True@ Type@ collections (TTC)@ are@ not@ supported@]"
-*)
 | `Unsupported_cmap_format cmapfmt ->
     pp ppf "@[Unsupported@ cmap@ subtable@ format@ %d@]" cmapfmt
-(*
-    let pp_sep ppf () = pp ppf ",@ " in
-    let pp_map ppf (pid, eid, fmt) = pp ppf "(%d,%d,%d)" pid eid fmt in
-    pp ppf "@[All@ cmaps:@ %a@ are@ unsupported@]" (pp_list ~pp_sep pp_map) maps
-*)
 | `Unsupported_glyf_matching_points ->
     pp ppf "@[Unsupported@ glyf@ matching@ points)@]"
 | `Unknown_version (ctx, v) ->
@@ -211,7 +197,7 @@ let pp_error ppf = function
     pp ppf "@[Invalid@ PostScript@ name (%S)@]" n
 | `Unexpected_eoi ctx ->
     pp ppf "@[Unexpected@ end@ of@ input@ in %a@]" pp_ctx ctx
-(* added by Takashi SUWA: *)
+
 | `Inconsistent_length_of_coverage ctx ->
     pp ppf "@[Inconsistent@ length@ of@ coverage@ in %a@]" pp_ctx ctx
 | `Inconsistent_length_of_class ->
