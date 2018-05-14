@@ -4550,7 +4550,7 @@ let get_composite_offsets (data : string) : ((glyph_id * int) list, error) resul
   in
 
   let numberOfContours = get_int16 data 0 in
-  if numberOfContours < 0 then
+  if numberOfContours >= 0 then
     return []
   else
     loop 10 Alist.empty
