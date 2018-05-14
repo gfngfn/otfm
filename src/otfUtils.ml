@@ -59,3 +59,51 @@ let rec pp_list ?(pp_sep = Format.pp_print_cut) pp_v ppf = function
 let ( >>= ) x f = match x with Ok(v) -> f v | Error(_) as e -> e
 let return x                 = Ok(x)
 let err e                    = Error(e)
+
+
+type byte = char
+
+
+module WideInt
+= struct
+    type t = Int64.t
+    let ( lsl ) = Int64.shift_left
+    let ( lsr ) = Int64.shift_right
+    let ( lor ) = Int64.logor
+    let ( land ) = Int64.logand
+    let ( mod ) = Int64.rem
+    let add = Int64.add
+    let sub = Int64.sub
+    let of_int = Int64.of_int
+    let to_int = Int64.to_int
+    let of_int64 iw = iw
+    let to_int64 iw = iw
+    let of_byte ch = Int64.of_int (Char.code ch)
+    let to_byte iw = Char.chr (Int64.to_int iw)  (* -- may raise 'Invalid_argument' -- *)
+    let is_in_uint32 iw = Int64.zero <= iw && iw < of_int 0x100000000
+    let is_in_int32 iw = of_int (-0x80000000) <= iw && iw < of_int 0x80000000
+    let is_neg iw = iw < Int64.zero
+  end
+
+
+type wint = WideInt.t
+
+
+let ( +% ) = WideInt.add
+let ( -% ) = WideInt.sub
+let ( !% ) = WideInt.of_int
+let ( !%% ) = WideInt.of_int64
+
+
+let cut_uint32_unsafe (ui : wint) : byte * byte * byte * byte =
+  let open WideInt in
+    let b0 = ui lsr 24 in
+    let r0 = ui -% (b0 lsl 24) in
+    let b1 = r0 lsr 16 in
+    let r1 = r0 -% (b1 lsl 16) in
+    let b2 = r1 lsr 8 in
+    let b3 = r1 -% (b2 lsl 8) in
+(*
+    Printf.printf "uint32 %d --> (%d, %d, %d, %d)\n" ui b0 b1 b2 b3;
+*)
+    (to_byte b0, to_byte b1, to_byte b2, to_byte b3)

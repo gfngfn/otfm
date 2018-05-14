@@ -28,6 +28,26 @@
 
 open Result
 
+module WideInt : sig
+  type t
+  val ( lsl ) : t -> int -> t
+  val ( lsr ) : t -> int -> t
+  val ( lor ) : t -> t -> t
+  val ( land ) : t -> t -> t
+  val ( mod ) : t -> t -> t
+  val add : t -> t -> t
+  val sub : t -> t -> t
+  val of_int : int -> t
+  val to_int : t -> int
+  val of_int64 : int64 -> t
+  val to_int64 : t -> int64
+  val of_byte : char -> t
+  val to_byte : t -> char
+  val is_in_int32 : t -> bool
+  val is_in_uint32 : t -> bool
+  val is_neg : t -> bool
+end
+
 (** {1 Tags} *)
 
 type tag
@@ -138,11 +158,11 @@ module Tag : sig
   val to_bytes : tag -> string
   (** [to_string t] is the tag as a four byte long string. *)
 
-  val to_int32 : tag -> int32
-  (** [to_int32 t] is the tag as an unsigned 32 bits integer. *)
+  val to_wide_int : tag -> WideInt.t
+  (** [to_wide_int t] is the tag as a wide-range integer. *)
 
-  val of_int32 : int32 -> tag
-  (** [of_int32 t] is the tag from and unsigned 32 bits integer. *)
+  val of_wide_int : WideInt.t -> tag
+  (** [of_wide_int wi] is the tag from wide-range integer. *)
 
   val compare : tag -> tag -> int
   (** [compare t t'] is [Pervasives.compare t t'] *)
@@ -189,7 +209,7 @@ type error =
   | `Unsupported_cmap_format          of int
   | `Unsupported_glyf_matching_points
   | `Missing_required_table           of tag
-  | `Unknown_version                  of error_ctx * int32
+  | `Unknown_version                  of error_ctx * WideInt.t
   | `Unknown_loca_format              of error_ctx * int
   | `Unknown_composite_format         of error_ctx * int
   | `Invalid_offset                   of error_ctx * int
@@ -235,8 +255,8 @@ type error =
   | `Not_encodable_as_int8            of int
   | `Not_encodable_as_uint16          of int
   | `Not_encodable_as_int16           of int
-  | `Not_encodable_as_uint32          of int
-  | `Not_encodable_as_int32           of int
+  | `Not_encodable_as_uint32          of WideInt.t
+  | `Not_encodable_as_int32           of WideInt.t
   | `Not_encodable_as_time            of Int64.t
   | `Too_many_glyphs_for_encoding     of int
   | `No_glyph_for_encoding
@@ -380,7 +400,7 @@ type loc_format =
   | LongLocFormat
 
 type head =
-  { head_font_revision : int32;
+  { head_font_revision : WideInt.t;
     head_flags : int;
     head_units_per_em : int;
     head_created : float;  (** Unix timestamp. *)
@@ -495,11 +515,11 @@ type os2 =
     os2_y_strikeout_position : int;
     os2_family_class : int;
     os2_panose : string; (** 10 bytes *)
-    os2_ul_unicode_range1 : int32;
-    os2_ul_unicode_range2 : int32;
-    os2_ul_unicode_range3 : int32;
-    os2_ul_unicode_range4 : int32;
-    os2_ach_vend_id : int32;
+    os2_ul_unicode_range1 : WideInt.t;
+    os2_ul_unicode_range2 : WideInt.t;
+    os2_ul_unicode_range3 : WideInt.t;
+    os2_ul_unicode_range4 : WideInt.t;
+    os2_ach_vend_id : WideInt.t;
     os2_fs_selection : int;
     os2_us_first_char_index : int;
     os2_us_last_char_index : int;
@@ -508,8 +528,8 @@ type os2 =
     os2_s_typo_linegap : int;
     os2_us_win_ascent : int;
     os2_us_win_descent : int;
-    os2_ul_code_page_range_1 : int32 option;
-    os2_ul_code_page_range_2 : int32 option;
+    os2_ul_code_page_range_1 : WideInt.t option;
+    os2_ul_code_page_range_2 : WideInt.t option;
     os2_s_x_height : int option;
     os2_s_cap_height : int option;
     os2_us_default_char : int option;

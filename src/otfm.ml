@@ -1,97 +1,104 @@
 (* -*- coding: utf-8 -*- *)
 (*---------------------------------------------------------------------------
-   Copyright (c) 2013 Daniel C. Bünzli, and 2017 Takashi Suwa. All rights reserved.
+   Copyright (c) 2013 Daniel C. Bünzli, and 2017-2018 Takashi Suwa. All rights reserved.
    Distributed under the ISC license, see terms at the end of the file.
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
 
 open OtfUtils
 
+module WideInt = WideInt
+
 (* OpenType tags *)
 
-type tag = int32
+type tag = wint
 
 module Tag = struct
   type t = tag
 
   (* OpenType version tags. *)
 
-  let v_wOFF = 0x774F4646l
-  let v_OTTO = 0x4F54544Fl
-  let v_ttcf = 0x74746366l
-  let v_true = 0x74727565l (* may happen in the wild. *)
+  let v_wOFF = !%% 0x774F4646L
+  let v_OTTO = !%% 0x4F54544FL
+  let v_ttcf = !%% 0x74746366L
+  let v_true = !%% 0x74727565L (* may happen in the wild. *)
 
   (* Required common tables tags *)
 
-  let cmap = 0x636D6170l
-  let head = 0x68656164l
-  let hhea = 0x68686561l
-  let hmtx = 0x686D7478l
-  let maxp = 0x6D617870l
-  let name = 0x6E616D65l
-  let os2  = 0x4F532F32l
-  let post = 0x706F7374l
+  let cmap = !%% 0x636D6170L
+  let head = !%% 0x68656164L
+  let hhea = !%% 0x68686561L
+  let hmtx = !%% 0x686D7478L
+  let maxp = !%% 0x6D617870L
+  let name = !%% 0x6E616D65L
+  let os2  = !%% 0x4F532F32L
+  let post = !%% 0x706F7374L
 
   let t_common = [ cmap; head; hhea; hmtx; maxp; name; os2; post ]
 
   (* TTF font table tags *)
 
-  let cvt  = 0x63767420l
-  let fpgm = 0x6670676Dl
-  let glyf = 0x676C7966l
-  let loca = 0x6C6F6361l
-  let prep = 0x70726570l
+  let cvt  = !%% 0x63767420L
+  let fpgm = !%% 0x6670676DL
+  let glyf = !%% 0x676C7966L
+  let loca = !%% 0x6C6F6361L
+  let prep = !%% 0x70726570L
 
   (* CFF font table tags *)
 
-  let cff  = 0x43464620l
-  let vorg = 0x564F5247l
+  let cff  = !%% 0x43464620L
+  let vorg = !%% 0x564F5247L
 
   (* Bitmap glyph tables *)
 
-  let ebdt = 0x45424454l
-  let eblc = 0x45424C43l
-  let ebsc = 0x45425343l
+  let ebdt = !%% 0x45424454L
+  let eblc = !%% 0x45424C43L
+  let ebsc = !%% 0x45425343L
 
   (* Optional tables. *)
 
-  let dsig = 0x44534947l
-  let gasp = 0x67617370l
-  let hdmx = 0x68646D78l
-  let kern = 0x6B65726El
-  let ltsh = 0x4C545348l
-  let pclt = 0x50434C54l
-  let vdmx = 0x56444D58l
-  let vhea = 0x76686561l
-  let vmtx = 0x766D7478l
+  let dsig = !%% 0x44534947L
+  let gasp = !%% 0x67617370L
+  let hdmx = !%% 0x68646D78L
+  let kern = !%% 0x6B65726EL
+  let ltsh = !%% 0x4C545348L
+  let pclt = !%% 0x50434C54L
+  let vdmx = !%% 0x56444D58L
+  let vhea = !%% 0x76686561L
+  let vmtx = !%% 0x766D7478L
 
   (* Advanced Open Type font layout tables *)
 
-  let base = 0x42415345l
-  let gdef = 0x47444546l
-  let gpos = 0x47504F53l
-  let gsub = 0x47535542l
-  let jstf = 0x4A535446l
-  let math = 0x4d415448l
+  let base = !%% 0x42415345L
+  let gdef = !%% 0x47444546L
+  let gpos = !%% 0x47504F53L
+  let gsub = !%% 0x47535542L
+  let jstf = !%% 0x4A535446L
+  let math = !%% 0x4d415448L
 
   (* Functions *)
 
   let of_bytes s =
-    if String.length s <> 4 then invalid_arg (err_invalid_tag s) else
-    let s0 = Int32.of_int ((Char.code s.[0] lsl 8) lor (Char.code s.[1])) in
-    let s1 = Int32.of_int ((Char.code s.[2] lsl 8) lor (Char.code s.[3])) in
-    Int32.(logor (shift_left s0 16) s1)
+    let open WideInt in
+      if String.length s <> 4 then
+        invalid_arg (err_invalid_tag s)
+      else
+        let b0 = of_byte (String.get s 0) in
+        let b1 = of_byte (String.get s 1) in
+        let b2 = of_byte (String.get s 2) in
+        let b3 = of_byte (String.get s 3) in
+        (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3
+
 
   let to_bytes t =
-    let c0 = Char.chr (Int32.(to_int (shift_right t 24))) in
-    let c1 = Char.chr (Int32.(to_int (shift_right t 16)) land 0xFF) in
-    let c2 = Char.chr (Int32.(to_int (shift_right t 8)) land 0xFF) in
-    let c3 = Char.chr (Int32.(to_int t) land 0xFF) in
+    let (c0, c1, c2, c3) = cut_uint32_unsafe t in
     Printf.sprintf "%c%c%c%c" c0 c1 c2 c3
 
-  let to_int32 x = x
-  let of_int32 x = x
-  let compare : int32 -> int32 -> int = Pervasives.compare
+
+  let to_wide_int x = x
+  let of_wide_int x = x
+
+  let compare = Pervasives.compare
   let pp ppf t = pp ppf "'%s'" (to_bytes t)
 end
 
@@ -111,7 +118,7 @@ type error =
   | `Unsupported_cmap_format          of int
   | `Unsupported_glyf_matching_points
   | `Missing_required_table           of tag
-  | `Unknown_version                  of error_ctx * int32
+  | `Unknown_version                  of error_ctx * wint
   | `Unknown_loca_format              of error_ctx * int
   | `Unknown_composite_format         of error_ctx * int
   | `Invalid_offset                   of error_ctx * int
@@ -157,8 +164,8 @@ type error =
   | `Not_encodable_as_int8            of int
   | `Not_encodable_as_uint16          of int
   | `Not_encodable_as_int16           of int
-  | `Not_encodable_as_uint32          of int
-  | `Not_encodable_as_int32           of int
+  | `Not_encodable_as_uint32          of wint
+  | `Not_encodable_as_int32           of wint
   | `Not_encodable_as_time            of Int64.t
   | `Too_many_glyphs_for_encoding     of int
   | `No_glyph_for_encoding
@@ -189,7 +196,7 @@ let pp_error ppf = function
 | `Unsupported_glyf_matching_points ->
     pp ppf "@[Unsupported@ glyf@ matching@ points)@]"
 | `Unknown_version (ctx, v) ->
-    pp ppf "@[Unknown@ version (%lX)@ in@ %a@]" v pp_ctx ctx
+    pp ppf "@[Unknown@ version (%LX)@ in@ %a@]" (WideInt.to_int64 v) pp_ctx ctx
 | `Unknown_loca_format (ctx, v) ->
     pp ppf "@[Unknown@ loca table format (%d)@ in@ %a@]" v pp_ctx ctx
 | `Unknown_composite_format (ctx, v) ->
@@ -274,12 +281,12 @@ let pp_error ppf = function
     pp ppf "@[Not@ encodable@ as@ uint16@ (%d)@]" ui
 | `Not_encodable_as_int16 i ->
     pp ppf "@[Not@ encodable@ as@ int16@ (%d)@]" i
-| `Not_encodable_as_uint32 ui ->
-    pp ppf "@[Not@ encodable@ as@ uint32@ (%d)@]" ui
-| `Not_encodable_as_int32 i ->
-    pp ppf "@[Not@ encodable@ as@ int32@ (%d)@]" i
+| `Not_encodable_as_uint32 wui ->
+    pp ppf "@[Not@ encodable@ as@ uint32@ (%LX)@]" (WideInt.to_int64 wui)
+| `Not_encodable_as_int32 wi ->
+    pp ppf "@[Not@ encodable@ as@ int32@ (%LX)@]" (WideInt.to_int64 wi)
 | `Not_encodable_as_time i64 ->
-    pp ppf "@[Not@ encodable@ as@ LONGDATETIME@ (%s)@]" (Int64.to_string i64)
+    pp ppf "@[Not@ encodable@ as@ LONGDATETIME@ (%LX)@]" i64
 | `Too_many_glyphs_for_encoding num ->
     pp ppf "@[Too@ many@ glyphs@ for@ encoding@ (%d)@]" num
 | `No_glyph_for_encoding ->
@@ -394,12 +401,16 @@ let d_uint24 d =
     return ((b0 lsl 16) lor (b1 lsl 8) lor b2)
 
 let d_uint32 d =
-  if miss d 4 then err_eoi d else
-    let b0 = raw_byte d in let b1 = raw_byte d in
-    let b2 = raw_byte d in let b3 = raw_byte d in
-    let s0 = Int32.of_int ((b0 lsl 8) lor b1) in
-    let s1 = Int32.of_int ((b2 lsl 8) lor b3) in
-    return (Int32.logor (Int32.shift_left s0 16) s1)
+  let open WideInt in
+    if miss d 4 then
+      err_eoi d
+    else
+      let b0 = !% (raw_byte d) in
+      let b1 = !% (raw_byte d) in
+      let b2 = !% (raw_byte d) in
+      let b3 = !% (raw_byte d) in
+      return ((b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3)
+
 
 let d_uint32_int d =
   if miss d 4 then err_eoi d else
@@ -409,9 +420,12 @@ let d_uint32_int d =
     let s1 = (b2 lsl 8) lor b3 in
     return ((s0 lsl 16) lor s1)
 
+
 let d_int32 d =
-  d_uint32 d >>= fun i ->
-  return (if i > 0x7FFFFFFFl then Int32.sub i 0x10000000l else i)
+  let open WideInt in
+    d_uint32 d >>= fun i ->
+    return (if i > of_int64 0x7FFFFFFFL then i -% of_int64 0x10000000L else i)
+
 
 let d_time d =                       (* LONGDATETIME as a unix time stamp. *)
   if miss d 8 then err_eoi d else
@@ -606,11 +620,11 @@ let rec d_table_records d count =
 
 let d_version is_cff_element d =
   d_uint32 d >>= function
-    | t  when t = Tag.v_OTTO  -> begin d.flavour <- CFF     ; return true end
-    | t  when t = Tag.v_true  -> begin d.flavour <- TTF_true; return true end
-    | t  when t = 0x00010000l -> begin d.flavour <- TTF_OT  ; return true end
-    | t  when t = Tag.v_ttcf  -> if is_cff_element then err `Layered_ttc else return false
-    | t                       -> err (`Unknown_flavour(t))
+    | t  when t = Tag.v_OTTO      -> begin d.flavour <- CFF     ; return true end
+    | t  when t = Tag.v_true      -> begin d.flavour <- TTF_true; return true end
+    | t  when t = !%% 0x00010000L -> begin d.flavour <- TTF_OT  ; return true end
+    | t  when t = Tag.v_ttcf      -> if is_cff_element then err `Layered_ttc else return false
+    | t                           -> err (`Unknown_flavour(t))
 
 
 let d_structure d =                   (* offset table and table directory. *)
@@ -622,7 +636,7 @@ let d_structure d =                   (* offset table and table directory. *)
 
 let d_ttc_header d : (ttc_element list) ok =
   d_uint32 d >>= function
-  | version_ttc  when version_ttc = 0x00010000l || version_ttc = 0x00020000l ->
+  | version_ttc  when version_ttc = !%% 0x00010000L || version_ttc = !%% 0x00020000L ->
       d_long_offset_list d >>= fun offsetlst ->
       return (offsetlst |> List.map (fun offset -> (offset, d)))
   | version_ttc ->
@@ -712,7 +726,7 @@ let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
   init_decoder d >>=
   seek_required_table Tag.name d >>= fun () ->
   d_uint16 d >>= fun version ->
-  if version > 1 then err_version d (Int32.of_int version) else
+  if version > 1 then err_version d (!% version) else
   d_uint16 d >>= fun ncount ->
   d_uint16 d >>= fun soff ->
   let rec loop ncount () =
@@ -886,7 +900,7 @@ let cmap d : (cmap_subtable list) ok =
   seek_required_table Tag.cmap d >>= fun () ->
   let offset_cmap = cur_pos d in
   d_uint16 d >>= fun version ->                           (* cmap header. *)
-  if version <> 0 then err_version d (Int32.of_int version) else
+  if version <> 0 then err_version d (!% version) else
   d_list (d_encoding_record offset_cmap) d >>= fun rawsubtbllst ->
   let subtbllst =
     rawsubtbllst |> List.filter (fun (_, (pid, eid, format)) ->
@@ -1101,7 +1115,7 @@ type loc_format =
   | LongLocFormat
 
 type head = {
-  head_font_revision : int32;
+  head_font_revision : wint;
   head_flags : int;
   head_units_per_em : int;
   head_created : float;
@@ -1119,7 +1133,7 @@ let head d =
   init_decoder d >>=
   seek_required_table Tag.head d >>= fun () ->
   d_uint32 d >>= fun version ->
-  if version <> 0x00010000l then err_version d version else
+  if version <> !%% 0x00010000L then err_version d version else
   d_uint32 d >>= fun head_font_revision ->
   d_skip 8 d >>= fun () -> (* checkSumAdjustement, magicNumber *)
   d_uint16 d >>= fun head_flags ->
@@ -1165,7 +1179,7 @@ let hhea d =
   init_decoder d >>=
   seek_required_table Tag.hhea d >>= fun () ->
   d_uint32 d >>= fun version ->
-  if version <> 0x00010000l then err_version d version else
+  if version <> !%% 0x00010000L then err_version d version else
   d_int16  d >>= fun hhea_ascender ->
   d_int16  d >>= fun hhea_descender ->
   d_int16  d >>= fun hhea_line_gap ->
@@ -1253,7 +1267,7 @@ let maxp d =
   init_decoder d >>=
   seek_required_table Tag.maxp d >>= fun () ->
   d_uint32 d >>= fun version ->
-  if version <> 0x00010000l then err_version d version else
+  if version <> !%% 0x00010000L then err_version d version else
   d_uint16 d >>= fun maxp_num_glyphs ->
   d_uint16 d >>= fun maxp_max_points ->
   d_uint16 d >>= fun maxp_max_contours ->
@@ -1395,7 +1409,7 @@ let name d f acc =
   init_decoder d >>=
   seek_required_table Tag.name d >>= fun () ->
   d_uint16 d >>= fun version ->
-  if version < 0 || version > 1 then err_version d (Int32.of_int version) else
+  if version < 0 || version > 1 then err_version d (!% version) else
   d_uint16 d >>= fun ncount ->
   d_uint16 d >>= fun soff ->
   let cpos = cur_pos d in
@@ -1423,11 +1437,11 @@ type os2 =
     os2_y_strikeout_position : int;
     os2_family_class : int;
     os2_panose : string; (* 10 bytes *)
-    os2_ul_unicode_range1 : int32;
-    os2_ul_unicode_range2 : int32;
-    os2_ul_unicode_range3 : int32;
-    os2_ul_unicode_range4 : int32;
-    os2_ach_vend_id : int32;
+    os2_ul_unicode_range1 : wint;
+    os2_ul_unicode_range2 : wint;
+    os2_ul_unicode_range3 : wint;
+    os2_ul_unicode_range4 : wint;
+    os2_ach_vend_id : wint;
     os2_fs_selection : int;
     os2_us_first_char_index : int;
     os2_us_last_char_index : int;
@@ -1436,8 +1450,8 @@ type os2 =
     os2_s_typo_linegap : int;
     os2_us_win_ascent : int;
     os2_us_win_descent : int;
-    os2_ul_code_page_range_1 : int32 option;
-    os2_ul_code_page_range_2 : int32 option;
+    os2_ul_code_page_range_1 : wint option;
+    os2_ul_code_page_range_2 : wint option;
     os2_s_x_height : int option;
     os2_s_cap_height : int option;
     os2_us_default_char : int option;
@@ -1448,7 +1462,7 @@ let os2 d =
   init_decoder d >>=
   seek_required_table Tag.os2 d >>= fun () ->
   d_uint16 d >>= fun version ->
-  if version > 0x0004 then err_version d (Int32.of_int version) else
+  if version > 0x0004 then err_version d (!% version) else
   let opt v dec d =
     if version < v then return None else dec d >>= fun v -> return (Some(v))
   in
@@ -1524,7 +1538,7 @@ let kern_info c =
 let rec kern_tables ntables t p acc d =
   if ntables = 0 then return acc else
   d_uint16 d >>= fun version ->
-  if version > 0 then err_version d (Int32.of_int version) else
+  if version > 0 then err_version d (!% version) else
   d_uint16 d >>= fun len ->
   d_uint16 d >>= fun coverage ->
   let format = coverage lsr 8 in
@@ -1553,7 +1567,7 @@ let kern d t p acc =
   | None    -> return acc
   | Some(_) ->
       d_uint16 d >>= fun version ->
-      if version > 0 then err_version d (Int32.of_int version) else
+      if version > 0 then err_version d (!% version) else
       d_uint16 d >>= fun ntables ->
       kern_tables ntables t p acc d
 
@@ -1676,7 +1690,7 @@ let d_coverage d : (glyph_id list) ok =
     match coverageFormat with
     | 1 -> d_list d_uint16 d
     | 2 -> d_list d_range_record d >>= fun rnglst -> return (List.concat rnglst)
-    | _ -> err_version d (Int32.of_int coverageFormat)
+    | _ -> err_version d (!% coverageFormat)
   in Format.fprintf fmtgen "end Coverage table}\n"; res  (* for debug *)
 
 (*
@@ -1802,7 +1816,7 @@ let gxxx_script tag_Gxxx d : (gxxx_script list) ok =
     | Some(_) ->
         let offset_Gxxx = cur_pos d in
         d_uint32 d >>= fun version ->
-        confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
+        confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
         d_fetch offset_Gxxx d_tag_offset_list d >>= fun scriptList ->
         d_offset offset_Gxxx d >>= fun offset_FeatureList ->
         d_offset offset_Gxxx d >>= fun offset_LookupList ->
@@ -1952,7 +1966,7 @@ let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id)
   Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
   d_uint16 d >>= fun substFormat ->
   Format.fprintf fmtGSUB "substFormat = %d\n" substFormat;  (* for debug *)
-  confirm (substFormat = 1) (e_version d (Int32.of_int substFormat)) >>= fun () ->
+  confirm (substFormat = 1) (e_version d (!% substFormat)) >>= fun () ->
   d_with_coverage offset_Substitution_table d_ligature_set_table d
 
 
@@ -1968,7 +1982,7 @@ let d_alternate_substitution_subtable d : ((glyph_id * glyph_id list) list) ok =
   let offset_Substitution_table = cur_pos d in
   Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
   d_uint16 d >>= fun substFormat ->
-  confirm (substFormat = 1) (e_version d (Int32.of_int substFormat)) >>= fun () ->
+  confirm (substFormat = 1) (e_version d (!% substFormat)) >>= fun () ->
   d_with_coverage offset_Substitution_table d_alternate_set_table d
 
 
@@ -1991,7 +2005,7 @@ let d_single_substitution_subtable d : ((glyph_id * glyph_id) list) ok =
   match substFormat with
   | 1 -> d_single_substitution_subtable_format_1 offset_Substitution_table d
   | 2 -> d_single_substitution_subtable_format_2 offset_Substitution_table d
-  | _ -> err_version d (Int32.of_int substFormat)
+  | _ -> err_version d (!% substFormat)
 
 
 let lookup_gsub d : gsub_subtable ok =
@@ -2204,7 +2218,7 @@ let d_class_definition d : (class_definition list) ok =
   match classFormat with
   | 1 -> d_class_definition_format_1 d
   | 2 -> d_class_definition_format_2 d
-  | _ -> err_version d (Int32.of_int classFormat)
+  | _ -> err_version d (!% classFormat)
 
 
 let d_pair_adjustment_subtable d : gpos_subtable ok =
@@ -2235,7 +2249,7 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
         | Invalid_argument(_) -> err `Inconsistent_length_of_class
       end
 
-  | _ -> err_version d (Int32.of_int posFormat)
+  | _ -> err_version d (!% posFormat)
 
 
 let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
@@ -2288,10 +2302,10 @@ let d_extension_position d : gpos_subtable ok =
           to the beginning of ExtensionPosFormat1 subtable [page 213] -- *)
   let offset_ExtensionPos = cur_pos d in
   d_uint16 d >>= fun posFormat ->
-  confirm (posFormat = 1) (e_version d (Int32.of_int posFormat)) >>= fun () ->
+  confirm (posFormat = 1) (e_version d (!% posFormat)) >>= fun () ->
   d_uint16 d >>= fun extensionLookupType ->
-  d_uint32 d >>= fun extensionOffset ->
-  let offset = offset_ExtensionPos + (Int32.to_int extensionOffset) in
+  d_uint32_int d >>= fun extensionOffset ->
+  let offset = offset_ExtensionPos + extensionOffset in
   lookup_gpos_exact [offset] extensionLookupType d
 
 
@@ -2717,7 +2731,7 @@ let math d : math ok =
         let offset_MATH = cur_pos d in
         Format.fprintf fmtMATH "begin MATH = %d\n" offset_MATH;
         d_uint32 d >>= fun version ->
-        confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
+        confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
         Format.fprintf fmtMATH "jump to MathConstants = %d\n" (cur_pos d);
         d_fetch offset_MATH d_math_constants d >>= fun mathConstants ->
         Format.fprintf fmtMATH "jump to MathGlyphInfo = %d\n" (cur_pos d);
@@ -2737,7 +2751,7 @@ let math d : math ok =
 let base d =
   let offset_BASE = cur_pos d in
   d_uint32 d >>= fun version ->
-  confirm (version = 0x00010000l) (e_version d version) >>= fun () ->
+  confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
   d_offset_opt offset_BASE d >>= fun offsetopt_HorizAxis ->
   d_offset_opt offset_BASE d >>= fun offsetopt_VertAxis ->
   return ()  (* temporary *)
@@ -2786,7 +2800,7 @@ type charstring_element =
   | CntrMaskOperator of stem_argument
 
 type charstring_data =
-  | CharStringData of int * int32
+  | CharStringData of int * int
 
 type subroutine_index = charstring_data array
 
@@ -2840,9 +2854,6 @@ type cff_info =
   }
 
 
-let (~@) = Int32.of_int
-let (?@) = Int32.to_int
-let (-@) = Int32.sub
 let is_in_range a b x = (a <= x && x <= b)
 
 
@@ -2863,19 +2874,19 @@ let pp_offsize fmt = function
   | OffSize4 -> Format.fprintf fmt "OffSize4"
 
 
-let d_cff_offset ofsz d : int32 ok =
+let d_cff_offset ofsz d : wint ok =
   match ofsz with
-  | OffSize1 -> d_uint8  d >>= fun i -> return (~@ i)
-  | OffSize2 -> d_uint16 d >>= fun i -> return (~@ i)
-  | OffSize3 -> d_uint24 d >>= fun i -> return (~@ i)
+  | OffSize1 -> d_uint8  d >>= fun i -> return (!% i)
+  | OffSize2 -> d_uint16 d >>= fun i -> return (!% i)
+  | OffSize3 -> d_uint24 d >>= fun i -> return (!% i)
   | OffSize4 -> d_uint32 d
 
 
 let d_cff_offset_singleton ofsz dl d =
-  d_cff_offset ofsz d                                            >>= fun offset1 ->
-  confirm (offset1 = ~@ 1) `Invalid_cff_invalid_first_offset >>= fun () ->
-  d_cff_offset ofsz d                                            >>= fun offset2 ->
-  dl (offset2 -@ offset1) d
+  d_cff_offset ofsz d                                        >>= fun offset1 ->
+  confirm (offset1 = !% 1) `Invalid_cff_invalid_first_offset >>= fun () ->
+  d_cff_offset ofsz d                                        >>= fun offset2 ->
+  dl (WideInt.to_int (offset2 -% offset1)) d
 
 
 let d_index_singleton dl d =
@@ -2892,14 +2903,15 @@ let d_cff_length_list ofsz count d =
       return (Alist.to_list acc)
     else
       d_cff_offset ofsz d >>= fun offset ->
-      aux offset (Alist.extend acc (offset -@ offsetprev)) (i + 1)
+      let len = WideInt.to_int (offset -% offsetprev) in
+      aux offset (Alist.extend acc len) (i + 1)
   in
   d_cff_offset ofsz d                                        >>= fun offset1 ->
-  confirm (offset1 = ~@ 1) `Invalid_cff_invalid_first_offset >>= fun () ->
-  aux (~@ 1) Alist.empty 0
+  confirm (offset1 = !% 1) `Invalid_cff_invalid_first_offset >>= fun () ->
+  aux (!% 1) Alist.empty 0
 
 
-let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) : (a array) ok =
+let d_index (type a) (dummy : a) (dl : int -> decoder -> a ok) (d : decoder) : (a array) ok =
   let rec loop_data arr i = function
     | []             -> return ()
     | len :: lentail ->
@@ -2925,10 +2937,10 @@ let d_index (type a) (dummy : a) (dl : int32 -> decoder -> a ok) (d : decoder) :
 
 
 
-let d_charstring_data (len32 : int32) (d : decoder) : charstring_data ok =
+let d_charstring_data (len : int) (d : decoder) : charstring_data ok =
   let offset = cur_pos d in
-  seek_pos (offset + (?@ len32)) d >>= fun () ->
-  return (CharStringData(offset, len32))
+  seek_pos (offset + len) d >>= fun () ->
+  return (CharStringData(offset, len))
 
 
 let d_cff_real d =
@@ -2969,7 +2981,7 @@ let d_cff_real d =
   aux 0 Alist.empty
 
 
-let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
+let d_index_access (type a) (dl : int -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
   d_uint16 d >>= fun count ->
 (*
   Format.fprintf fmtCFF "count = %d\n" count;  (* for debug *)
@@ -2992,8 +3004,8 @@ let d_index_access (type a) (dl : int32 -> decoder -> a ok) (iaccess : int) (d :
     d_skip (iaccess * ofszint) d >>= fun () ->
     d_cff_offset offSize d >>= fun reloffset_access ->
     d_cff_offset offSize d >>= fun reloffset_next ->
-    let offset_access = offset_origin + (?@ reloffset_access) in
-    let data_length = reloffset_next -@ reloffset_access in
+    let offset_access = offset_origin + (WideInt.to_int reloffset_access) in
+    let data_length = WideInt.to_int (reloffset_next -% reloffset_access) in
     seek_pos offset_access d >>= fun () ->
     dl data_length d >>= fun data ->
     return (Some(data))
@@ -3283,25 +3295,25 @@ let cff_first (d : decoder) : cff_first ok =
 (*
     Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
 *)
-    d_index_singleton (fun len32 -> d_bytes (?@ len32)) d >>= fun name ->
+    d_index_singleton d_bytes d >>= fun name ->
 
   (* -- Top DICT INDEX (which should contain only one DICT) -- *)
 (*
     Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
 *)
-    d_index_singleton (fun len32 -> d_dict (?@ len32)) d >>= fun dictmap ->
+    d_index_singleton d_dict d >>= fun dictmap ->
 
   (* -- String INDEX -- *)
 (*
     Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
 *)
-    d_index "(dummy)" (fun len32 -> d_bytes (?@ len32)) d >>= fun stridx ->
+    d_index "(dummy)" d_bytes d >>= fun stridx ->
 
   (* -- Global Subr INDEX -- *)
 (*
     Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
 *)
-    d_index (CharStringData(0, 0l)) d_charstring_data d >>= fun gsubridx ->
+    d_index (CharStringData(0, 0)) d_charstring_data d >>= fun gsubridx ->
       (* temporary; should be decoded *)
 
     return (name, dictmap, stridx, gsubridx, offset_CFF)
@@ -3410,7 +3422,7 @@ let d_single_private offset_CFF dictmap d : single_private ok =
       (*
               Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
       *)
-              d_index (CharStringData(0, 0l)) d_charstring_data d
+              d_index (CharStringData(0, 0)) d_charstring_data d
         in
         lsubrsidx_res >>= fun lsubridx ->
 (*
@@ -3429,7 +3441,7 @@ exception Internal of error
 
 let seek_fdarray offset_CFF offset_FDArray d : fdarray ok =
   seek_pos offset_FDArray d >>= fun () ->
-  d_index DictMap.empty (fun len32 -> d_dict (?@ len32)) d >>= fun arrraw ->
+  d_index DictMap.empty d_dict d >>= fun arrraw ->
   try
     let arr =
       arrraw |> Array.map (fun dictmap ->
@@ -3735,8 +3747,8 @@ let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
   Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
 *)
   try
-    let CharStringData(offset, len32) = idx.(bias + i) in
-    return (offset, ?@ len32)
+    let CharStringData(offset, len) = idx.(bias + i) in
+    return (offset, len)
   with
   | Invalid_argument(_) -> err `Invalid_charstring
 
@@ -4094,11 +4106,11 @@ let charstring ((d, gsubridx, privinfo, offset_CharString_INDEX) : charstring_in
   | None ->
       return None
 
-  | Some(CharStringData(offset, len32)) ->
+  | Some(CharStringData(offset, len)) ->
       let stk : int Stack.t = Stack.create () in
       seek_pos offset d >>= fun () ->
       select_local_subr_index privinfo gid >>= fun lsubridx ->
-      parse_charstring (?@ len32) cstate d stk gsubridx lsubridx None >>= function
+      parse_charstring len cstate d stk gsubridx lsubridx None >>= function
       | (None, _, acc)       -> err `Invalid_charstring
       | (Some(wopt), _, acc) -> return (Some((wopt, Alist.to_list acc)))
 
@@ -4600,7 +4612,7 @@ module Encode = struct
     table_tag            : tag;
     table_content_length : int;
     table_padded_length  : int;
-    table_checksum       : int;
+    table_checksum       : wint;
     table_data           : string;
   }
 
@@ -4629,21 +4641,25 @@ module Encode = struct
     (sp, len + r)
 
 
-  let add_checksum x y =
-    (x + y) mod (1 lsl 32)
+  let add_checksum (x : wint) (y : wint) : wint =
+    let open WideInt in
+      let q = (of_int 1) lsl 32 in
+      (x +% y) mod q
 
 
-  let table_checksum sp lenp =
-    let rec aux acc i =
-      if i >= lenp then acc else
-        let b0 = Char.code (String.get sp i) in
-        let b1 = Char.code (String.get sp (i + 1)) in
-        let b2 = Char.code (String.get sp (i + 2)) in
-        let b3 = Char.code (String.get sp (i + 3)) in
-        let ui = (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3 in
-        aux (add_checksum acc ui) (i + 4)
-    in
-    aux 0 0
+  let table_checksum (sp : string) (lenp : int) : wint =
+    let open WideInt in
+      let rec aux acc i =
+        if i >= lenp then acc else
+          let b0 = of_byte (String.get sp i) in
+          let b1 = of_byte (String.get sp (i + 1)) in
+          let b2 = of_byte (String.get sp (i + 2)) in
+          let b3 = of_byte (String.get sp (i + 3)) in
+          let ui = (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3 in
+          let accnew = add_checksum acc ui in
+          aux accnew (i + 4)
+      in
+      aux (of_int 0) 0
 
 
   let to_raw_table tag enc =
@@ -4668,11 +4684,8 @@ module Encode = struct
     Tag.compare rawtbl1.table_tag rawtbl2.table_tag
 
 
-  let enc_uint8_unsafe enc ui =
-    try
-      Buffer.add_char enc.buffer (Char.chr ui)
-    with
-    | Invalid_argument(_) -> failwith (Printf.sprintf "fail: %d" ui)
+  let enc_byte enc ch =
+      Buffer.add_char enc.buffer ch
 
 
   let enc_uint16_unsafe enc ui =
@@ -4682,40 +4695,29 @@ module Encode = struct
     Printf.printf "uint16 %d --> (%d, %d)\n" ui b0 b1;
 *)
     begin
-      enc_uint8_unsafe enc b0;
-      enc_uint8_unsafe enc b1;
+      enc_byte enc (Char.chr b0);
+      enc_byte enc (Char.chr b1);
     end
 
 
-  let cut_uint32 ui =
-    let b0 = ui lsr 24 in
-    let r0 = ui - (b0 lsl 24) in
-    let b1 = r0 lsr 16 in
-    let r1 = r0 - (b1 lsl 16) in
-    let b2 = r1 lsr 8 in
-    let b3 = r1 - (b2 lsl 8) in
-(*
-    Printf.printf "uint32 %d --> (%d, %d, %d, %d)\n" ui b0 b1 b2 b3;
-*)
-    (b0, b1, b2, b3)
-
-
-  let enc_uint32_unsafe enc ui =
-    let (b0, b1, b2, b3) = cut_uint32 ui in
+  let enc_uint32_unsafe enc (ui : wint) =
+    let (b0, b1, b2, b3) = cut_uint32_unsafe ui in
     begin
-      enc_uint8_unsafe enc b0;
-      enc_uint8_unsafe enc b1;
-      enc_uint8_unsafe enc b2;
-      enc_uint8_unsafe enc b3;
+      enc_byte enc b0;
+      enc_byte enc b1;
+      enc_byte enc b2;
+      enc_byte enc b3;
     end
 
 
-  let enc_uint8 enc ui =
-    try
-      enc_uint8_unsafe enc ui;
-      return ()
-    with
-    | Invalid_argument(_) -> err (`Not_encodable_as_uint8(ui))
+  let enc_uint8 enc (ui : int) =
+    if not (0 <= ui && ui < 256) then
+      err (`Not_encodable_as_uint8(ui))
+    else
+      begin
+        enc_byte enc (Char.chr ui);
+        return ()
+      end
 
 
   let enc_uint16 enc ui =
@@ -4740,20 +4742,22 @@ module Encode = struct
 
 
   let enc_uint32 enc ui =
-    if not (0 <= ui && ui < 0x100000000) then
-      err (`Not_encodable_as_uint32(ui))
-    else
-      begin
-        enc_uint32_unsafe enc ui;
-        return ()
-      end
+    let open WideInt in
+      if not (is_in_uint32 ui) then
+        err (`Not_encodable_as_uint32(ui))
+      else
+        begin
+          enc_uint32_unsafe enc ui;
+          return ()
+        end
 
 
   let enc_int32 enc i =
-    if not (-0x80000000 <= i && i < 0x80000000) then
+    let open WideInt in
+    if not (is_in_int32 i) then
       err (`Not_encodable_as_int32(i))
     else
-      let ui = if i < 0 then i + 0x100000000 else i in
+      let ui = if is_neg i then i +% (of_int 0x100000000) else i in
 (*
       Printf.printf "i32 -> u32 (%d ---> %d)\n" i ui;
 *)
@@ -4772,8 +4776,8 @@ module Encode = struct
       let ui64 = if i64 < Int64.zero then Int64.zero else i64 in  (* temporary *)
       let q0_64 = Int64.shift_right ui64 32 in
       let q1_64 = Int64.sub ui64 (Int64.shift_left q0_64 32) in
-      let q0 = Int64.to_int q0_64 in
-      let q1 = Int64.to_int q1_64 in
+      let q0 = WideInt.of_int64 q0_64 in
+      let q1 = WideInt.of_int64 q1_64 in
 (*
       Printf.printf "time %s ---> (%d, %d)\n" (Int64.to_string ui64) q0 q1;
 *)
@@ -4806,7 +4810,7 @@ module Encode = struct
 
 
   let make_font_file rawtbllst =
-    let sfntVersion = 0x00010000 in
+    let sfntVersion = !% 0x00010000 in
     let numTables = List.length rawtbllst in
     let (searchRange, entrySelector) = calculate_header_constants numTables in
     let rangeShift = numTables * 16 - searchRange in
@@ -4840,10 +4844,10 @@ module Encode = struct
 (*
       Printf.printf "## for '%s'\n" strtag;
 *)
-      enc_direct enc strtag                      >>= fun () ->
-      enc_uint32 enc rawtbl.table_checksum       >>= fun () ->
-      enc_uint32 enc offset                      >>= fun () ->
-      enc_uint32 enc rawtbl.table_content_length >>= fun () ->
+      enc_direct enc strtag                             >>= fun () ->
+      enc_uint32 enc rawtbl.table_checksum              >>= fun () ->
+      enc_uint32 enc (!% offset)                        >>= fun () ->
+      enc_uint32 enc (!% (rawtbl.table_content_length)) >>= fun () ->
       if strtag = "head" then
         offset_checkSumAdjustment_ref := Some(offset + 8)
       else
@@ -4869,8 +4873,8 @@ module Encode = struct
     Printf.printf "# make_font_file: update 'checkSumAdjustment'\n";
 *)
     let checkSumAdjustment =
-      let temp = 0xB1B0AFBA - chksum in
-        if temp < 0 then temp + (1 lsl 32) else temp
+      let temp = (!% 0xB1B0AFBA) -% chksum in
+        if WideInt.is_neg temp then temp +% (!% (1 lsl 32)) else temp
     in
     match !offset_checkSumAdjustment_ref with
     | None ->
@@ -4878,11 +4882,11 @@ module Encode = struct
 
     | Some(offset) ->
         let bytes = Buffer.to_bytes enc.buffer in
-        let (b0, b1, b2, b3) = cut_uint32 checkSumAdjustment in
-        Bytes.set bytes offset       (Char.chr b0);
-        Bytes.set bytes (offset + 1) (Char.chr b1);
-        Bytes.set bytes (offset + 2) (Char.chr b2);
-        Bytes.set bytes (offset + 3) (Char.chr b3);
+        let (b0, b1, b2, b3) = cut_uint32_unsafe checkSumAdjustment in
+        Bytes.set bytes offset       b0;
+        Bytes.set bytes (offset + 1) b1;
+        Bytes.set bytes (offset + 2) b2;
+        Bytes.set bytes (offset + 3) b3;
         let data = Bytes.to_string bytes in
         return data
 
@@ -4900,16 +4904,16 @@ module Encode = struct
     Printf.printf "# 'head' table\n";
 *)
     let enc = create_encoder () in
-    let fontRevision = Int32.to_int h.head_font_revision in
+    let fontRevision = h.head_font_revision in
     let ilocfmt =
       match h.head_index_to_loc_format with
       | ShortLocFormat -> 0
       | LongLocFormat  -> 1
     in
-    enc_uint32 enc 0x00010000          >>= fun () ->  (* -- Table Version Number -- *)
+    enc_uint32 enc (!% 0x00010000)     >>= fun () ->  (* -- Table Version Number -- *)
     enc_uint32 enc fontRevision        >>= fun () ->
-    enc_uint32 enc 0                   >>= fun () ->  (* -- 'checkSumAdjustment': will be updated afterwards -- *)
-    enc_uint32 enc 0x5F0F3CF5          >>= fun () ->  (* -- 'magicNumber' -- *)
+    enc_uint32 enc (!% 0)              >>= fun () ->  (* -- 'checkSumAdjustment': will be updated afterwards -- *)
+    enc_uint32 enc (!% 0x5F0F3CF5)     >>= fun () ->  (* -- 'magicNumber' -- *)
     enc_uint16 enc h.head_flags        >>= fun () ->
     enc_uint16 enc h.head_units_per_em >>= fun () ->
     enc_time   enc h.head_created      >>= fun () ->
@@ -4932,7 +4936,7 @@ module Encode = struct
     Printf.printf "# 'hhea' table\n";
 *)
     let enc = create_encoder () in
-    enc_uint32 enc 0x00010000                    >>= fun () ->
+    enc_uint32 enc (!% 0x00010000)               >>= fun () ->
     enc_int16  enc h.hhea_ascender               >>= fun () ->
     enc_int16  enc h.hhea_descender              >>= fun () ->
     enc_int16  enc h.hhea_line_gap               >>= fun () ->
@@ -4961,7 +4965,7 @@ module Encode = struct
     Printf.printf "# 'maxp' table\n";
 *)
     let enc = create_encoder () in
-    enc_uint32 enc 0x00010000                      >>= fun () ->  (* -- Table version number -- *)
+    enc_uint32 enc (!% 0x00010000)                 >>= fun () ->  (* -- Table version number -- *)
     enc_uint16 enc m.maxp_num_glyphs               >>= fun () ->
     enc_uint16 enc m.maxp_max_points               >>= fun () ->
     enc_uint16 enc m.maxp_max_contours             >>= fun () ->
@@ -5097,7 +5101,7 @@ module Encode = struct
         if lenwhole <= 2 * (1 lsl 16) then
           (ShortLocFormat, (fun offset -> enc_uint16 enc_loca (offset / 2)))
         else
-          (LongLocFormat , (fun offset -> enc_uint32 enc_loca offset)      )
+          (LongLocFormat, (fun offset -> enc_uint32 enc_loca (!% offset)))
       in
       let offset_init = 0 in
       glyphlst |> List.fold_left (fun res g ->
