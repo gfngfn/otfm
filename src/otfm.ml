@@ -4584,7 +4584,9 @@ module Encode = struct
     let s = Buffer.contents buf in
     let (sp, lenp) = pad_data s len in
     let chksum = table_checksum sp lenp in
+(*
     Printf.printf "table checksum: %d\n" chksum;
+*)
       {
         table_tag            = tag;
         table_content_length = len;
@@ -4608,7 +4610,9 @@ module Encode = struct
   let enc_uint16_unsafe enc ui =
     let b0 = ui lsr 8 in
     let b1 = ui - (b0 lsl 8) in
+(*
     Printf.printf "uint16 %d --> (%d, %d)\n" ui b0 b1;
+*)
     begin
       enc_uint8_unsafe enc b0;
       enc_uint8_unsafe enc b1;
@@ -4622,7 +4626,9 @@ module Encode = struct
     let r1 = r0 - (b1 lsl 16) in
     let b2 = r1 lsr 8 in
     let b3 = r1 - (b2 lsl 8) in
+(*
     Printf.printf "uint32 %d --> (%d, %d, %d, %d)\n" ui b0 b1 b2 b3;
+*)
     (b0, b1, b2, b3)
 
 
@@ -4680,7 +4686,9 @@ module Encode = struct
       err (`Not_encodable_as_int32(i))
     else
       let ui = if i < 0 then i + 0x100000000 else i in
+(*
       Printf.printf "i32 -> u32 (%d ---> %d)\n" i ui;
+*)
       begin
         enc_uint32_unsafe enc ui;
         return ()
@@ -4698,7 +4706,9 @@ module Encode = struct
       let q1_64 = Int64.sub ui64 (Int64.shift_left q0_64 32) in
       let q0 = Int64.to_int q0_64 in
       let q1 = Int64.to_int q1_64 in
+(*
       Printf.printf "time %s ---> (%d, %d)\n" (Int64.to_string ui64) q0 q1;
+*)
       begin
         enc_uint32_unsafe enc q0;
         enc_uint32_unsafe enc q1;
@@ -4734,7 +4744,9 @@ module Encode = struct
     let rangeShift = numTables * 16 - searchRange in
     let rawtbllst = List.sort compare_table rawtbllst in
 
+(*
     Printf.printf "# make_font_file: header\n";
+*)
   (* -- outputs the header -- *)
     let enc_header = create_encoder () in
     enc_uint32 enc_header sfntVersion   >>= fun () ->
@@ -4748,14 +4760,18 @@ module Encode = struct
     let enc = create_encoder () in
     enc_direct enc data_header >>= fun () ->
 
+(*
     Printf.printf "# make_font_file: table directories\n";
+*)
   (* -- outputs all table directories -- *)
     let offset_checkSumAdjustment_ref = ref None in
     let offset_init = 12 + numTables * 16 in
     rawtbllst |> List.fold_left (fun res rawtbl ->
       res >>= fun (offset, chksum) ->
       let strtag = Tag.to_bytes rawtbl.table_tag in
+(*
       Printf.printf "## for '%s'\n" strtag;
+*)
       enc_direct enc strtag                      >>= fun () ->
       enc_uint32 enc rawtbl.table_checksum       >>= fun () ->
       enc_uint32 enc offset                      >>= fun () ->
@@ -4766,18 +4782,24 @@ module Encode = struct
         ();
       let offsetnew = offset + rawtbl.table_padded_length in
       let chksumnew = add_checksum chksum rawtbl.table_checksum in
+(*
       Printf.printf "  $ checksum %d + %d ---> %d\n" chksum rawtbl.table_checksum chksumnew;
+*)
       return (offsetnew, chksumnew)
     ) (return (offset_init, chksum_init)) >>= fun (_, chksum) ->
 
+(*
     Printf.printf "# make_font_file: tables\n";
+*)
   (* -- outputs all tables -- *)
     rawtbllst |> List.fold_left (fun res rawtbl ->
       res >>= fun () ->
       enc_direct enc rawtbl.table_data
     ) (return ()) >>= fun () ->
 
+(*
     Printf.printf "# make_font_file: update 'checkSumAdjustment'\n";
+*)
     let checkSumAdjustment =
       let temp = 0xB1B0AFBA - chksum in
         if temp < 0 then temp + (1 lsl 32) else temp
@@ -4806,7 +4828,9 @@ module Encode = struct
 
 
   let head (h : head) : raw_table ok =
+(*
     Printf.printf "# 'head' table\n";
+*)
     let enc = create_encoder () in
     let fontRevision = Int32.to_int h.head_font_revision in
     let ilocfmt =
@@ -4836,7 +4860,9 @@ module Encode = struct
 
 
   let hhea (numberOfHMetrics : int) (h : hhea) : raw_table ok =
+(*
     Printf.printf "# 'hhea' table\n";
+*)
     let enc = create_encoder () in
     enc_uint32 enc 0x00010000                    >>= fun () ->
     enc_int16  enc h.hhea_ascender               >>= fun () ->
@@ -4855,13 +4881,17 @@ module Encode = struct
     enc_int16  enc 0                             >>= fun () ->
     enc_int16  enc 0                             >>= fun () ->  (* -- 'metricDataFormat' -- *)
     enc_uint16 enc numberOfHMetrics              >>= fun () ->
+(*
     Printf.printf "# end 'hhea' table\n";
+*)
     let rawtbl = to_raw_table Tag.hhea enc in
     return rawtbl
 
 
   let maxp (m : maxp) : raw_table ok =
+(*
     Printf.printf "# 'maxp' table\n";
+*)
     let enc = create_encoder () in
     enc_uint32 enc 0x00010000                      >>= fun () ->  (* -- Table version number -- *)
     enc_uint16 enc m.maxp_num_glyphs               >>= fun () ->
@@ -4878,7 +4908,9 @@ module Encode = struct
     enc_uint16 enc m.maxp_max_size_of_instructions >>= fun () ->
     enc_uint16 enc m.maxp_max_component_elements   >>= fun () ->
     enc_uint16 enc m.maxp_max_component_depth      >>= fun () ->
+(*
     Printf.printf "# end 'maxp' table\n";
+*)
     let rawtbl = to_raw_table Tag.maxp enc in
     return rawtbl
 
@@ -4924,7 +4956,9 @@ module Encode = struct
 
 
   let truetype_outline_tables (glyphlst : raw_glyph list) =
+(*
     Printf.printf "# 'hmtx', 'glyf', and 'loca' table\n";
+*)
 
     let numGlyphs = List.length glyphlst in
 
