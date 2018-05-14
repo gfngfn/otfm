@@ -4532,24 +4532,21 @@ let get_composite_offsets (data : string) : ((glyph_id * int) list, error) resul
     let gid = get_uint16 data i in
     let accnew = Alist.extend acc (gid, i) in
     let i = i + 2 in
-    if flags land 2 = 0 then
-      err `Unsupported_glyf_matching_points
-    else
-      let i = i + (if flags land 1 > 0 then 4 else 2) in
-      let d =
-        if flags land 8 > 0 then  (* -- scale -- *)
-          2
-        else if flags land 64 > 0 then  (* -- xy scale -- *)
-          4
-        else if flags land 128 > 0 then  (* -- m2 -- *)
-          8
-        else
-          0
-      in
-      if flags land 32 > 0 then
-        loop (i + d) accnew
+    let i = i + (if flags land 1 > 0 then 4 else 2) in
+    let d =
+      if flags land 8 > 0 then  (* -- scale -- *)
+        2
+      else if flags land 64 > 0 then  (* -- xy scale -- *)
+        4
+      else if flags land 128 > 0 then  (* -- m2 -- *)
+        8
       else
-        return (Alist.to_list accnew)
+        0
+    in
+    if flags land 32 > 0 then
+      loop (i + d) accnew
+    else
+      return (Alist.to_list accnew)
   in
 
   let numberOfContours = get_int16 data 0 in
