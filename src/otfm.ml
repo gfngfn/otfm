@@ -1038,33 +1038,42 @@ let d_simple_glyph d ccount =
   in
   return (combine (List.tl rev_epts) rev_flags rxs rys (pt_count - 1) ([] :: []))
 
+
 let d_composite_glyph d =
   let rec loop acc =
-    d_uint16 d
-    >>= fun flags -> d_uint16 d
-    >>= fun gid ->
-    if flags land 2 = 0 then err `Unsupported_glyf_matching_points else
-    let dec = if flags land 1 > 0 then d_int16 else d_int8 in
-    dec d
-    >>= fun dx -> dec d
-    >>= fun dy ->
-    begin
-      if flags land 8 > 0 (* scale *) then
-        d_f2dot14 d >>= fun s -> return (Some (s, 0., 0., s))
-      else if flags land 64 > 0 then (* xy scale *)
-        d_f2dot14 d >>= fun sx ->
-        d_f2dot14 d >>= fun sy -> return (Some (sx, 0., 0., sy))
-      else if flags land 128 > 0 then (* m2 *)
-        d_f2dot14 d >>= fun a -> d_f2dot14 d >>= fun b ->
-        d_f2dot14 d >>= fun c -> d_f2dot14 d >>= fun d -> return (Some (a,b,c,d))
+    d_uint16 d >>= fun flags ->
+    d_uint16 d >>= fun gid ->
+    if flags land 2 = 0 then
+      err `Unsupported_glyf_matching_points
+    else
+      let dec = if flags land 1 > 0 then d_int16 else d_int8 in
+      dec d >>= fun dx ->
+      dec d >>= fun dy ->
+      begin
+        if flags land 8 > 0 then  (* -- scale -- *)
+          d_f2dot14 d >>= fun s ->
+          return (Some(s, 0., 0., s))
+        else if flags land 64 > 0 then  (* -- xy scale -- *)
+          d_f2dot14 d >>= fun sx ->
+          d_f2dot14 d >>= fun sy ->
+          return (Some(sx, 0., 0., sy))
+        else if flags land 128 > 0 then  (* -- m2 -- *)
+          d_f2dot14 d >>= fun a ->
+          d_f2dot14 d >>= fun b ->
+          d_f2dot14 d >>= fun c ->
+          d_f2dot14 d >>= fun d ->
+          return (Some(a, b, c, d))
+        else
+          return None
+      end >>= fun m ->
+      let accnew = Alist.extend acc (gid, (dx, dy), m) in
+      if flags land 32 > 0 then
+        loop accnew
       else
-      return None
-    end
-    >>= fun m ->
-    let acc' = (gid, (dx, dy), m) :: acc in
-    if flags land 32 > 0 then loop acc' else return (List.rev acc')
-  in
-  loop []
+        return (Alist.to_list accnew)
+    in
+    loop Alist.empty
+
 
 let glyf d loc =
   init_decoder d
@@ -4485,23 +4494,82 @@ let charstring_bbox (pathlst : path list) =
 
 
 type raw_glyph = {
-  glyph_aw          : int;
-  glyph_lsb         : int;
-  glyph_bbox        : int * int * int * int;
-  glyph_data        : string;
-  glyph_data_length : int;
+  old_glyph_id            : glyph_id;
+  glyph_aw                : int;
+  glyph_lsb               : int;
+  glyph_bbox              : int * int * int * int;
+  glyph_data              : string;
+  glyph_data_length       : int;
+  glyph_composite_offsets : (glyph_id * int) list;
 }
+
+
+let get_uint16 data offset =
+  let b0 = Char.code (String.get data offset) in
+  let b1 = Char.code (String.get data (offset + 1)) in
+  (b0 lsl 8) lor b1
+
+
+let get_int16 data i =
+  let ui = get_uint16 data i in
+  if ui >= 0x8000 then ui - 0x10000 else ui
+
+
+let set_uint16 bytes offset ui =
+  let b0 = ui / 256 in
+  let b1 = ui mod 256 in
+  begin
+    Bytes.set bytes offset       (Char.chr b0);
+    Bytes.set bytes (offset + 1) (Char.chr b1);
+  end
+
+
+let get_composite_offsets (data : string) : ((glyph_id * int) list, error) result =
+
+  let rec loop i acc =
+    let flags = get_uint16 data i in
+    let i = i + 2 in
+    let gid = get_uint16 data i in
+    let accnew = Alist.extend acc (gid, i) in
+    let i = i + 2 in
+    if flags land 2 = 0 then
+      err `Unsupported_glyf_matching_points
+    else
+      let i = i + (if flags land 1 > 0 then 4 else 2) in
+      let d =
+        if flags land 8 > 0 then  (* -- scale -- *)
+          2
+        else if flags land 64 > 0 then  (* -- xy scale -- *)
+          4
+        else if flags land 128 > 0 then  (* -- m2 -- *)
+          8
+        else
+          0
+      in
+      if flags land 32 > 0 then
+        loop (i + d) accnew
+      else
+        return (Alist.to_list accnew)
+  in
+
+  let numberOfContours = get_int16 data 0 in
+  if numberOfContours < 0 then
+    return []
+  else
+    loop 10 Alist.empty
 
 
 let get_raw_glyph d gid =
   loca_with_length d gid >>= function
   | None ->
       return {
+        old_glyph_id = gid;
         glyph_aw = 0;
         glyph_lsb = 0;
         glyph_bbox = (0, 0, 0, 0);
         glyph_data = "";
         glyph_data_length = 0;
+        glyph_composite_offsets = [];
       }
 
   | Some((loc, len)) ->
@@ -4516,13 +4584,16 @@ let get_raw_glyph d gid =
       d_int16 d >>= fun ymax ->
       seek_pos pos d >>= fun () ->
       d_bytes len d >>= fun data ->
+      get_composite_offsets data >>= fun pairlst ->
       hmtx_single d gid >>= fun (aw, lsb) ->
       return {
+        old_glyph_id = gid;
         glyph_aw = aw;
         glyph_lsb = lsb;
         glyph_bbox = (xmin, ymin, xmax, ymax);
         glyph_data = data;
         glyph_data_length = len;
+        glyph_composite_offsets = pairlst;
       }
 
 
@@ -4544,7 +4615,7 @@ module Encode = struct
     { buffer = Buffer.create 0x10000; }
       (* -- the initial size is an arbitrary positive number -- *)
 
-
+(*
   let make_raw_glyph aw lsb bbox data =
     let len = String.length data in
       {
@@ -4554,7 +4625,7 @@ module Encode = struct
         glyph_data        = data;
         glyph_data_length = len;
       }
-
+*)
   let pad_data s len =
     let r = (4 - len mod 4) mod 4 in
     let sp = s ^ (String.make r (Char.chr 0)) in
@@ -4955,12 +5026,37 @@ module Encode = struct
     g.glyph_lsb + (xmax - xmin)
 
 
+  module OldToNewGlyphID = Hashtbl.Make
+    (struct
+      type t = glyph_id
+      let equal = ( = )
+      let hash = Hashtbl.hash
+    end)
+
+
+  let fix_composite_element_glyph_id (ht : glyph_id OldToNewGlyphID.t) (g : raw_glyph) : string =
+    let bytes = Bytes.of_string g.glyph_data in
+    let pairlst = g.glyph_composite_offsets in
+    pairlst |> List.iter (fun (oldgid, offset) ->
+      match OldToNewGlyphID.find_opt ht oldgid with
+      | None         -> set_uint16 bytes offset 0
+      | Some(newgid) -> set_uint16 bytes offset newgid
+    );
+    Bytes.to_string bytes
+
+
+
   let truetype_outline_tables (glyphlst : raw_glyph list) =
 (*
     Printf.printf "# 'hmtx', 'glyf', and 'loca' table\n";
 *)
 
     let numGlyphs = List.length glyphlst in
+
+    let ht = OldToNewGlyphID.create (numGlyphs * 2) in
+    glyphlst |> List.iteri (fun gidnew rg ->
+      OldToNewGlyphID.add ht rg.old_glyph_id gidnew
+    );
 
     if numGlyphs > 65536 then
       err (`Too_many_glyphs_for_encoding(numGlyphs))
@@ -5009,7 +5105,8 @@ module Encode = struct
       let offset_init = 0 in
       glyphlst |> List.fold_left (fun res g ->
         res >>= fun offset ->
-        enc_direct enc_glyf g.glyph_data >>= fun () ->
+        let data = fix_composite_element_glyph_id ht g in
+        enc_direct enc_glyf data >>= fun () ->
         enc_for_loca offset >>= fun () ->
         let len = g.glyph_data_length in
         return (offset + len)
