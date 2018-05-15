@@ -289,6 +289,10 @@ type src = [ `String of string ]
 (* TODO maybe it would be better not to maintain t_pos/i_pos,
    but rather pass them as arguments to decoding functions. *)
 
+type loc_format =
+  | ShortLocFormat
+  | LongLocFormat
+
 type decoder_state =
   | Fatal of error
   | Start
@@ -296,18 +300,17 @@ type decoder_state =
 
 type decoder =
   {
-    mutable i : string;                                       (* input data. *)
-    mutable i_pos : int;                          (* input current position. *)
-    mutable i_max : int;                          (* input maximal position. *)
-    mutable t_pos : int;                  (* current decoded table position. *)
-    mutable state : decoder_state;                         (* decoder state. *)
-    mutable ctx : error_ctx;                   (* the current error context. *)
-    mutable flavour : flavour;                           (* decoded flavour. *)
-    mutable tables : (tag * int * int) list;       (* decoded table records. *)
-    mutable loca_pos : int;                    (* for `TTF fonts, lazy init. *)
-    mutable loca_format : int;                 (* for `TTF fonts, lazy init. *)
-    mutable glyf_pos : int;                    (* for `TTF fonts, lazy init. *)
-    mutable buf : Buffer.t;                              (* internal buffer. *)
+    i                           : string;                     (* input data. *)
+    i_max                       : int;                        (* input maximal position. *)
+    mutable i_pos               : int;                        (* input current position. *)
+    mutable t_pos               : int;                        (* current decoded table position. *)
+    mutable state               : decoder_state;              (* decoder state. *)
+    mutable ctx                 : error_ctx;                  (* the current error context. *)
+    mutable flavour             : flavour;                    (* decoded flavour. *)
+    mutable tables              : (tag * int * int) list;     (* decoded table records. *)
+    mutable loca_pos_and_format : (int * loc_format) option;  (* for TTF fonts, lazy init. *)
+    mutable glyf_pos            : int option;                 (* for TTF fonts, lazy init. *)
+    mutable buf                 : Buffer.t;                   (* internal buffer. *)
   }
 
 type ttc_element = int * decoder
@@ -315,6 +318,7 @@ type ttc_element = int * decoder
 type decoder_scheme =
   | SingleDecoder      of decoder
   | TrueTypeCollection of ttc_element list
+
 
 let decoder_src d = `String(d.i)
 
@@ -334,17 +338,20 @@ let seek_pos pos d =
 
 let seek_table_pos pos d = seek_pos (d.t_pos + pos) d
 let seek_table tag d () =
-  try
-    let (_, pos, len) = List.find (fun (t, _, _) -> tag = t) d.tables in
-      if pos > d.i_max then err (`Invalid_offset(`Table(tag), pos)) else
+  match List.find_opt (fun (t, _, _) -> tag = t) d.tables with
+  | Some((_, pos, len)) ->
+      if pos > d.i_max then
+        err (`Invalid_offset(`Table(tag), pos))
+      else
         begin
           set_ctx d (`Table(tag));
           d.t_pos <- pos;
           d.i_pos <- pos;
           return (Some(len))
         end
-  with
-  | Not_found -> Ok(None)
+
+  | None -> return None
+
 
 let seek_required_table tag d () =
   seek_table tag d () >>= function
@@ -604,12 +611,12 @@ let rec d_table_records d count =
     d_table_records d (count - 1)
 
 
-let d_version is_cff_element d =
+let d_version is_ttc_element d =
   d_uint32 d >>= function
     | t  when t = Tag.v_OTTO      -> begin d.flavour <- CFF     ; return true end
     | t  when t = Tag.v_true      -> begin d.flavour <- TTF_true; return true end
     | t  when t = !%% 0x00010000L -> begin d.flavour <- TTF_OT  ; return true end
-    | t  when t = Tag.v_ttcf      -> if is_cff_element then err `Layered_ttc else return false
+    | t  when t = Tag.v_ttcf      -> if is_ttc_element then err `Layered_ttc else return false
     | t                           -> err (`Unknown_flavour(t))
 
 
@@ -634,15 +641,15 @@ let decoder src =
     match src with
     | `String(s) -> (s, 0, String.length s - 1)
   in
-    let d =
-      { i; i_pos; i_max; t_pos = 0;
-        state = Start;
-        ctx = `Offset_table;
-        flavour = TTF_OT;    (* dummy initial value *)
-        tables = [];         (* dummy initial value *)
-        loca_pos = -1; loca_format = -1; glyf_pos = -1;
-        buf = Buffer.create 253; }
-    in
+  let d =
+    { i; i_pos; i_max; t_pos = 0;
+      state = Start;
+      ctx = `Offset_table;
+      flavour = TTF_OT;    (* dummy initial value *)
+      tables = [];         (* dummy initial value *)
+      loca_pos_and_format = None; glyf_pos = None;
+      buf = Buffer.create 253; }
+  in
   d_version false d >>= fun is_single ->
   if is_single then
     return (SingleDecoder(d))
@@ -659,7 +666,8 @@ let decoder_of_ttc_element ttcelem =
       ctx = `Offset_table;
       flavour = d.flavour;
       tables = d.tables;
-      loca_pos = d.loca_pos;  loca_format = d.loca_format;  glyf_pos = d.glyf_pos;
+      loca_pos_and_format = d.loca_pos_and_format;
+      glyf_pos = d.glyf_pos;
       buf = Buffer.create 253; }
   in
   seek_pos offset delem >>= fun () ->
@@ -961,9 +969,18 @@ type glyph_descr =
   [ `Simple of glyph_simple_descr
   | `Composite of glyph_composite_descr ] * (int * int * int * int)
 
+
 let init_glyf d () =
-  if d.glyf_pos <> -1 then return () else
-  seek_required_table Tag.glyf d () >>= fun () -> d.glyf_pos <- d.i_pos; return ()
+  match d.glyf_pos with
+  | Some(pos) ->
+      return pos
+
+  | None ->
+      seek_required_table Tag.glyf d () >>= fun () ->
+      let pos = d.i_pos in
+      d.glyf_pos <- Some(pos);
+      return pos
+
 
 let d_rev_end_points d ccount =
   let rec loop i acc =
@@ -1076,29 +1093,25 @@ let d_composite_glyph d =
 
 
 let glyf d loc =
-  init_decoder d
-  >>= init_glyf d
-  >>= fun () -> seek_pos (d.glyf_pos + loc) d
-  >>= fun () -> d_int16 d
-  >>= fun ccount -> d_int16 d
-  >>= fun xmin -> d_int16 d
-  >>= fun ymin -> d_int16 d
-  >>= fun xmax -> d_int16 d
-  >>= fun ymax ->
-  if ccount < -1 then err_composite_format d ccount else
-  if ccount = -1
-  then
+  init_decoder d >>=
+  init_glyf d >>= fun pos ->
+  seek_pos (pos + loc) d  >>= fun () ->
+  d_int16 d >>= fun ccount ->
+  d_int16 d >>= fun xmin ->
+  d_int16 d >>= fun ymin ->
+  d_int16 d >>= fun xmax ->
+  d_int16 d >>= fun ymax ->
+  if ccount < -1 then
+    err_composite_format d ccount
+  else if ccount = -1 then
     d_composite_glyph d >>= fun components ->
-    return (`Composite components, (xmin, ymin, xmax, ymax))
+    return (`Composite(components), (xmin, ymin, xmax, ymax))
   else
     d_simple_glyph d ccount >>= fun contours ->
-    return (`Simple contours, (xmin, ymin, xmax, ymax))
+    return (`Simple(contours), (xmin, ymin, xmax, ymax))
+
 
 (* head table *)
-
-type loc_format =
-  | ShortLocFormat
-  | LongLocFormat
 
 type head = {
   head_font_revision : wint;
@@ -1560,23 +1573,33 @@ let kern d t p acc =
 (* loca table *)
 
 let d_loca_format d () =
-  d_uint16 d >>= fun f -> if f > 1 then err_loca_format d f else return f
+  d_uint16 d >>= fun i ->
+  if i > 1 then
+    err_loca_format d i
+  else if i = 0 then
+    return ShortLocFormat
+  else
+    return LongLocFormat
+
 
 let init_loca d () =
-  if d.loca_pos <> -1 then
-    return ()
-  else
-    seek_required_table Tag.head d () >>= fun () ->
-    d_skip 50 d >>=
-    d_loca_format d >>= fun loca_format ->
-    d.loca_format <- loca_format;
-    seek_required_table Tag.loca d () >>= fun () ->
-    d.loca_pos <- d.i_pos;
-    return ()
+  match d.loca_pos_and_format with
+  | Some(pair) ->
+      return pair
+
+  | None ->
+      seek_required_table Tag.head d () >>= fun () ->
+      d_skip 50 d >>=
+      d_loca_format d >>= fun locfmt ->
+      seek_required_table Tag.loca d () >>= fun () ->
+      let pos = d.i_pos in
+      let pair = (pos, locfmt) in
+      d.loca_pos_and_format <- Some(pair);
+      return pair
 
 
-let loca_short d gid =
-  seek_pos (d.loca_pos + gid * 2) d >>= fun () ->
+let loca_short pos_loca d gid =
+  seek_pos (pos_loca + gid * 2) d >>= fun () ->
   d_uint16 d >>= fun o1 ->
   d_uint16 d >>= fun o2 ->
   let o1 = o1 * 2 in
@@ -1584,8 +1607,8 @@ let loca_short d gid =
   if o1 = o2 then return None else return (Some(o1, o2 - o1))
 
 
-let loca_long d gid =
-  seek_pos (d.loca_pos + gid * 4) d >>= fun () ->
+let loca_long pos_loca d gid =
+  seek_pos (pos_loca + gid * 4) d >>= fun () ->
   d_uint32_int d >>= fun o1 ->
   d_uint32_int d >>= fun o2 ->
   if o1 = o2 then return None else return (Some(o1, o2 - o1))
@@ -1593,11 +1616,10 @@ let loca_long d gid =
 
 let loca_with_length d gid =
   init_decoder d >>=
-  init_loca d >>= fun () ->
-  if d.loca_format = 0 then
-    loca_short d gid
-  else
-    loca_long d gid
+  init_loca d >>= fun (pos_loca, locfmt) ->
+  match locfmt with
+  | ShortLocFormat -> loca_short pos_loca d gid
+  | LongLocFormat  -> loca_long pos_loca d gid
 
 
 let loca d gid =
@@ -4569,8 +4591,8 @@ let get_raw_glyph d gid =
 
   | Some((loc, len)) ->
       init_decoder d >>=
-      init_glyf d >>= fun () ->
-      let pos = d.glyf_pos + loc in
+      init_glyf d >>= fun pos_glyf ->
+      let pos = pos_glyf + loc in
       seek_pos pos d >>= fun () ->
       d_int16 d >>= fun _ ->
       d_int16 d >>= fun xmin ->
