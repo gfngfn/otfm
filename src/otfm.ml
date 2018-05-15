@@ -303,7 +303,6 @@ type decoder =
     i                           : string;                     (* input data. *)
     i_max                       : int;                        (* input maximal position. *)
     mutable i_pos               : int;                        (* input current position. *)
-    mutable t_pos               : int;                        (* current decoded table position. *)
     mutable state               : decoder_state;              (* decoder state. *)
     mutable ctx                 : error_ctx;                  (* the current error context. *)
     mutable flavour             : flavour;                    (* decoded flavour. *)
@@ -336,7 +335,7 @@ let seek_pos pos d =
   if pos > d.i_max then err (`Invalid_offset(d.ctx, pos)) else
     begin d.i_pos <- pos; return () end
 
-let seek_table_pos pos d = seek_pos (d.t_pos + pos) d
+
 let seek_table tag d () =
   match List.find_opt (fun (t, _, _) -> tag = t) d.tables with
   | Some((_, pos, len)) ->
@@ -345,7 +344,6 @@ let seek_table tag d () =
       else
         begin
           set_ctx d (`Table(tag));
-          d.t_pos <- pos;
           d.i_pos <- pos;
           return (Some(len))
         end
@@ -642,7 +640,7 @@ let decoder src =
     | `String(s) -> (s, 0, String.length s - 1)
   in
   let d =
-    { i; i_pos; i_max; t_pos = 0;
+    { i; i_pos; i_max;
       state = Start;
       ctx = `Offset_table;
       flavour = TTF_OT;    (* dummy initial value *)
@@ -661,7 +659,7 @@ let decoder src =
 let decoder_of_ttc_element ttcelem =
   let (offset, d) = ttcelem in
   let delem =
-    { i = d.i;  i_pos = d.i_pos;  i_max = d.i_max;  t_pos = d.t_pos;
+    { i = d.i;  i_pos = d.i_pos;  i_max = d.i_max;
       state = Start;
       ctx = `Offset_table;
       flavour = d.flavour;
@@ -719,6 +717,7 @@ let glyph_count d =
 let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
   init_decoder d >>=
   seek_required_table Tag.name d >>= fun () ->
+  let pos_name = cur_pos d in
   d_uint16 d >>= fun version ->
   if version > 1 then err_version d (!% version) else
   d_uint16 d >>= fun ncount ->
@@ -735,7 +734,7 @@ let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
       if nid <> 6 then d_skip (2 * 2) d >>= loop ncount' else
       d_uint16 d >>= fun len ->
       d_uint16 d >>= fun off ->
-      seek_table_pos (soff + off) d >>= fun () ->
+      seek_pos (pos_name + soff + off) d >>= fun () ->
       decode len d >>= fun name ->
       let invalid name = err (`Invalid_postscript_name(name)) in
       let name_len = String.length name in
@@ -1363,9 +1362,11 @@ let lcid_to_bcp47 = [
   0x4809, "en-sg";  0x480a, "es-hn";  0x4c0a, "es-ni";  0x500a, "es-pr";
   0x540a, "es-us"; ]
 
+
 type lang = string
 
-let rec d_name_langs soff ncount d =
+
+let rec d_name_langs pos_name soff ncount d =
   d_skip (ncount * 6 * 2) d >>= fun () ->
   d_uint16                d >>= fun lcount ->
   let rec loop i acc =
@@ -1373,14 +1374,16 @@ let rec d_name_langs soff ncount d =
     d_uint16 d >>= fun len ->
     d_uint16 d >>= fun off ->
     let cpos = cur_pos d in
-    seek_table_pos (soff + off) d >>= fun () ->
+    seek_pos (pos_name + soff + off) d >>= fun () ->
     d_utf_16be len d >>= fun lang ->
     seek_pos cpos d >>= fun () ->
     loop (i - 1) ((0x8000 + (ncount - i), lang) :: acc)
   in
   loop ncount []
 
-let rec d_name_records soff ncount f acc langs seen d =
+
+let rec d_name_records pos_name soff ncount f acc langs seen d =
+  let d_iter = d_name_records pos_name soff in
   if ncount = 0 then return acc else
   d_uint16 d >>= fun pid ->
   d_uint16 d >>= fun eid ->
@@ -1388,34 +1391,37 @@ let rec d_name_records soff ncount f acc langs seen d =
   d_uint16 d >>= fun nid ->
   d_uint16 d >>= fun len ->
   d_uint16 d >>= fun off ->
-  match pid, eid with
-  | (0 | 2), _ | 3, 1 ->
+  match (pid, eid) with
+  | ((0 | 2), _) | (3, 1) ->
       let cpos = cur_pos d in
       let n = (nid, lid) in
-      if List.mem n seen
-      then d_name_records soff (ncount - 1) f acc langs seen d
+      if List.mem n seen then
+        d_iter (ncount - 1) f acc langs seen d
       else
-      seek_table_pos (soff + off) d >>= fun () ->
-      d_utf_16be len d >>= fun v ->
-      seek_pos cpos  d >>= fun () ->
-      let lang = try List.assoc lid langs with Not_found -> "und" in
-      let acc' = f acc nid lang v in
-      d_name_records soff (ncount - 1) f acc' langs (n :: seen) d
+        seek_pos (pos_name + soff + off) d >>= fun () ->
+        d_utf_16be len d >>= fun v ->
+        seek_pos cpos  d >>= fun () ->
+        let lang = try List.assoc lid langs with Not_found -> "und" in
+        let acc' = f acc nid lang v in
+        d_iter (ncount - 1) f acc' langs (n :: seen) d
+
   | _ ->
-      d_name_records soff (ncount - 1) f acc langs seen d
+      d_iter (ncount - 1) f acc langs seen d
+
 
 let name d f acc =
   init_decoder d >>=
   seek_required_table Tag.name d >>= fun () ->
+  let pos_name = cur_pos d in
   d_uint16 d >>= fun version ->
   if version < 0 || version > 1 then err_version d (!% version) else
   d_uint16 d >>= fun ncount ->
   d_uint16 d >>= fun soff ->
   let cpos = cur_pos d in
-  (if version = 0 then return [] else d_name_langs soff ncount d) >>= fun langs ->
+  (if version = 0 then return [] else d_name_langs pos_name soff ncount d) >>= fun langs ->
   let langs = List.rev_append langs lcid_to_bcp47 in
   seek_pos cpos d >>= fun () ->
-  d_name_records soff ncount f acc langs [] d
+  d_name_records pos_name soff ncount f acc langs [] d
 
 (* OS/2 table *)
 
