@@ -45,7 +45,9 @@ module WideInt : sig
   val to_byte : t -> char
   val is_in_int32 : t -> bool
   val is_in_uint32 : t -> bool
+  val is_in_int64 : t -> bool
   val is_neg : t -> bool
+  val pp : Format.formatter -> t -> unit
 end
 
 (** {1 Tags} *)
@@ -257,7 +259,7 @@ type error =
   | `Not_encodable_as_int16           of int
   | `Not_encodable_as_uint32          of WideInt.t
   | `Not_encodable_as_int32           of WideInt.t
-  | `Not_encodable_as_time            of Int64.t
+  | `Not_encodable_as_time            of WideInt.t
   | `Too_many_glyphs_for_encoding     of int
   | `No_glyph_for_encoding
   | `Missing_head_table_for_encoding
@@ -403,8 +405,8 @@ type head =
   { head_font_revision : WideInt.t;
     head_flags : int;
     head_units_per_em : int;
-    head_created : float;  (** Unix timestamp. *)
-    head_modified : float; (** Unix timestamp. *)
+    head_created : WideInt.t;  (** Unix timestamp. *)
+    head_modified : WideInt.t; (** Unix timestamp. *)
     head_xmin : int;
     head_ymin : int;
     head_xmax : int;

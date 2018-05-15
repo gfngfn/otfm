@@ -117,8 +117,8 @@ let pp_head ppf d =
       pp ppf "@,(font-revision 0x%08LX)" (Otfm.WideInt.to_int64 h.Otfm.head_font_revision);
       pp ppf "@,(flags 0x%04X)" h.Otfm.head_flags;
       pp ppf "@,(units-per-em %d)" h.Otfm.head_units_per_em;
-      pp ppf "@,(created %f)" h.Otfm.head_created;
-      pp ppf "@,(modified %f)" h.Otfm.head_modified;
+      pp ppf "@,(created %a)" Otfm.WideInt.pp h.Otfm.head_created;
+      pp ppf "@,(modified %a)" Otfm.WideInt.pp h.Otfm.head_modified;
       pp ppf "@,(xmin %d)" h.Otfm.head_xmin;
       pp ppf "@,(ymin %d)" h.Otfm.head_ymin;
       pp ppf "@,(xmax %d)" h.Otfm.head_xmax;
@@ -162,7 +162,6 @@ let pp_name ppf d =
 
 let pp_os2 ppf d =
   let pp_opt pp_v ppf = function None -> pp ppf "None" | Some v -> pp_v ppf v in
-  let pp_opt_wide_int ppf v = pp_opt (fun ppf v -> pp ppf "%LX" (Otfm.WideInt.to_int64 v)) ppf v in
   let pp_oint = pp_opt Format.pp_print_int in
   match Otfm.os2 d with
   | Error _ as e -> e
@@ -198,10 +197,8 @@ let pp_os2 ppf d =
       pp ppf "@,(s-typo-linegap %d)" o.Otfm.os2_s_typo_linegap;
       pp ppf "@,(us-win-ascent %d)" o.Otfm.os2_us_win_ascent;
       pp ppf "@,(us-win-descent %d)" o.Otfm.os2_us_win_descent;
-      pp ppf "@,(ul-code-page-range-1 %a)"
-        pp_opt_wide_int o.Otfm.os2_ul_code_page_range_1;
-      pp ppf "@,(ul-code-page-range-2 %a)"
-        pp_opt_wide_int o.Otfm.os2_ul_code_page_range_2;
+      pp ppf "@,(ul-code-page-range-1 %a)" (pp_opt Otfm.WideInt.pp) o.Otfm.os2_ul_code_page_range_1;
+      pp ppf "@,(ul-code-page-range-2 %a)" (pp_opt Otfm.WideInt.pp) o.Otfm.os2_ul_code_page_range_2;
       pp ppf "@,(s-x-height %a)" pp_oint o.Otfm.os2_s_x_height;
       pp ppf "@,(s-cap-height %a)" pp_oint o.Otfm.os2_s_cap_height;
       pp ppf "@,(us-default-char %a)" pp_oint o.Otfm.os2_us_default_char;

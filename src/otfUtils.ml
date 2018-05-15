@@ -80,9 +80,11 @@ module WideInt
     let to_int64 iw = iw
     let of_byte ch = Int64.of_int (Char.code ch)
     let to_byte iw = Char.chr (Int64.to_int iw)  (* -- may raise 'Invalid_argument' -- *)
-    let is_in_uint32 iw = Int64.zero <= iw && iw < of_int 0x100000000
-    let is_in_int32 iw = of_int (-0x80000000) <= iw && iw < of_int 0x80000000
+    let is_in_uint32 iw = Int64.zero <= iw && iw < 0x100000000L
+    let is_in_int32 iw = -0x80000000L <= iw && iw < 0x80000000L
+    let is_in_int64 iw = Int64.min_int <= iw && iw <= Int64.max_int
     let is_neg iw = iw < Int64.zero
+    let pp fmt iw = Format.fprintf fmt "%LX" iw
   end
 
 

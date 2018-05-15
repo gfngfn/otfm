@@ -53,7 +53,9 @@ module WideInt : sig
   val to_byte : t -> byte
   val is_in_int32 : t -> bool
   val is_in_uint32 : t -> bool
+  val is_in_int64 : t -> bool
   val is_neg : t -> bool
+  val pp : Format.formatter -> t -> unit
 end
 
 type wint = WideInt.t

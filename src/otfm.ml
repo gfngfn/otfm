@@ -161,7 +161,7 @@ type error =
   | `Not_encodable_as_int16           of int
   | `Not_encodable_as_uint32          of wint
   | `Not_encodable_as_int32           of wint
-  | `Not_encodable_as_time            of Int64.t
+  | `Not_encodable_as_time            of wint
   | `Too_many_glyphs_for_encoding     of int
   | `No_glyph_for_encoding
   | `Missing_head_table_for_encoding
@@ -268,11 +268,11 @@ let pp_error ppf = function
 | `Not_encodable_as_int16 i ->
     pp ppf "@[Not@ encodable@ as@ int16@ (%d)@]" i
 | `Not_encodable_as_uint32 wui ->
-    pp ppf "@[Not@ encodable@ as@ uint32@ (%LX)@]" (WideInt.to_int64 wui)
+    pp ppf "@[Not@ encodable@ as@ uint32@ (%a)@]" WideInt.pp wui
 | `Not_encodable_as_int32 wi ->
-    pp ppf "@[Not@ encodable@ as@ int32@ (%LX)@]" (WideInt.to_int64 wi)
-| `Not_encodable_as_time i64 ->
-    pp ppf "@[Not@ encodable@ as@ LONGDATETIME@ (%LX)@]" i64
+    pp ppf "@[Not@ encodable@ as@ int32@ (%a)@]" WideInt.pp wi
+| `Not_encodable_as_time wi ->
+    pp ppf "@[Not@ encodable@ as@ LONGDATETIME@ (%a)@]" WideInt.pp wi
 | `Too_many_glyphs_for_encoding num ->
     pp ppf "@[Too@ many@ glyphs@ for@ encoding@ (%d)@]" num
 | `No_glyph_for_encoding ->
@@ -414,21 +414,21 @@ let d_int32 d =
 
 
 let d_time d =                       (* LONGDATETIME as a unix time stamp. *)
-  if miss d 8 then err_eoi d else
+  if miss d 8 then
+    err_eoi d
+  else
     let b0 = raw_byte d in let b1 = raw_byte d in
     let b2 = raw_byte d in let b3 = raw_byte d in
     let b4 = raw_byte d in let b5 = raw_byte d in
     let b6 = raw_byte d in let b7 = raw_byte d in
-    let s0 = Int64.of_int ((b0 lsl 8) lor b1) in
-    let s1 = Int64.of_int ((b2 lsl 8) lor b3) in
-    let s2 = Int64.of_int ((b4 lsl 8) lor b5) in
-    let s3 = Int64.of_int ((b6 lsl 8) lor b7) in
-    let v = (Int64.logor (Int64.shift_left s0 48)
-               (Int64.logor (Int64.shift_left s1 32)
-                  (Int64.logor (Int64.shift_left s2 16) s3)))
-    in
-    let unix_epoch = 2_082_844_800L (* in seconds since 1904-01-01 00:00:00 *) in
-    return (Int64.to_float (Int64.sub v unix_epoch))
+    let s0 = !% ((b0 lsl 8) lor b1) in
+    let s1 = !% ((b2 lsl 8) lor b3) in
+    let s2 = !% ((b4 lsl 8) lor b5) in
+    let s3 = !% ((b6 lsl 8) lor b7) in
+    let v = WideInt.((s0 lsl 48) lor (s1 lsl 32) lor (s2 lsl 16) lor s3) in
+    let unix_epoch = !%% 2_082_844_800L (* in seconds since 1904-01-01 00:00:00 *) in
+    return (v -% unix_epoch)
+
 
 let d_fixed d =
   if miss d 4 then err_eoi d else
@@ -1104,8 +1104,8 @@ type head = {
   head_font_revision : wint;
   head_flags : int;
   head_units_per_em : int;
-  head_created : float;
-  head_modified : float;
+  head_created : wint;
+  head_modified : wint;
   head_xmin : int;
   head_ymin : int;
   head_xmax : int;
@@ -4743,7 +4743,7 @@ module Encode = struct
     if not (is_in_int32 i) then
       err (`Not_encodable_as_int32(i))
     else
-      let ui = if is_neg i then i +% (of_int 0x100000000) else i in
+      let ui = if is_neg i then i +% (!%% 0x100000000L) else i in
 (*
       Printf.printf "i32 -> u32 (%d ---> %d)\n" i ui;
 *)
@@ -4753,17 +4753,15 @@ module Encode = struct
       end
 
 
-  let enc_time enc ftime =
-    let i64 = Int64.of_float ftime in
-    if not (Int64.min_int <= i64 && i64 <= Int64.max_int) then
-      (* -- does NOT allow negative value for clarity -- *)
-      err (`Not_encodable_as_time(i64))
-    else
-      let ui64 = if i64 < Int64.zero then Int64.zero else i64 in  (* temporary *)
-      let q0_64 = Int64.shift_right ui64 32 in
-      let q1_64 = Int64.sub ui64 (Int64.shift_left q0_64 32) in
-      let q0 = WideInt.of_int64 q0_64 in
-      let q1 = WideInt.of_int64 q1_64 in
+  let enc_time enc itime =
+    let open WideInt in
+      if not (is_in_int64 itime) then
+        (* -- does NOT allow negative value for clarity -- *)
+        err (`Not_encodable_as_time(itime))
+      else
+        let wi = if is_neg itime then !% 0 else itime in  (* temporary *)
+        let q0 = wi lsr 32 in
+        let q1 = wi -% (q0 lsl 32) in
 (*
       Printf.printf "time %s ---> (%d, %d)\n" (Int64.to_string ui64) q0 q1;
 *)
