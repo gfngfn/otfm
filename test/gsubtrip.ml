@@ -77,12 +77,12 @@ let decode_gsub scripttag type3tag type4tag d =
   Format.printf "]@]@,@]";
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type4tag)
     (`Msg(str "GSUB does not contain Feature tag '%s' for '%s', 'DFLT'" type4tag scripttag)) >>= fun feature_type4 ->
-  Otfm.gsub feature_type4 skip skip f_lig [] >>= fun type4ret ->
+  Otfm.gsub feature_type4 ~lig:f_lig [] >>= fun type4ret ->
   Format.printf "finish '%s'\n" type4tag;
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type3tag)
     (`Msg(str "GSUB does not contain Feature tag '%s' for '%s', 'DFLT'" type3tag scripttag)) >>= fun feature_type3 ->
   Format.printf "middle of '%s'\n" type3tag;
-  Otfm.gsub feature_type3 f_single f_alt skip [] >>= fun type3ret ->
+  Otfm.gsub feature_type3 ~single:f_single ~alt:f_alt [] >>= fun type3ret ->
   Format.printf "finish '%s'\n" type3tag;
   return (type3ret, type4ret)
 
@@ -95,7 +95,7 @@ let decode_gpos d =
   Otfm.gpos_feature langsys_DFLT >>= fun (_, featurelst) ->
   pickup featurelst (fun feature -> Otfm.gpos_feature_tag feature = "kern")
     (`Msg("GPOS does not contain Feature tag 'kern' for 'latn'")) >>= fun feature_kern ->
-  Otfm.gpos feature_kern f_pair1 f_pair2 [] >>= fun gposres ->
+  Otfm.gpos feature_kern ~pair1:f_pair1 ~pair2:f_pair2 [] >>= fun gposres ->
   return gposres
 
 

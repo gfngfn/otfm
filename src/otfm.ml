@@ -2071,14 +2071,18 @@ let lookup_gsub d : gsub_subtable ok =
       err (`Invalid_GSUB_lookup_type(lookupType))
 
 
-type 'a folding_single = 'a -> glyph_id * glyph_id -> 'a
+type 'a folding_gsub_single = 'a -> glyph_id * glyph_id -> 'a
 
-type 'a folding_alt = 'a -> glyph_id * glyph_id list -> 'a
+type 'a folding_gsub_alt = 'a -> glyph_id * glyph_id list -> 'a
 
-type 'a folding_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
+type 'a folding_gsub_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
 
 
-let rec fold_subtables_gsub (f_single : 'a folding_single) (f_alt : 'a folding_alt) (f_lig : 'a folding_lig) (init : 'a) (subtablelst : gsub_subtable list) : 'a =
+let rec fold_subtables_gsub
+    (f_single : 'a folding_gsub_single)
+    (f_alt : 'a folding_gsub_alt)
+    (f_lig : 'a folding_gsub_lig)
+    (init : 'a) (subtablelst : gsub_subtable list) : 'a =
   let iter = fold_subtables_gsub f_single f_alt f_lig in
     match subtablelst with
     | [] ->
@@ -2086,21 +2090,25 @@ let rec fold_subtables_gsub (f_single : 'a folding_single) (f_alt : 'a folding_a
 
     | SingleSubtable(gid_single_assoc) :: tail ->
         let initnew = List.fold_left f_single init gid_single_assoc in
-        iter initnew tail
+          iter initnew tail
 
     | AlternateSubtable(gid_altset_assoc) :: tail ->
         let initnew = List.fold_left f_alt init gid_altset_assoc in
-        iter initnew tail
+          iter initnew tail
 
     | LigatureSubtable(gidfst_ligset_assoc) :: tail ->
         let initnew = List.fold_left f_lig init gidfst_ligset_assoc in
-        iter initnew tail
+          iter initnew tail
 
     | UnsupportedGSUBSubtable :: tail ->
-        iter init tail
+          iter init tail
 
 
-let gsub feature f_single f_alt f_lig init =
+let gsub feature
+    ?single:(f_single = (fun x _ -> x))
+    ?alt:(f_alt = (fun x _ -> x))
+    ?lig:(f_lig = (fun x _ -> x))
+    init =
   gxxx_subtable_list lookup_gsub feature >>= fun subtablelst ->
   return (fold_subtables_gsub f_single f_alt f_lig init subtablelst)
 
@@ -2161,6 +2169,8 @@ type class_definition =
   | GlyphRangeToClass of glyph_id * glyph_id * class_value
 
 type gpos_subtable =
+  | SinglePosAdjustment1 of glyph_id list * value_record
+  | SinglePosAdjustment2 of (glyph_id * value_record) list
   | PairPosAdjustment1 of (glyph_id * (glyph_id * value_record * value_record) list) list
   | PairPosAdjustment2 of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
   | ExtensionPos       of gpos_subtable list
@@ -2235,14 +2245,35 @@ let d_class_definition d : (class_definition list) ok =
   | _ -> err_version d (!% classFormat)
 
 
+let d_single_adjustment_subtable d : gpos_subtable ok =
+    (* -- the position is supposed to be set
+       to the beginning of a SinglePos subtable [page 192] -- *)
+  let offset_SinglePos = cur_pos d in
+  d_uint16 d >>= fun posFormat ->
+  d_fetch offset_SinglePos d_coverage d >>= fun coverage ->
+  match posFormat with
+  | 1 ->
+      d_value_format d >>= fun valueFormat ->
+      d_value_record valueFormat d >>= fun valueRecord ->
+      return (SinglePosAdjustment1(coverage, valueRecord))
+
+  | 2 ->
+      d_value_format d >>= fun valueFormat ->
+      d_list (d_value_record valueFormat) d >>= fun singleposlst ->
+      combine_coverage d coverage singleposlst >>= fun comb ->
+      return (SinglePosAdjustment2(comb))
+
+  | _ -> err_version d (!% posFormat)
+
+
 let d_pair_adjustment_subtable d : gpos_subtable ok =
     (* -- the position is supposed to be set
           to the beginning of a PairPos subtable [page 194] -- *)
   let offset_PairPos = cur_pos d in
   d_uint16 d >>= fun posFormat ->
+  d_fetch offset_PairPos d_coverage d >>= fun coverage ->
   match posFormat with
   | 1 ->
-      d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
       d_list (d_fetch offset_PairPos (d_pair_set valueFormat1 valueFormat2)) d >>= fun pairsetlst ->
@@ -2250,7 +2281,6 @@ let d_pair_adjustment_subtable d : gpos_subtable ok =
       return (PairPosAdjustment1(comb))
 
   | 2 ->
-      d_fetch offset_PairPos d_coverage d >>= fun coverage ->
       d_value_format d >>= fun valueFormat1 ->
       d_value_format d >>= fun valueFormat2 ->
       d_fetch offset_PairPos d_class_definition d >>= fun classDef1 ->
@@ -2270,9 +2300,6 @@ let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
   match lookupType with
   | 1 ->  (* -- Single adjustment -- *)
       return UnsupportedGPOSSubtable
-(*
-      failwith "Single adjustment; remains to be supported."  (* temporary *)
-*)
 
   | 2 ->  (* -- Pair adjustment -- *)
       Format.fprintf fmtGSUB "number of subtables = %d\n" (List.length offsetlst_SubTable);  (* for debug *)
@@ -2281,15 +2308,10 @@ let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
 
   | 3 ->  (* -- Cursive attachment -- *)
       return UnsupportedGPOSSubtable
-(*
-      failwith "Cursive attachment; remains to be supported."  (* temporary *)
-*)
 
   | 4 ->  (* -- MarkToBase attachment -- *)
       return UnsupportedGPOSSubtable
-(*
-      failwith "MarkToBase attachment; remains to be supported."  (* temporary *)
-*)
+
   | 5 ->
       return UnsupportedGPOSSubtable
 
@@ -2307,9 +2329,7 @@ let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
 
   | _ ->
       err (`Invalid_GPOS_lookup_type(lookupType))
-(*
-      failwith "lookupType other; remains to be supported (or font file broken)."  (* temporary *)
-*)
+
 
 let d_extension_position d : gpos_subtable ok =
     (* -- the position is supposed to be set
@@ -2347,11 +2367,33 @@ let lookup_gpos d : gpos_subtable ok =
       lookup_gpos_exact offsetlst_SubTable lookupType d
 
 
-let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) (f_pair2 : class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) (init : 'a) (subtablelst : gpos_subtable list) : 'a =
-  let iter = fold_subtables_gpos f_pair1 f_pair2 in
+type 'a folding_gpos_single1 = 'a -> glyph_id list -> value_record -> 'a
+
+type 'a folding_gpos_single2 = 'a -> glyph_id * value_record -> 'a
+
+type 'a folding_gpos_pair1 = 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a
+
+type 'a folding_gpos_pair2 = class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a
+
+
+let rec fold_subtables_gpos
+    (f_single1 : 'a folding_gpos_single1)
+    (f_single2 : 'a folding_gpos_single2)
+    (f_pair1 : 'a folding_gpos_pair1)
+    (f_pair2 : 'a folding_gpos_pair2)
+    (init : 'a) (subtablelst : gpos_subtable list) : 'a =
+  let iter = fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 in
     match subtablelst with
     | [] ->
         init
+
+    | SinglePosAdjustment1(coverage, valreclst) :: tail ->
+        let initnew = f_single1 init coverage valreclst in
+          iter initnew tail
+
+    | SinglePosAdjustment2(assoc) :: tail ->
+        let initnew = List.fold_left f_single2 init assoc in
+          iter initnew tail
 
     | PairPosAdjustment1(gidfst_pairposlst_assoc) :: tail ->
         let initnew = List.fold_left f_pair1 init gidfst_pairposlst_assoc in
@@ -2369,9 +2411,14 @@ let rec fold_subtables_gpos (f_pair1 : 'a -> glyph_id * (glyph_id * value_record
         iter init tail
 
 
-let gpos feature f_pair1 f_pair2 init =
+let gpos feature
+    ?single1:(f_single1 = (fun x _ _ -> x))
+    ?single2:(f_single2 = (fun x _ -> x))
+    ?pair1:(f_pair1 = (fun x _ -> x))
+    ?pair2:(f_pair2 = (fun _ _ x _ -> x))
+    init =
   gxxx_subtable_list lookup_gpos feature >>= fun subtablelst ->
-  return (fold_subtables_gpos f_pair1 f_pair2 init subtablelst)
+  return (fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 init subtablelst)
 
 
 (* -- MATH table -- *)
