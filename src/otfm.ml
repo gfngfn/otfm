@@ -1946,7 +1946,9 @@ let gxxx_subtable_list (type a) (lookup_gxxx : decoder -> a ok) (feature : gxxx_
     (* -- now the position is set to the beginning of the required Feature table -- *)
   Format.fprintf fmtGSUB "---- Feature table ----\n";  (* for debug *)
   d_uint16 d >>= fun featureParams ->
+(*
   confirm (featureParams = 0) (`Invalid_feature_params(featureParams)) >>= fun () ->
+*)
   d_list d_uint16 d >>= fun lookupListIndexList ->
   Format.fprintf fmtGSUB "offset_LookupList = %d\n" offset_LookupList;  (* for debug *)
   seek_pos offset_LookupList d >>= fun () ->
