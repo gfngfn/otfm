@@ -18,13 +18,23 @@ let f_lig acc (gidfst, liginfolst) = (gidfst, liginfolst) :: acc
 
 let f_single1 acc gidlst valrcd = Single1(gidlst, valrcd) :: acc
 
+let f_single2 acc _ =
+  Format.printf "<Single2>@,";
+  acc
+
 let f_pair1 acc (gidfst, pairinfolst) = Pair1(gidfst, pairinfolst) :: acc
 
 (*
 let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
   Pair2(clsval, pairinfolst) :: lst
 *)
-let f_pair2 _ _ lst _ = lst
+let f_pair2 _ _ acc _ =
+  Format.printf "<Pair2>@,";
+  acc
+
+let f_markbase1 _ acc _ _ =
+  Format.printf "<MarkBase1>@,";
+  acc
 
 
 let pp_sep fmt () =
@@ -57,8 +67,6 @@ let decode_gsub scripttag type3tag type4tag d =
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type3tag)
     (`Msg(str "GSUB does not contain Feature tag '%s' for '%s', 'DFLT'" type3tag scripttag)) >>= fun feature_type3 ->
 
-  Format.printf "middle of '%s'@," type3tag;
-
   Otfm.gsub feature_type3 ~single:f_single ~alt:f_alt [] >>= fun type3ret ->
 
   Format.printf "finish '%s'@," type3tag;
@@ -88,7 +96,7 @@ let decode_gpos scripttag tag d =
 
   pickup featurelst (fun feature -> Otfm.gpos_feature_tag feature = tag)
     (`Msg(str "GPOS does not contain Feature tag '%s' for '%s'" tag scripttag)) >>= fun feature_kern ->
-  Otfm.gpos feature_kern ~single1:f_single1 ~pair1:f_pair1 ~pair2:f_pair2 [] >>= fun gposres ->
+  Otfm.gpos feature_kern ~single1:f_single1 ~single2:f_single2 ~pair1:f_pair1 ~pair2:f_pair2 ~markbase1:f_markbase1 [] >>= fun gposres ->
   return gposres
 
 
@@ -101,16 +109,22 @@ let main filename script type3tag type4tag gpostag =
   Otfm.decoder (`String(src)) >>= function
   | Otfm.SingleDecoder(d) ->
       begin
-        print_endline "finish initializing decoder";
+        Format.printf "@[<v2>@,";
+        Format.printf "finish initializing decoder@,";
         decode_gsub script type3tag type4tag d >>= fun (type3ret, type4ret) ->
         decode_gpos script gpostag d >>= fun gposret ->
-        print_endline "finish decoding";
+        Format.printf "finish decoding@,";
+        Format.printf "@]@,";
         return (type3ret, type4ret, gposret)
       end
 
   | Otfm.TrueTypeCollection(_) ->
       let () = print_endline "TTC file" in
       return ([], [], [])
+
+
+let pp_ligature_set fmt (gidtail, gid) =
+  Format.printf "@[[%a]@] ---> %d@," (Format.pp_print_list ~pp_sep Format.pp_print_int) gidtail gid
 
 
 let () =
@@ -129,31 +143,32 @@ let () =
 
   | Ok(gid_altset_assoc, gidfst_ligset_assoc, clsfst_pairposlst_assoc) ->
       begin
-        Format.printf "GSUB '%s':\n" type3tag;
+        Format.printf "@[<v2>@,";
+        Format.printf "@[<v2>GSUB '%s':@," type3tag;
         gid_altset_assoc |> List.rev |> List.iter (fun (gid, gidlst) ->
-          Format.printf "%d -> [" gid;
-          gidlst |> List.iter (fun gidalt -> Format.printf " %d" gid);
-          print_endline "]";
+          Format.printf "%d -> [@[%a@]]@," gid
+            (Format.pp_print_list ~pp_sep Format.pp_print_int) gidlst;
         );
-        Format.printf "GSUB '%s':\n" type4tag;
+        Format.printf "@]@,";
+
+        Format.printf "@[<v2>GSUB '%s':@," type4tag;
         gidfst_ligset_assoc |> List.rev |> List.iter (fun (gidfst, ligset) ->
-          Format.printf "%d -> [" gidfst;
-          ligset |> List.iter (fun (gidtail, gidlig) ->
-            gidtail |> List.iter (fun gid -> Format.printf " %d" gid);
-            Format.printf " ----> %d; " gidlig;
-          );
-          print_endline "]";
+          Format.printf "%d -> @[[%a]@]@," gidfst (Format.pp_print_list ~pp_sep pp_ligature_set) ligset
         );
-        print_endline "GPOS:";
+        Format.printf "@]@,";
+
+        Format.printf "@[<v2>GPOS '%s':@," gpostag;
         clsfst_pairposlst_assoc |> List.rev |> List.iter (function
         | Single1(gidlst, valrcd) ->
-            Format.printf ("[Single1] %a\n")
-              (Format.pp_print_list Format.pp_print_int) gidlst
+            Format.printf ("#Single1@,@[%a@]@,")
+              (Format.pp_print_list ~pp_sep Format.pp_print_int) gidlst
+
         | Pair1(gidfst, pairposset) ->
-            print_endline ("[Pair1] " ^ (string_of_int gidfst) ^ " -> (length: " ^
-              (string_of_int (List.length pairposset)) ^ ")")
+            Format.printf "#Pair1 %d -> (length: %d)@," gidfst (List.length pairposset)
+
         | Pair2(clsfst, pairposset) ->
-            print_endline ("[Pair2] " ^ (string_of_int clsfst) ^ " -> (length: " ^
-              (string_of_int (List.length pairposset)) ^ ")")
+            Format.printf "#Pair2 %d -> (length: %d)@," clsfst (List.length pairposset)
         );
+        Format.printf "@]@,";
+        Format.printf "@]";
       end

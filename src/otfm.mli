@@ -252,6 +252,7 @@ type error =
   | `Invalid_ros
   | `Layered_ttc
   | `Invalid_index_to_loc_format      of int
+  | `Invalid_mark_class               of int
 
   | `Not_encodable_as_uint8           of int
   | `Not_encodable_as_int8            of int
@@ -710,6 +711,22 @@ type class_definition =
   | GlyphToClass      of glyph_id * class_value
   | GlyphRangeToClass of glyph_id * glyph_id * class_value
 
+type anchor_adjustment =
+  | NoAnchorAdjustment
+  | AnchorPointAdjustment  of int
+  | DeviceAnchorAdjustment of device_table * device_table
+
+type design_units = int
+
+type anchor = design_units * design_units * anchor_adjustment
+
+type mark_class = int
+
+type mark_record = mark_class * anchor
+
+type base_record = anchor array
+  (* -- indexed by mark_class -- *)
+
 type 'a folding_gpos_single1 = 'a -> glyph_id list -> value_record -> 'a
 
 type 'a folding_gpos_single2 = 'a -> glyph_id * value_record -> 'a
@@ -718,11 +735,14 @@ type 'a folding_gpos_pair1 = 'a -> glyph_id * (glyph_id * value_record * value_r
 
 type 'a folding_gpos_pair2 = class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a
 
+type 'a folding_gpos_markbase1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * base_record) list -> 'a
+
 val gpos : gpos_feature ->
   ?single1:'a folding_gpos_single1 ->
   ?single2:'a folding_gpos_single2 ->
   ?pair1:'a folding_gpos_pair1 ->
   ?pair2:'a folding_gpos_pair2 ->
+  ?markbase1: 'a folding_gpos_markbase1 ->
   'a -> ('a, error) result
 
 type math_value_record = int * device_table option
