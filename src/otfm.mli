@@ -252,6 +252,7 @@ type error =
   | `Invalid_ros
   | `Layered_ttc
   | `Invalid_index_to_loc_format      of int
+  | `Invalid_mark_class               of int
 
   | `Not_encodable_as_uint8           of int
   | `Not_encodable_as_int8            of int
@@ -646,13 +647,17 @@ val gsub_feature : gsub_langsys -> (gsub_feature option * gsub_feature list, err
 val gsub_feature_tag : gsub_feature -> string
 (** Returns the Feature tag (e.g. ["aalt"], ["liga"], etc.). *)
 
-type 'a folding_single = 'a -> glyph_id * glyph_id -> 'a
+type 'a folding_gsub_single = 'a -> glyph_id * glyph_id -> 'a
 
-type 'a folding_alt = 'a -> glyph_id * glyph_id list -> 'a
+type 'a folding_gsub_alt = 'a -> glyph_id * glyph_id list -> 'a
 
-type 'a folding_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
+type 'a folding_gsub_lig = 'a -> glyph_id * (glyph_id list * glyph_id) list -> 'a
 
-val gsub : gsub_feature -> 'a folding_single -> 'a folding_alt -> 'a folding_lig -> 'a -> ('a, error) result
+val gsub : gsub_feature ->
+  ?single:'a folding_gsub_single ->
+  ?alt:'a folding_gsub_alt ->
+  ?lig:'a folding_gsub_lig ->
+  'a -> ('a, error) result
 (** {b WARNING: subject to change in the future.}
     Supports only
     {{:https://www.microsoft.com/typography/otspec/gsub.htm#LS}LookupType 4: ligature substitution subtable}.
@@ -706,9 +711,38 @@ type class_definition =
   | GlyphToClass      of glyph_id * class_value
   | GlyphRangeToClass of glyph_id * glyph_id * class_value
 
+type anchor_adjustment =
+  | NoAnchorAdjustment
+  | AnchorPointAdjustment  of int
+  | DeviceAnchorAdjustment of device_table * device_table
+
+type design_units = int
+
+type anchor = design_units * design_units * anchor_adjustment
+
+type mark_class = int
+
+type mark_record = mark_class * anchor
+
+type base_record = anchor array
+  (* -- indexed by mark_class -- *)
+
+type 'a folding_gpos_single1 = 'a -> glyph_id list -> value_record -> 'a
+
+type 'a folding_gpos_single2 = 'a -> glyph_id * value_record -> 'a
+
+type 'a folding_gpos_pair1 = 'a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a
+
+type 'a folding_gpos_pair2 = class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a
+
+type 'a folding_gpos_markbase1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * base_record) list -> 'a
+
 val gpos : gpos_feature ->
-  ('a -> glyph_id * (glyph_id * value_record * value_record) list -> 'a) ->
-  (class_definition list -> class_definition list -> 'a -> (class_value * (class_value * value_record * value_record) list) list -> 'a) ->
+  ?single1:'a folding_gpos_single1 ->
+  ?single2:'a folding_gpos_single2 ->
+  ?pair1:'a folding_gpos_pair1 ->
+  ?pair2:'a folding_gpos_pair2 ->
+  ?markbase1: 'a folding_gpos_markbase1 ->
   'a -> ('a, error) result
 
 type math_value_record = int * device_table option

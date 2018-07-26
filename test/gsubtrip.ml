@@ -1,49 +1,12 @@
-open Result
 
-let str = Format.sprintf
-
-let string_of_file inf =
-  try
-    let ic = if inf = "-" then stdin else open_in_bin inf in
-    let close ic = if inf <> "-" then close_in ic else () in
-    let buf_size = 65536 in
-    let b = Buffer.create buf_size in
-    let s = Bytes.create buf_size in
-    try
-      while true do
-        let c = input ic s 0 buf_size in
-        if c = 0 then raise Exit else
-        Buffer.add_substring b (Bytes.unsafe_to_string s) 0 c
-      done;
-      assert false
-    with
-    | Exit -> close ic; Ok (Buffer.contents b)
-    | Failure _ -> close ic; Error (`Msg (str "%s: input file too large" inf))
-    | Sys_error e -> close ic; (Error (`Msg e));
-  with
-  | Sys_error e -> (Error (`Msg e))
+open TestUtil
 
 
-type error = [ Otfm.error | `Msg of string ]
-
-let ( >>= ) x f =
-  match x with
-  | Ok(v)    -> f v
-  | Error(e) -> Error(e :> error)
-
-let return v = Ok(v)
-
-let err e = Error(e)
-
-let pickup lst predicate e =
-  match lst |> List.filter predicate with
-  | []     -> err e
-  | v :: _ -> return v
-
-
-type pair_position =
+type position =
+  | Single1 of Otfm.glyph_id list * Otfm.value_record
   | Pair1 of Otfm.glyph_id * (Otfm.glyph_id * Otfm.value_record * Otfm.value_record) list
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
+  | MarkBase1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.base_record) list
 
 
 let skip gid _ = gid
@@ -54,52 +17,90 @@ let f_alt acc (gid, gidaltlst) = (gid, gidaltlst) :: acc
 
 let f_lig acc (gidfst, liginfolst) = (gidfst, liginfolst) :: acc
 
+let f_single1 acc gidlst valrcd = Single1(gidlst, valrcd) :: acc
+
+let f_single2 acc _ =
+  Format.printf "<Single2>@,";
+  acc
+
 let f_pair1 acc (gidfst, pairinfolst) = Pair1(gidfst, pairinfolst) :: acc
 
 (*
 let f_pair2 clsdeflst1 clsdeflst2 lst (clsval, pairinfolst) =
   Pair2(clsval, pairinfolst) :: lst
 *)
-let f_pair2 _ _ lst _ = lst
+let f_pair2 _ _ acc _ =
+  Format.printf "<Pair2>@,";
+  acc
+
+let f_markbase1 classCount acc markassoc baseassoc =
+  MarkBase1(classCount, markassoc, baseassoc) :: acc
+
+
+let pp_sep fmt () =
+  Format.fprintf fmt ",@ "
 
 
 let decode_gsub scripttag type3tag type4tag d =
   Otfm.gsub_script d >>= fun scriptlst ->
-  Format.printf "@[<v2>  all GSUB Script tags:@ @[[";
-  scriptlst |> List.iter (fun gs -> Format.printf "%s,@ " (Otfm.gsub_script_tag gs));
-  Format.printf "]@]@,";
+
+  Format.printf "@[<v2>@,";
+  Format.printf "all GSUB Script tags:@ @[[%a]@]@,"
+    (Format.pp_print_list ~pp_sep Format.pp_print_string)
+      (scriptlst |> List.map Otfm.gsub_script_tag);
+
   pickup scriptlst (fun gs -> Otfm.gsub_script_tag gs = scripttag)
     (`Msg(str "GSUB does not contain Script tag '%s'" scripttag)) >>= fun script ->
   Otfm.gsub_langsys script >>= fun (langsys_DFLT, _) ->
   Otfm.gsub_feature langsys_DFLT >>= fun (_, featurelst) ->
-  Format.printf "all GSUB Feature tags for '%s', 'DFLT':@ @[[" scripttag;
-  featurelst |> List.iter (fun gf -> Format.printf "%s,@ " (Otfm.gsub_feature_tag gf));
-  Format.printf "]@]@,@]";
+
+  Format.printf "all GSUB Feature tags for '%s', 'DFLT':@ @[[%a]@]@," scripttag
+    (Format.pp_print_list ~pp_sep Format.pp_print_string)
+      (featurelst |> List.map Otfm.gsub_feature_tag);
+
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type4tag)
     (`Msg(str "GSUB does not contain Feature tag '%s' for '%s', 'DFLT'" type4tag scripttag)) >>= fun feature_type4 ->
-  Otfm.gsub feature_type4 skip skip f_lig [] >>= fun type4ret ->
-  Format.printf "finish '%s'\n" type4tag;
+  Otfm.gsub feature_type4 ~lig:f_lig [] >>= fun type4ret ->
+
+  Format.printf "finish '%s'@," type4tag;
+
   pickup featurelst (fun gf -> Otfm.gsub_feature_tag gf = type3tag)
     (`Msg(str "GSUB does not contain Feature tag '%s' for '%s', 'DFLT'" type3tag scripttag)) >>= fun feature_type3 ->
-  Format.printf "middle of '%s'\n" type3tag;
-  Otfm.gsub feature_type3 f_single f_alt skip [] >>= fun type3ret ->
-  Format.printf "finish '%s'\n" type3tag;
+
+  Otfm.gsub feature_type3 ~single:f_single ~alt:f_alt [] >>= fun type3ret ->
+
+  Format.printf "finish '%s'@," type3tag;
+  Format.printf "@]@,";
+
   return (type3ret, type4ret)
 
 
-let decode_gpos d =
+let decode_gpos scripttag tag d =
   Otfm.gpos_script d >>= fun scriptlst ->
-  pickup scriptlst (fun script -> Otfm.gpos_script_tag script = "latn")
+
+  Format.printf "@[<v2>@,";
+  Format.printf "all GPOS Script tags:@ @[[%a]@]@,"
+    (Format.pp_print_list ~pp_sep Format.pp_print_string)
+      (scriptlst |> List.map Otfm.gpos_script_tag);
+
+  pickup scriptlst (fun script -> Otfm.gpos_script_tag script = scripttag)
     (`Msg("GPOS does not contain Script tag 'latn'")) >>= fun script_latn ->
   Otfm.gpos_langsys script_latn >>= fun (langsys_DFLT, _) ->
   Otfm.gpos_feature langsys_DFLT >>= fun (_, featurelst) ->
-  pickup featurelst (fun feature -> Otfm.gpos_feature_tag feature = "kern")
-    (`Msg("GPOS does not contain Feature tag 'kern' for 'latn'")) >>= fun feature_kern ->
-  Otfm.gpos feature_kern f_pair1 f_pair2 [] >>= fun gposres ->
+
+  Format.printf "all GPOS Feature tags for '%s', 'DFLT':@ @[[%a]@]@," scripttag
+    (Format.pp_print_list ~pp_sep Format.pp_print_string)
+      (featurelst |> List.map Otfm.gpos_feature_tag);
+
+  Format.printf "@]@,";
+
+  pickup featurelst (fun feature -> Otfm.gpos_feature_tag feature = tag)
+    (`Msg(str "GPOS does not contain Feature tag '%s' for '%s'" tag scripttag)) >>= fun feature_kern ->
+  Otfm.gpos feature_kern ~single1:f_single1 ~single2:f_single2 ~pair1:f_pair1 ~pair2:f_pair2 ~markbase1:f_markbase1 [] >>= fun gposres ->
   return gposres
 
 
-let main filename script type3tag type4tag =
+let main filename script type3tag type4tag gpostag =
   let src =
     match string_of_file filename with
     | Ok(src)       -> src
@@ -108,10 +109,12 @@ let main filename script type3tag type4tag =
   Otfm.decoder (`String(src)) >>= function
   | Otfm.SingleDecoder(d) ->
       begin
-        print_endline "finish initializing decoder";
+        Format.printf "@[<v2>@,";
+        Format.printf "finish initializing decoder@,";
         decode_gsub script type3tag type4tag d >>= fun (type3ret, type4ret) ->
-        decode_gpos d >>= fun gposret ->
-        print_endline "finish decoding";
+        decode_gpos script gpostag d >>= fun gposret ->
+        Format.printf "finish decoding@,";
+        Format.printf "@]@,";
         return (type3ret, type4ret, gposret)
       end
 
@@ -120,44 +123,70 @@ let main filename script type3tag type4tag =
       return ([], [], [])
 
 
+let pp_ligature_set fmt (gidtail, gid) =
+  Format.fprintf fmt "@[[%a]@] ---> %d@," (Format.pp_print_list ~pp_sep Format.pp_print_int) gidtail gid
+
+
+let pp_anchor fmt (dux, duy, _) =
+  Format.fprintf fmt "(%d, %d)" dux duy
+
+
+let pp_mark_record fmt (gid, (markcls, anch)) =
+  Format.fprintf fmt "%d --> %d %a" gid markcls pp_anchor anch
+
+
+let pp_base_record fmt (gid, ancharr) =
+  Format.fprintf fmt "%d --> {%a}" gid (Format.pp_print_list ~pp_sep pp_anchor) (Array.to_list ancharr)
+
+
 let () =
-  let (filename, script, type3tag, type4tag) =
-    try (Sys.argv.(1), Sys.argv.(2), Sys.argv.(3), Sys.argv.(4)) with
+  let (filename, script, type3tag, type4tag, gpostag) =
+    try (Sys.argv.(1), Sys.argv.(2), Sys.argv.(3), Sys.argv.(4), Sys.argv.(5)) with
     | Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end
   in
-  match main filename script type3tag type4tag with
+  match main filename script type3tag type4tag gpostag with
   | Error(#Otfm.error as e) ->
-      Format.printf "error1\n";
-      Format.printf "@[%a@]@.\n" Otfm.pp_error e
+      Format.printf "@[<v2>error1@,";
+      Format.printf "@[%a@]@]@," Otfm.pp_error e
 
   | Error(`Msg(msg)) ->
-      Format.printf "error2\n";
-      Format.printf "!!!! %s !!!!\n" msg
+      Format.printf "@[<v2>error2@,";
+      Format.printf "!!!! %s !!!!@]@," msg
 
   | Ok(gid_altset_assoc, gidfst_ligset_assoc, clsfst_pairposlst_assoc) ->
       begin
-        Format.printf "GSUB '%s':\n" type3tag;
+        Format.printf "@[<v2>@,";
+        Format.printf "@[<v2>GSUB '%s':@," type3tag;
         gid_altset_assoc |> List.rev |> List.iter (fun (gid, gidlst) ->
-          Format.printf "%d -> [" gid;
-          gidlst |> List.iter (fun gidalt -> Format.printf " %d" gid);
-          print_endline "]";
+          Format.printf "%d -> [@[%a@]]@," gid
+            (Format.pp_print_list ~pp_sep Format.pp_print_int) gidlst;
         );
-        Format.printf "GSUB '%s':\n" type4tag;
+        Format.printf "@]@,";
+
+        Format.printf "@[<v2>GSUB '%s':@," type4tag;
         gidfst_ligset_assoc |> List.rev |> List.iter (fun (gidfst, ligset) ->
-          Format.printf "%d -> [" gidfst;
-          ligset |> List.iter (fun (gidtail, gidlig) ->
-            gidtail |> List.iter (fun gid -> Format.printf " %d" gid);
-            Format.printf " ----> %d; " gidlig;
-          );
-          print_endline "]";
+          Format.printf "%d -> @[[%a]@]@," gidfst (Format.pp_print_list ~pp_sep pp_ligature_set) ligset
         );
-        print_endline "GPOS:";
+        Format.printf "@]@,";
+
+        Format.printf "@[<v2>GPOS '%s':@," gpostag;
         clsfst_pairposlst_assoc |> List.rev |> List.iter (function
+        | Single1(gidlst, valrcd) ->
+            Format.printf ("#Single1@,@[%a@]@,")
+              (Format.pp_print_list ~pp_sep Format.pp_print_int) gidlst
+
         | Pair1(gidfst, pairposset) ->
-            print_endline ("[1] " ^ (string_of_int gidfst) ^ " -> (length: " ^
-              (string_of_int (List.length pairposset)) ^ ")")
+            Format.printf "#Pair1 %d -> (length: %d)@," gidfst (List.length pairposset)
+
         | Pair2(clsfst, pairposset) ->
-            print_endline ("[2] " ^ (string_of_int clsfst) ^ " -> (length: " ^
-              (string_of_int (List.length pairposset)) ^ ")")
+            Format.printf "#Pair2 %d -> (length: %d)@," clsfst (List.length pairposset)
+
+        | MarkBase1(clscnt, markassoc, baseassoc) ->
+            Format.printf "#MarkBase1 %d@,@[<v2>@," clscnt;
+            Format.printf "mark: @[[%a]@]@," (Format.pp_print_list ~pp_sep pp_mark_record) markassoc;
+            Format.printf "base: @[[%a]@]" (Format.pp_print_list ~pp_sep pp_base_record) baseassoc;
+            Format.printf "@]@,"
         );
+        Format.printf "@]@,";
+        Format.printf "@]";
       end
