@@ -5022,7 +5022,7 @@ module Encode = struct
     Printf.printf "# make_font_file: update 'checkSumAdjustment'\n";
 *)
     let checkSumAdjustment =
-      let temp = (!% 0xB1B0AFBA) -% chksum in
+      let temp = (!%% 0xB1B0AFBAL) -% chksum in
         if WideInt.is_neg temp then temp +% (!% (1 lsl 32)) else temp
     in
     match !offset_checkSumAdjustment_ref with
