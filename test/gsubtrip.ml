@@ -6,6 +6,7 @@ type position =
   | Single1 of Otfm.glyph_id list * Otfm.value_record
   | Pair1 of Otfm.glyph_id * (Otfm.glyph_id * Otfm.value_record * Otfm.value_record) list
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
+  | MarkBase1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.base_record) list
 
 
 let skip gid _ = gid
@@ -32,9 +33,8 @@ let f_pair2 _ _ acc _ =
   Format.printf "<Pair2>@,";
   acc
 
-let f_markbase1 _ acc _ _ =
-  Format.printf "<MarkBase1>@,";
-  acc
+let f_markbase1 classCount acc markassoc baseassoc =
+  MarkBase1(classCount, markassoc, baseassoc) :: acc
 
 
 let pp_sep fmt () =
@@ -124,7 +124,19 @@ let main filename script type3tag type4tag gpostag =
 
 
 let pp_ligature_set fmt (gidtail, gid) =
-  Format.printf "@[[%a]@] ---> %d@," (Format.pp_print_list ~pp_sep Format.pp_print_int) gidtail gid
+  Format.fprintf fmt "@[[%a]@] ---> %d@," (Format.pp_print_list ~pp_sep Format.pp_print_int) gidtail gid
+
+
+let pp_anchor fmt (dux, duy, _) =
+  Format.fprintf fmt "(%d, %d)" dux duy
+
+
+let pp_mark_record fmt (gid, (markcls, anch)) =
+  Format.fprintf fmt "%d --> %d %a" gid markcls pp_anchor anch
+
+
+let pp_base_record fmt (gid, ancharr) =
+  Format.fprintf fmt "%d --> {%a}" gid (Format.pp_print_list ~pp_sep pp_anchor) (Array.to_list ancharr)
 
 
 let () =
@@ -168,6 +180,12 @@ let () =
 
         | Pair2(clsfst, pairposset) ->
             Format.printf "#Pair2 %d -> (length: %d)@," clsfst (List.length pairposset)
+
+        | MarkBase1(clscnt, markassoc, baseassoc) ->
+            Format.printf "#MarkBase1 %d@,@[<v2>@," clscnt;
+            Format.printf "mark: @[[%a]@]@," (Format.pp_print_list ~pp_sep pp_mark_record) markassoc;
+            Format.printf "base: @[[%a]@]" (Format.pp_print_list ~pp_sep pp_base_record) baseassoc;
+            Format.printf "@]@,"
         );
         Format.printf "@]@,";
         Format.printf "@]";
