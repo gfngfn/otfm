@@ -2149,12 +2149,18 @@ type mark_record = mark_class * anchor
 type base_record = anchor array
   (* -- indexed by mark_class -- *)
 
+type component_record = anchor array
+  (* -- indexed by mark_class -- *)
+
+type ligature_attach = component_record list
+
 type gpos_subtable =
   | SinglePosAdjustment1 of glyph_id list * value_record
   | SinglePosAdjustment2 of (glyph_id * value_record) list
   | PairPosAdjustment1   of (glyph_id * (glyph_id * value_record * value_record) list) list
   | PairPosAdjustment2   of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
   | MarkBasePos1         of int * (glyph_id * mark_record) list * (glyph_id * base_record) list
+  | MarkLigPos1          of int * (glyph_id * mark_record) list * (glyph_id * ligature_attach) list
   (* temporary; must contain more kinds of adjustment subtables *)
 
 
@@ -2335,26 +2341,52 @@ let d_mark_to_base_attachment_subtable d =
   | _ -> err_version d (!% posFormat)
 
 
+let d_component_record = d_base_record
+
+
+let d_ligature_attach classCount d : ligature_attach ok =
+  let offset_LigatureAttach = cur_pos d in
+  d_list (d_component_record offset_LigatureAttach classCount) d
+
+
+let d_ligature_array classCount d : (ligature_attach list) ok =
+  let offset_LigatureArray = cur_pos d in
+  d_list (d_fetch offset_LigatureArray (d_ligature_attach classCount)) d
+
+
+let d_mark_to_ligature_attachment_subtable d =
+  let offset_MarkLigPos = cur_pos d in
+  d_uint16 d >>= fun posFormat ->
+  match posFormat with
+  | 1 ->
+      d_fetch offset_MarkLigPos d_coverage d >>= fun markCoverage ->
+      d_fetch offset_MarkLigPos d_coverage d >>= fun ligatureCoverage ->
+      d_uint16 d >>= fun classCount ->
+      d_fetch offset_MarkLigPos (d_mark_array classCount) d >>= fun markArray ->
+      d_fetch offset_MarkLigPos (d_ligature_array classCount) d >>= fun ligatureArray ->
+      combine_coverage d markCoverage markArray >>= fun mark_assoc ->
+      combine_coverage d ligatureCoverage ligatureArray >>= fun ligature_assoc ->
+      return (MarkLigPos1(classCount, mark_assoc, ligature_assoc))
+
+  | _ -> err_version d (!% posFormat)
+
 let lookup_gpos_exact offsetlst_SubTable lookupType d : (gpos_subtable list) ok =
   match lookupType with
   | 1 ->  (* -- Single adjustment -- *)
-      seek_every_pos offsetlst_SubTable d_single_adjustment_subtable d >>= fun subtablelst ->
-      return subtablelst
+      seek_every_pos offsetlst_SubTable d_single_adjustment_subtable d
 
   | 2 ->  (* -- Pair adjustment -- *)
       Format.fprintf fmtGSUB "number of subtables = %d\n" (List.length offsetlst_SubTable);  (* for debug *)
-      seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d >>= fun subtablelst ->
-      return subtablelst
+      seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d
 
   | 3 ->  (* -- Cursive attachment -- *)
       return []  (* temporarily unsupported *)
 
   | 4 ->  (* -- MarkToBase attachment -- *)
-      seek_every_pos offsetlst_SubTable d_mark_to_base_attachment_subtable d >>= fun subtablelst ->
-      return subtablelst
+      seek_every_pos offsetlst_SubTable d_mark_to_base_attachment_subtable d
 
-  | 5 ->
-      return []  (* temporarily unsupported *)
+  | 5 ->  (* -- MarkToLigature attachment -- *)
+      seek_every_pos offsetlst_SubTable d_mark_to_ligature_attachment_subtable d
 
   | 6 ->
       return []  (* temporarily unsupported *)
@@ -2418,14 +2450,18 @@ type 'a folding_gpos_pair2 = class_definition list -> class_definition list -> '
 
 type 'a folding_gpos_markbase1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * base_record) list -> 'a
 
+type 'a folding_gpos_marklig1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * ligature_attach) list -> 'a
+
+
 let rec fold_subtables_gpos
     (f_single1 : 'a folding_gpos_single1)
     (f_single2 : 'a folding_gpos_single2)
     (f_pair1 : 'a folding_gpos_pair1)
     (f_pair2 : 'a folding_gpos_pair2)
     (f_markbase1 : 'a folding_gpos_markbase1)
+    (f_marklig1 : 'a folding_gpos_marklig1)
     (init : 'a) (subtablelst : gpos_subtable list) : 'a =
-  let iter = fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 in
+  let iter = fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 f_marklig1 in
     match subtablelst with
     | [] ->
         init
@@ -2450,6 +2486,10 @@ let rec fold_subtables_gpos
         let initnew = f_markbase1 classCount init mark_assoc base_assoc in
           iter initnew tail
 
+    | MarkLigPos1(classCount, mark_assoc, ligature_assoc) :: tail ->
+        let initnew = f_marklig1 classCount init mark_assoc ligature_assoc in
+          iter initnew tail
+
 
 let gpos feature
     ?single1:(f_single1 = (fun x _ _ -> x))
@@ -2457,10 +2497,11 @@ let gpos feature
     ?pair1:(f_pair1 = (fun x _ -> x))
     ?pair2:(f_pair2 = (fun _ _ x _ -> x))
     ?markbase1:(f_markbase1 = (fun _ x _ _ -> x))
+    ?marklig1:(f_marklig1 = (fun _ x _ _ -> x))
     init =
   gxxx_subtable_list lookup_gpos feature >>= fun subtablelstlst ->
   let subtablelst = List.concat subtablelstlst in
-  return (fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 init subtablelst)
+  return (fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 f_marklig1 init subtablelst)
 
 
 (* -- MATH table -- *)
