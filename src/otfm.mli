@@ -727,6 +727,11 @@ type mark_record = mark_class * anchor
 type base_record = anchor array
   (* -- indexed by mark_class -- *)
 
+type component_record = anchor array
+  (* -- indexed by mark_class -- *)
+
+type ligature_attach = component_record list
+
 type 'a folding_gpos_single1 = 'a -> glyph_id list -> value_record -> 'a
 
 type 'a folding_gpos_single2 = 'a -> glyph_id * value_record -> 'a
@@ -737,12 +742,18 @@ type 'a folding_gpos_pair2 = class_definition list -> class_definition list -> '
 
 type 'a folding_gpos_markbase1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * base_record) list -> 'a
 
+type 'a folding_gpos_marklig1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * ligature_attach) list -> 'a
+
+type 'a folding_gpos_markmark1 = 'a folding_gpos_markbase1
+
 val gpos : gpos_feature ->
   ?single1:'a folding_gpos_single1 ->
   ?single2:'a folding_gpos_single2 ->
   ?pair1:'a folding_gpos_pair1 ->
   ?pair2:'a folding_gpos_pair2 ->
   ?markbase1: 'a folding_gpos_markbase1 ->
+  ?marklig1: 'a folding_gpos_marklig1 ->
+  ?markmark1: 'a folding_gpos_markmark1 ->
   'a -> ('a, error) result
 
 type math_value_record = int * device_table option

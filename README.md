@@ -18,11 +18,11 @@ The `otfm` package distributed via this repository is an extension of
 [D. Bünzli's original version](https://github.com/dbuenzli/otfm).
 It newly supports:
 
-* TrueType Collection fonts
-* `GPOS` tables (LookupType 1, 2, and 9)
-* `GSUB` tables (LookupType 1, 3, and 4)
-* `CFF` tables
-
+* decoding TrueType Collection fonts,
+* decoding `GPOS` tables (LookupType 1, 2, 4, 5, 6, and 9),
+* decoding `GSUB` tables (LookupType 1, 3, and 4),
+* decoding `CFF` tables, and
+* encoding subset of OpenType fonts that have TrueType outlines (for PDF).
 
 ## Installation (of the original version)
 
