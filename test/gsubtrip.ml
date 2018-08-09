@@ -7,6 +7,7 @@ type position =
   | Pair1 of Otfm.glyph_id * (Otfm.glyph_id * Otfm.value_record * Otfm.value_record) list
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
   | MarkBase1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.base_record) list
+  | MarkMark1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.base_record) list
 
 
 let skip gid _ = gid
@@ -35,6 +36,10 @@ let f_pair2 _ _ acc _ =
 
 let f_markbase1 classCount acc markassoc baseassoc =
   MarkBase1(classCount, markassoc, baseassoc) :: acc
+
+
+let f_markmark1 classCount acc markassoc mark2assoc =
+  MarkMark1(classCount, markassoc, mark2assoc) :: acc
 
 
 let pp_sep fmt () =
@@ -96,7 +101,7 @@ let decode_gpos scripttag tag d =
 
   pickup featurelst (fun feature -> Otfm.gpos_feature_tag feature = tag)
     (`Msg(str "GPOS does not contain Feature tag '%s' for '%s'" tag scripttag)) >>= fun feature_kern ->
-  Otfm.gpos feature_kern ~single1:f_single1 ~single2:f_single2 ~pair1:f_pair1 ~pair2:f_pair2 ~markbase1:f_markbase1 [] >>= fun gposres ->
+  Otfm.gpos feature_kern ~single1:f_single1 ~single2:f_single2 ~pair1:f_pair1 ~pair2:f_pair2 ~markbase1:f_markbase1 ~markmark1:f_markmark1 [] >>= fun gposres ->
   return gposres
 
 
@@ -137,6 +142,13 @@ let pp_mark_record fmt (gid, (markcls, anch)) =
 
 let pp_base_record fmt (gid, ancharr) =
   Format.fprintf fmt "%d --> {%a}" gid (Format.pp_print_list ~pp_sep pp_anchor) (Array.to_list ancharr)
+
+
+let print_mark s clscnt markassoc dataassoc =
+  Format.printf "#MarkToData (classCount = %d)@,@[<v2>@," clscnt;
+  Format.printf "mark: @[[%a]@]@," (Format.pp_print_list ~pp_sep pp_mark_record) markassoc;
+  Format.printf "%s: @[[%a]@]" s (Format.pp_print_list ~pp_sep pp_base_record) dataassoc;
+  Format.printf "@]@,"
 
 
 let () =
@@ -182,10 +194,10 @@ let () =
             Format.printf "#Pair2 %d -> (length: %d)@," clsfst (List.length pairposset)
 
         | MarkBase1(clscnt, markassoc, baseassoc) ->
-            Format.printf "#MarkBase1 %d@,@[<v2>@," clscnt;
-            Format.printf "mark: @[[%a]@]@," (Format.pp_print_list ~pp_sep pp_mark_record) markassoc;
-            Format.printf "base: @[[%a]@]" (Format.pp_print_list ~pp_sep pp_base_record) baseassoc;
-            Format.printf "@]@,"
+            print_mark "base" clscnt markassoc baseassoc
+
+        | MarkMark1(clscnt, markassoc, mark2assoc) ->
+            print_mark "mark2" clscnt markassoc mark2assoc
         );
         Format.printf "@]@,";
         Format.printf "@]";
