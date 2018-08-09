@@ -9,21 +9,21 @@ open OtfUtils
 
 module WideInt = WideInt
 
-(* OpenType tags *)
+(* -- OpenType tags -- *)
 
 type tag = wint
 
 module Tag = struct
   type t = tag
 
-  (* OpenType version tags. *)
+  (* -- OpenType version tags -- *)
 
   let v_wOFF = !%% 0x774F4646L
   let v_OTTO = !%% 0x4F54544FL
   let v_ttcf = !%% 0x74746366L
-  let v_true = !%% 0x74727565L (* may happen in the wild. *)
+  let v_true = !%% 0x74727565L (* -- may happen in the wild. -- *)
 
-  (* Required common tables tags *)
+  (* -- Required common tables tags -- *)
 
   let cmap = !%% 0x636D6170L
   let head = !%% 0x68656164L
@@ -36,7 +36,7 @@ module Tag = struct
 
   let t_common = [ cmap; head; hhea; hmtx; maxp; name; os2; post ]
 
-  (* TTF font table tags *)
+  (* -- TTF font table tags -- *)
 
   let cvt  = !%% 0x63767420L
   let fpgm = !%% 0x6670676DL
@@ -44,18 +44,18 @@ module Tag = struct
   let loca = !%% 0x6C6F6361L
   let prep = !%% 0x70726570L
 
-  (* CFF font table tags *)
+  (* -- CFF font table tags -- *)
 
   let cff  = !%% 0x43464620L
   let vorg = !%% 0x564F5247L
 
-  (* Bitmap glyph tables *)
+  (* -- Bitmap glyph tables -- *)
 
   let ebdt = !%% 0x45424454L
   let eblc = !%% 0x45424C43L
   let ebsc = !%% 0x45425343L
 
-  (* Optional tables. *)
+  (* -- Optional tables -- *)
 
   let dsig = !%% 0x44534947L
   let gasp = !%% 0x67617370L
@@ -67,7 +67,7 @@ module Tag = struct
   let vhea = !%% 0x76686561L
   let vmtx = !%% 0x766D7478L
 
-  (* Advanced Open Type font layout tables *)
+  (* -- Advanced Open Type font layout tables -- *)
 
   let base = !%% 0x42415345L
   let gdef = !%% 0x47444546L
@@ -76,12 +76,12 @@ module Tag = struct
   let jstf = !%% 0x4A535446L
   let math = !%% 0x4d415448L
 
-  (* Functions *)
+  (* -- Functions -- *)
 
   let of_bytes s =
     let open WideInt in
       if String.length s <> 4 then
-        invalid_arg (err_invalid_tag s)
+        invalid_arg(err_invalid_tag s)
       else
         let b0 = of_byte (String.get s 0) in
         let b1 = of_byte (String.get s 1) in
@@ -102,14 +102,14 @@ module Tag = struct
   let pp ppf t = pp ppf "'%s'" (to_bytes t)
 end
 
-(* Unicode code points *)
+(* -- Unicode code points -- *)
 
 type cp = int
 type cp_range = cp * cp
 let is_cp i = 0x0000 <= i && i <= 0x10FFFF
 let pp_cp ppf cp = Format.fprintf ppf "U+%04X" cp
 
-(* Decode *)
+(* -- Decode -- *)
 
 type error_ctx = [ `Table of tag | `Offset_table | `Table_directory ]
 type error =
@@ -282,9 +282,6 @@ let pp_error ppf = function
     pp ppf "@[No@ glyph@ for@ encoding@]"
 | `Missing_head_table_for_encoding ->
     pp ppf "@[Missing@ 'head'@ table@ for@ encoding@]"
-(* N.B. Offsets and lengths are decoded as OCaml ints. On 64 bits
-   platforms they fit, on 32 bits we are limited by string size
-   anyway. *)
 
 type flavour = TTF_true | TTF_OT | CFF
 type src = [ `String of string ]
@@ -303,16 +300,16 @@ type decoder_state =
 
 type decoder =
   {
-    i                           : string;                     (* input data. *)
-    i_max                       : int;                        (* input maximal position. *)
-    mutable i_pos               : int;                        (* input current position. *)
-    mutable state               : decoder_state;              (* decoder state. *)
+    i                           : string;                     (* input data.                *)
+    i_max                       : int;                        (* input maximal position.    *)
+    mutable i_pos               : int;                        (* input current position.    *)
+    mutable state               : decoder_state;              (* decoder state.             *)
     mutable ctx                 : error_ctx;                  (* the current error context. *)
-    mutable flavour             : flavour;                    (* decoded flavour. *)
-    mutable tables              : (tag * int * int) list;     (* decoded table records. *)
-    mutable loca_pos_and_format : (int * loc_format) option;  (* for TTF fonts, lazy init. *)
-    mutable glyf_pos            : int option;                 (* for TTF fonts, lazy init. *)
-    mutable buf                 : Buffer.t;                   (* internal buffer. *)
+    mutable flavour             : flavour;                    (* decoded flavour.           *)
+    mutable tables              : (tag * int * int) list;     (* decoded table records.     *)
+    mutable loca_pos_and_format : (int * loc_format) option;  (* for TTF fonts, lazy init.  *)
+    mutable glyf_pos            : int option;                 (* for TTF fonts, lazy init.  *)
+    mutable buf                 : Buffer.t;                   (* internal buffer.           *)
   }
 
 type ttc_element = int * decoder
@@ -421,7 +418,7 @@ let d_int32 d =
     return (if i > of_int64 0x7FFFFFFFL then i -% of_int64 0x10000000L else i)
 
 
-let d_time d =                       (* LONGDATETIME as a unix time stamp. *)
+let d_time d =                       (* -- LONGDATETIME as a unix time stamp. -- *)
   if miss d 8 then
     err_eoi d
   else
@@ -434,7 +431,7 @@ let d_time d =                       (* LONGDATETIME as a unix time stamp. *)
     let s2 = !% ((b4 lsl 8) lor b5) in
     let s3 = !% ((b6 lsl 8) lor b7) in
     let v = WideInt.((s0 lsl 48) lor (s1 lsl 32) lor (s2 lsl 16) lor s3) in
-    let unix_epoch = !%% 2_082_844_800L (* in seconds since 1904-01-01 00:00:00 *) in
+    let unix_epoch = !%% 2_082_844_800L (* -- in seconds since 1904-01-01 00:00:00 -- *) in
     return (v -% unix_epoch)
 
 
@@ -450,7 +447,7 @@ let d_f2dot14 d =
   d_int16 d >>= fun v ->
   return ((float v) /. 16384.0)
 
-let d_utf_16be len (* in bytes *) d =            (* returns an UTF-8 string. *)
+let d_utf_16be len (* -- in bytes -- *) d =            (* -- returns an UTF-8 string. -- *)
   let rec add_utf_8 b i = function
     | `Malformed(_) -> add_utf_8 b i (`Uchar(Uutf.u_rep))
     | `Uchar(u)     -> begin Uutf.Buffer.add_utf_8 b u; b end
@@ -621,11 +618,11 @@ let d_version is_ttc_element d =
     | t                           -> err (`Unknown_flavour(t))
 
 
-let d_structure d =                   (* offset table and table directory. *)
-  d_uint16       d >>= fun count ->                          (* numTables. *)
+let d_structure d =                   (* -- offset table and table directory. -- *)
+  d_uint16       d >>= fun numTables ->
   d_skip (3 * 2) d >>= fun () ->
-  set_ctx d `Table_directory;                          (* table directory. *)
-  d_table_records d count
+  set_ctx d `Table_directory;
+  d_table_records d numTables
 
 
 let d_ttc_header d : (ttc_element list) ok =
@@ -707,7 +704,7 @@ let table_raw d tag =
     | Some(len) -> d_bytes len d >>= fun bytes -> return (Some(bytes))
 
 
-(* convenience *)
+(* -- convenience -- *)
 
 let glyph_count d =
   init_decoder d >>=
@@ -717,7 +714,7 @@ let glyph_count d =
   return count
 
 
-let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
+let postscript_name d = (* -- rigorous postscript name lookup, see OT spec p. 39 -- *)
   init_decoder d >>=
   seek_required_table Tag.name d >>= fun () ->
   let pos_name = cur_pos d in
@@ -760,7 +757,7 @@ let postscript_name d = (* rigorous postscript name lookup, see OT spec p. 39 *)
   loop ncount ()
 
 
-(* cmap table *)
+(* -- cmap table -- *)
 
 type glyph_id = int
 type map_kind = [ `Glyph | `Glyph_range ]
@@ -782,9 +779,9 @@ let d_cmap_4_ranges d f acc u0s u1s delta offset count =       (* ugly. *)
     let u1 = u1s.(i) in if not (is_cp u1) then err (`Invalid_cp u1) else
     if u0 > u1 then err (`Invalid_cp_range (u0, u1)) else
     if offset = 0 then begin
-      (* The arithmetic must be performed mod 65536, this is problematic
-         for Otfm's interface semantics. We need to split the range
-         if the glyph range spans the bounds. *)
+      (* -- The arithmetic must be performed mod 65536, this is problematic
+            for Otfm's interface semantics. We need to split the range
+            if the glyph range spans the bounds. -- *)
       let g0 = u0 + delta in
       let g1 = u1 + delta in
       if g0 < 0 && g1 >= 0 then
@@ -794,7 +791,7 @@ let d_cmap_4_ranges d f acc u0s u1s delta offset count =       (* ugly. *)
       if g0 <= 65535 && g1 > 65535 then
         let acc' = f acc `Glyph_range (u0, 65535 - delta) g0 in
         loop (f acc' `Glyph_range (65536 - delta, u1) 0) i'
-      else (* glyph range is inside [0;65535] or completly outside *)
+      else (* -- glyph range is inside [0;65535] or completly outside -- *)
       loop (f acc `Glyph_range (u0, u1) (g0 land 65535)) i'
     end else begin
       let rec garray acc u u1 () =
@@ -862,40 +859,17 @@ type cmap_subtable = (decoder * int) * (int * int * int)
 
 
 let rec d_encoding_record offset_cmap d : cmap_subtable ok =
-  d_uint16     d            >>= fun platformID ->
-  Format.fprintf debugfmt "platformID = %d\n" platformID;  (* for debug *)
-  d_uint16     d            >>= fun encodingID ->
-  Format.fprintf debugfmt "encodingID = %d\n" encodingID;  (* for debug *)
+  d_uint16 d >>= fun platformID ->
+  d_uint16 d >>= fun encodingID ->
   d_fetch_long offset_cmap d_uint16 d >>= fun (offset, format) ->
-  Format.fprintf debugfmt "offset = %d\n" offset;  (* for debug *)
-  Format.fprintf debugfmt "format = %d\n" format;  (* for debug *)
   return ((d, offset), (platformID, encodingID, format))
-(*
-  let cur = cur_pos d in
-  seek_table_pos pos d >>= fun () ->
-  d_uint16           d >>= fun fmt ->
-  seek_pos cur       d >>= fun () ->
-  d_cmap_records d (count - 1) ((pos, pid, eid, fmt) :: acc)
-*)
-
-(*
-let select_cmap cmaps =
-  let rec loop f sel =
-    function
-    | (_, _, _, (4 | 12 | 13 as f') as c) :: cs
-        when f' > f -> loop f (Some(c)) cs
-    | _ :: cs       -> loop f sel cs
-    | []            -> sel
-  in
-    loop min_int None cmaps
-*)
 
 
 let cmap d : (cmap_subtable list) ok =
   init_decoder d >>=
   seek_required_table Tag.cmap d >>= fun () ->
   let offset_cmap = cur_pos d in
-  d_uint16 d >>= fun version ->                           (* cmap header. *)
+  d_uint16 d >>= fun version ->                           (* -- cmap header. -- *)
   if version <> 0 then err_version d (!% version) else
   d_list (d_encoding_record offset_cmap) d >>= fun rawsubtbllst ->
   let subtbllst =
@@ -905,10 +879,10 @@ let cmap d : (cmap_subtable list) ok =
       | (4 | 12 | 13) ->
           begin
             match (pid, eid) with
-            | (0, _)   (* Unicode *)
-            | (3, 1)   (* Windows, UCS-2 *)
-            | (3, 10)  (* Windows, UCS-4 *)
-            | (1, _)   (* Macintosh *)
+            | (0, _)   (* -- Unicode -- *)
+            | (3, 1)   (* -- Windows, UCS-2 -- *)
+            | (3, 10)  (* -- Windows, UCS-4 -- *)
+            | (1, _)   (* -- Macintosh -- *)
                 -> true
 
             | _ -> false
@@ -920,7 +894,7 @@ let cmap d : (cmap_subtable list) ok =
   return subtbllst
 
 
-let cmap_subtable_ids (subtbl : cmap_subtable) =
+let cmap_subtable_ids (subtbl : cmap_subtable) : int * int * int =
   let (_, ids) = subtbl in
     ids
 
@@ -939,26 +913,7 @@ let cmap_subtable (subtbl : cmap_subtable) f acc =
   | _  -> err (`Unsupported_cmap_format(format))
 
 
-(*
-  d_uint16 d >>= fun count ->                               (* numTables. *)
-  d_cmap_records d count [] >>= fun cmaps ->
-  match select_cmap cmaps with
-  | None ->
-      let drop_pos (_, pid, eid, fmt) = (pid, eid, fmt) in
-      err (`Unsupported_cmaps (List.map drop_pos cmaps))
-
-  | Some(pos, pid, eid, fmt) ->
-      let d_cmap =
-        match fmt with
-        | 4  -> d_cmap_4
-        | 12 -> d_cmap_12
-        | 13 -> d_cmap_13
-        | _  -> assert false
-      in
-      seek_table_pos pos d >>= d_cmap (pid, eid, fmt) d f acc
-*)
-
-(* glyf table *)
+(* -- glyf table -- *)
 
 type glyf_loc = int
 
@@ -986,76 +941,99 @@ let init_glyf d () =
 
 let d_rev_end_points d ccount =
   let rec loop i acc =
-    if i <= 0 then return acc else
-    d_uint16 d >>= fun e -> loop (i - 1) (e :: acc)
+    if i <= 0 then
+      return acc
+    else
+      d_uint16 d >>= fun e ->
+      loop (i - 1) (e :: acc)
   in
   loop ccount []
 
+
 let d_rev_flags d pt_count =
   let rec loop i acc =
-    if i <= 0 then return acc else
-    d_uint8 d >>= fun f ->
-    if f land 8 = 0 then loop (i - 1) (f :: acc) else
-    d_uint8 d >>= fun n ->
-    let rec push n acc = if n = 0 then acc else push (n - 1) (f :: acc) in
-    loop (i - 1 - n) (push (n + 1) acc)
+    if i <= 0 then
+      return acc
+    else
+      d_uint8 d >>= fun f ->
+      if f land 8 = 0 then
+        loop (i - 1) (f :: acc)
+      else
+        d_uint8 d >>= fun n ->
+        let rec push n acc =
+          if n = 0 then acc else push (n - 1) (f :: acc)
+        in
+        loop (i - 1 - n) (push (n + 1) acc)
   in
   loop pt_count []
+
 
 let d_rev_coord short_mask same_mask d flags =
   let rec loop x acc = function
   | f :: fs ->
-      if f land short_mask > 0 then begin
-        d_uint8 d >>= fun dx ->
-        let x = x + (if f land same_mask > 0 then dx else -dx) in
-        loop x (x :: acc) fs
-      end else begin
-        if f land same_mask > 0 then loop x (x :: acc) fs else
-        d_int16 d >>= fun dx ->
-        let x = x + dx in
-        loop x (x :: acc) fs
-      end
-  | [] -> return acc
+      if f land short_mask > 0 then
+        begin
+          d_uint8 d >>= fun dx ->
+          let x = x + (if f land same_mask > 0 then dx else -dx) in
+          loop x (x :: acc) fs
+        end
+      else
+        begin
+          if f land same_mask > 0 then
+            loop x (x :: acc) fs
+          else
+            d_int16 d >>= fun dx ->
+            let x = x + dx in
+            loop x (x :: acc) fs
+        end
+
+  | [] ->
+      return acc
   in
   loop 0 [] flags
+
 
 let d_rev_xs d flags = d_rev_coord 2 16 d flags
 let d_rev_ys d flags = d_rev_coord 4 32 d flags
 
+
 let d_simple_glyph d ccount =
-  if ccount = 0 then return [] else
-  d_rev_end_points d ccount
-  >>= fun rev_epts ->
-  let pt_count = match rev_epts with [] -> 0 | e :: _ -> e + 1 in
-  d_uint16 d
-  >>= fun ins_len -> d_skip ins_len d
-  >>= fun () -> d_rev_flags d pt_count
-  >>= fun rev_flags ->
-  let flags = List.rev rev_flags in
-  d_rev_xs d flags
-  >>= fun rxs -> d_rev_ys d flags
-  >>= fun rys ->
-  let rec combine repts flags rxs rys i acc =
-    match flags with
-    | []      -> acc
-    | f :: fs ->
-        let (new_contour, repts) =
-          match repts with
-          | []                 -> (false, [])
-          | e :: es when e = i -> (true, es)
-          | es                 -> (false, es)
-        in
-        match acc with
-        | c :: cs ->
-            let new_pt = (f land 1 > 0,  List.hd rxs, List.hd rys) in
-            let acc' =
-              if new_contour then [new_pt] :: c :: cs else
-              (new_pt :: c) :: cs
-            in
-            combine repts fs (List.tl rxs) (List.tl rys) (i - 1) acc'
-        | _ -> assert false
-  in
-  return (combine (List.tl rev_epts) rev_flags rxs rys (pt_count - 1) ([] :: []))
+  if ccount = 0 then
+    return []
+  else
+    d_rev_end_points d ccount >>= fun rev_epts ->
+    let pt_count = match rev_epts with [] -> 0 | e :: _ -> e + 1 in
+    d_uint16 d >>= fun ins_len ->
+    d_skip ins_len d >>= fun () ->
+    d_rev_flags d pt_count >>= fun rev_flags ->
+    let flags = List.rev rev_flags in
+    d_rev_xs d flags >>= fun rxs ->
+    d_rev_ys d flags >>= fun rys ->
+    let rec combine repts flags rxs rys i acc =
+      match flags with
+      | [] ->
+          acc
+
+      | f :: fs ->
+          let (new_contour, repts) =
+            match repts with
+            | []                 -> (false, [])
+            | e :: es when e = i -> (true, es)
+            | es                 -> (false, es)
+          in
+          match acc with
+          | c :: cs ->
+              let new_pt = (f land 1 > 0,  List.hd rxs, List.hd rys) in
+              let acc' =
+                if new_contour then [new_pt] :: c :: cs else
+                (new_pt :: c) :: cs
+              in
+              combine repts fs (List.tl rxs) (List.tl rys) (i - 1) acc'
+
+          | _ ->
+              assert false
+    in
+    return (combine (List.tl rev_epts) rev_flags rxs rys (pt_count - 1) ([] :: []))
 
 
 let d_composite_glyph d =
@@ -1113,22 +1091,23 @@ let glyf d loc =
     return (`Simple(contours), (xmin, ymin, xmax, ymax))
 
 
-(* head table *)
+(* -- head table -- *)
 
 type head = {
-  head_font_revision : wint;
-  head_flags : int;
-  head_units_per_em : int;
-  head_created : wint;
-  head_modified : wint;
-  head_xmin : int;
-  head_ymin : int;
-  head_xmax : int;
-  head_ymax : int;
-  head_mac_style : int;
-  head_lowest_rec_ppem : int;
+  head_font_revision       : wint;
+  head_flags               : int;
+  head_units_per_em        : int;
+  head_created             : wint;
+  head_modified            : wint;
+  head_xmin                : int;
+  head_ymin                : int;
+  head_xmax                : int;
+  head_ymax                : int;
+  head_mac_style           : int;
+  head_lowest_rec_ppem     : int;
   head_index_to_loc_format : loc_format;
 }
+
 
 let head d =
   init_decoder d >>=
@@ -1136,7 +1115,7 @@ let head d =
   d_uint32 d >>= fun version ->
   if version <> !%% 0x00010000L then err_version d version else
   d_uint32 d >>= fun head_font_revision ->
-  d_skip 8 d >>= fun () -> (* checkSumAdjustement, magicNumber *)
+  d_skip 8 d >>= fun () -> (* -- checkSumAdjustement, magicNumber -- *)
   d_uint16 d >>= fun head_flags ->
   d_uint16 d >>= fun head_units_per_em ->
   d_time   d >>= fun head_created ->
@@ -1147,7 +1126,7 @@ let head d =
   d_int16  d >>= fun head_ymax ->
   d_uint16 d >>= fun head_mac_style ->
   d_uint16 d >>= fun head_lowest_rec_ppem ->
-  d_skip 2 d >>= fun () -> (* fontDirectionHint *)
+  d_skip 2 d >>= fun () -> (* -- fontDirectionHint -- *)
   d_uint16 d >>= fun locfmt ->
   begin
     match locfmt with
@@ -1161,20 +1140,22 @@ let head d =
     head_mac_style; head_lowest_rec_ppem; head_index_to_loc_format;
   }
 
-(* hhea table *)
+
+(* -- hhea table -- *)
 
 type hhea = {
-  hhea_ascender : int;
-  hhea_descender : int;
-  hhea_line_gap : int;
-  hhea_advance_width_max : int;
-  hhea_min_left_side_bearing : int;
+  hhea_ascender               : int;
+  hhea_descender              : int;
+  hhea_line_gap               : int;
+  hhea_advance_width_max      : int;
+  hhea_min_left_side_bearing  : int;
   hhea_min_right_side_bearing : int;
-  hhea_xmax_extent : int;
-  hhea_caret_slope_rise : int;
-  hhea_caret_slope_run : int;
-  hhea_caret_offset : int;
+  hhea_xmax_extent            : int;
+  hhea_caret_slope_rise       : int;
+  hhea_caret_slope_run        : int;
+  hhea_caret_offset           : int;
 }
+
 
 let hhea d =
   init_decoder d >>=
@@ -1198,13 +1179,15 @@ let hhea d =
     hhea_caret_offset;
   }
 
-(* hmtx table *)
+
+(* -- hmtx table -- *)
 
 let d_hm_count d =
   seek_required_table Tag.hhea d () >>= fun () ->
   d_skip (4 + 15 * 2) d >>= fun () ->
   d_uint16            d >>= fun hm_count ->
   return hm_count
+
 
 let rec d_hmetric goffset i f acc last_adv d =
   if i = 0 then return (acc, last_adv) else
@@ -1213,11 +1196,13 @@ let rec d_hmetric goffset i f acc last_adv d =
   let acc' = f acc (goffset - i) adv lsb in
   d_hmetric goffset (i - 1) f acc' adv d
 
+
 let rec d_hlsb goffset i f acc adv d =
   if i = 0 then return acc else
   d_int16 d >>= fun lsb ->
   let acc' = f acc (goffset - i) adv lsb in
   d_hlsb goffset (i - 1) f acc' adv d
+
 
 let hmtx d f acc =
   glyph_count d >>= fun glyph_count ->
@@ -1245,24 +1230,25 @@ let hmtx_single d gid =
     return (aw, lsb)
 
 
-(* maxp table *)
+(* -- maxp table -- *)
 
 type maxp = {
-  maxp_num_glyphs : int;
-  maxp_max_points : int;
-  maxp_max_contours : int;
-  maxp_max_composite_points : int;
-  maxp_max_composite_contours : int;
-  maxp_max_zones : int;
-  maxp_max_twilight_points : int;
-  maxp_max_storage : int;
-  maxp_max_function_defs : int;
-  maxp_max_instruction_defs : int;
-  maxp_max_stack_elements : int;
+  maxp_num_glyphs               : int;
+  maxp_max_points               : int;
+  maxp_max_contours             : int;
+  maxp_max_composite_points     : int;
+  maxp_max_composite_contours   : int;
+  maxp_max_zones                : int;
+  maxp_max_twilight_points      : int;
+  maxp_max_storage              : int;
+  maxp_max_function_defs        : int;
+  maxp_max_instruction_defs     : int;
+  maxp_max_stack_elements       : int;
   maxp_max_size_of_instructions : int;
-  maxp_max_component_elements : int;
-  maxp_max_component_depth : int;
+  maxp_max_component_elements   : int;
+  maxp_max_component_depth      : int;
 }
+
 
 let maxp d =
   init_decoder d >>=
@@ -1300,10 +1286,11 @@ let maxp d =
     maxp_max_component_depth;
   }
 
-(* name table *)
 
-(* Source: https://skia.googlecode.com/svn/trunk/src/sfnt/SkOTTable_name.cpp
-   BSD3 licensed (c) 2011 Google Inc. *)
+(* -- name table -- *)
+
+(* -- Source: https://skia.googlecode.com/svn/trunk/src/sfnt/SkOTTable_name.cpp
+      BSD3 licensed (c) 2011 Google Inc. -- *)
 let lcid_to_bcp47 = [
   0x0401, "ar-sa";  0x0402, "bg-bg";  0x0403, "ca-es";  0x0404, "zh-tw";
   0x0405, "cs-cz";  0x0406, "da-dk";  0x0407, "de-de";  0x0408, "el-gr";
@@ -1426,45 +1413,47 @@ let name d f acc =
   seek_pos cpos d >>= fun () ->
   d_name_records pos_name soff ncount f acc langs [] d
 
-(* OS/2 table *)
 
-type os2 =
-  { os2_x_avg_char_width : int;
-    os2_us_weight_class : int;
-    os2_us_width_class : int;
-    os2_fs_type : int;
-    os2_y_subscript_x_size : int;
-    os2_y_subscript_y_size : int;
-    os2_y_subscript_x_offset : int;
-    os2_y_subscript_y_offset : int;
-    os2_y_superscript_x_size : int;
-    os2_y_superscript_y_size : int;
-    os2_y_superscript_x_offset : int;
-    os2_y_superscript_y_offset : int;
-    os2_y_strikeout_size : int;
-    os2_y_strikeout_position : int;
-    os2_family_class : int;
-    os2_panose : string; (* 10 bytes *)
-    os2_ul_unicode_range1 : wint;
-    os2_ul_unicode_range2 : wint;
-    os2_ul_unicode_range3 : wint;
-    os2_ul_unicode_range4 : wint;
-    os2_ach_vend_id : wint;
-    os2_fs_selection : int;
-    os2_us_first_char_index : int;
-    os2_us_last_char_index : int;
-    os2_s_typo_ascender : int;
-    os2_s_type_descender : int;
-    os2_s_typo_linegap : int;
-    os2_us_win_ascent : int;
-    os2_us_win_descent : int;
-    os2_ul_code_page_range_1 : wint option;
-    os2_ul_code_page_range_2 : wint option;
-    os2_s_x_height : int option;
-    os2_s_cap_height : int option;
-    os2_us_default_char : int option;
-    os2_us_break_char : int option;
-    os2_us_max_context : int option; }
+(* -- OS/2 table -- *)
+
+type os2 = {
+  os2_x_avg_char_width       : int;
+  os2_us_weight_class        : int;
+  os2_us_width_class         : int;
+  os2_fs_type                : int;
+  os2_y_subscript_x_size     : int;
+  os2_y_subscript_y_size     : int;
+  os2_y_subscript_x_offset   : int;
+  os2_y_subscript_y_offset   : int;
+  os2_y_superscript_x_size   : int;
+  os2_y_superscript_y_size   : int;
+  os2_y_superscript_x_offset : int;
+  os2_y_superscript_y_offset : int;
+  os2_y_strikeout_size       : int;
+  os2_y_strikeout_position   : int;
+  os2_family_class           : int;
+  os2_panose                 : string;  (* -- 10 bytes -- *)
+  os2_ul_unicode_range1      : wint;
+  os2_ul_unicode_range2      : wint;
+  os2_ul_unicode_range3      : wint;
+  os2_ul_unicode_range4      : wint;
+  os2_ach_vend_id            : wint;
+  os2_fs_selection           : int;
+  os2_us_first_char_index    : int;
+  os2_us_last_char_index     : int;
+  os2_s_typo_ascender        : int;
+  os2_s_type_descender       : int;
+  os2_s_typo_linegap         : int;
+  os2_us_win_ascent          : int;
+  os2_us_win_descent         : int;
+  os2_ul_code_page_range_1   : wint option;
+  os2_ul_code_page_range_2   : wint option;
+  os2_s_x_height             : int option;
+  os2_s_cap_height           : int option;
+  os2_us_default_char        : int option;
+  os2_us_break_char          : int option;
+  os2_us_max_context         : int option;
+}
 
 let os2 d =
   init_decoder d >>=
@@ -1528,13 +1517,15 @@ let os2 d =
     os2_us_break_char; os2_us_max_context;
   }
 
-(* kern table *)
+
+(* -- kern table -- *)
 
 type kern_info ={
-  kern_dir : [ `H | `V ];
-  kern_kind : [ `Min | `Kern ];
+  kern_dir          : [ `H | `V ];
+  kern_kind         : [ `Min | `Kern ];
   kern_cross_stream : bool;
 }
+
 
 let kern_info c =
   {
@@ -1542,6 +1533,7 @@ let kern_info c =
     kern_kind = (if c land 0x2 > 0 then `Min else `Kern);
     kern_cross_stream = c land 0x4 > 0;
   }
+
 
 let rec kern_tables ntables t p acc d =
   if ntables = 0 then return acc else
@@ -1569,17 +1561,21 @@ let rec kern_tables ntables t p acc d =
       d_pairs len acc d >>= fun acc ->
       kern_tables (ntables - 1) t p acc d
 
+
 let kern d t p acc =
   init_decoder d >>=
   seek_table Tag.kern d >>= function
-  | None    -> return acc
+  | None ->
+      return acc
+
   | Some(_) ->
       d_uint16 d >>= fun version ->
       if version > 0 then err_version d (!% version) else
       d_uint16 d >>= fun ntables ->
       kern_tables ntables t p acc d
 
-(* loca table *)
+
+(* -- loca table -- *)
 
 let d_loca_format d () =
   d_uint16 d >>= fun i ->
@@ -1666,26 +1662,6 @@ type gsub_subtable =
   | UnsupportedGSUBSubtable
   (* temporary; should contain more lookup type *)
 
-(*
-let seek_pos_from_list origin scriptTag d =
-  let rec aux i =
-    if i <= 0 then return false else
-    begin
-      d_bytes 4 d >>= fun tag ->
-      d_uint16 d  >>= fun offset ->
-(*        Format.fprintf fmtgen ("| tag = '" ^ tag ^ "'");  (* for debug *) *)
-        if String.equal tag scriptTag then
-          seek_pos (origin + offset) d >>= fun () ->
-          return true
-        else
-          aux (i - 1)
-    end
-  in
-  d_uint16 d >>= fun scriptCount ->
-  Format.fprintf fmtGSUB "scriptCount = %d\n" scriptCount;
-  aux scriptCount >>= fun found ->
-  return found
-*)
 
 let d_range_record d =
   let rec range acc i j =
@@ -1702,25 +1678,11 @@ let d_coverage d : (glyph_id list) ok =
     (* -- the position is supposed to be set
           to the beginning of a Coverage table [page 139] -- *)
   d_uint16 d >>= fun coverageFormat ->
-  Format.fprintf fmtgen "{Coverage format = %d\n" coverageFormat;  (* for debug *)
-  let res =  (* for debug *)
-    match coverageFormat with
-    | 1 -> d_list d_uint16 d
-    | 2 -> d_list d_range_record d >>= fun rnglst -> return (List.concat rnglst)
-    | _ -> err_version d (!% coverageFormat)
-  in Format.fprintf fmtgen "end Coverage table}\n"; res  (* for debug *)
+  match coverageFormat with
+  | 1 -> d_list d_uint16 d
+  | 2 -> d_list d_range_record d >>= fun rnglst -> return (List.concat rnglst)
+  | _ -> err_version d (!% coverageFormat)
 
-(*
-let d_coverage offset_origin d : (glyph_id list) ok =
-    (* -- the position is supposed to be set
-          just before an offset field to a coverage table -- *)
-  let pos_first = cur_pos d in
-  d_offset offset_origin d   >>= fun offset_Coverage ->
-  seek_pos offset_Coverage d >>= fun () ->
-  d_coverage d          >>= fun gidlst ->
-  seek_pos (pos_first + 2) d >>= fun () ->
-  return gidlst
-*)
 
 let combine_coverage d coverage lst =
   try return (List.combine coverage lst) with
@@ -1779,7 +1741,6 @@ let seek_every_pos (type a) (offsetlst : int list) (df : decoder -> a ok) (d : d
   match offsetlst with
   | []             -> return (Alist.to_list acc)
   | offset :: tail ->
-(*      let () = Format.fprintf fmtgen ("| offset = " ^ (string_of_int offset)) in  (* for debug *) *)
       seek_pos offset d >>= fun () ->
       df d >>= fun data ->
       aux (Alist.extend acc data) tail
@@ -1792,8 +1753,6 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
           just before a Coverage field and a subsequent offset list
           [page 254 etc.] -- *)
   d_fetch offset_Substitution_table d_coverage d >>= fun coverage ->
-  Format.fprintf fmtgen "size of Coverage = %d\n" (List.length coverage);  (* for debug *)
-  List.iter (Format.fprintf fmtgen "  *   elem = %d\n") coverage;  (* for debug *)
 
     (* -- the position is set just before LigSetCount field [page 254] -- *)
   d_list (d_fetch offset_Substitution_table df) d >>= fun datalst ->
@@ -1817,7 +1776,6 @@ let gpos_script_tag = gxxx_script_tag
 let d_tag_offset_record offset_Gxxx d =
   d_bytes 4 d >>= fun tag ->
   d_offset offset_Gxxx d >>= fun offset ->
-  Format.fprintf fmtgen "(%s, %d)\n" tag offset;  (* for debug *)
   return (tag, offset)
 
 
@@ -1919,8 +1877,10 @@ let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature 
   in
   let featurereq =
         match requiredFeatureIndex with
-        | 0xFFFF -> return None
-        | _      ->
+        | 0xFFFF ->
+            return None
+
+        | _ ->
             begin
               seek_pos offset_FeatureList d >>= fun () ->
               d_list_access (d_tag_offset_record offset_FeatureList) requiredFeatureIndex d >>= function
