@@ -2154,6 +2154,9 @@ type component_record = anchor array
 
 type ligature_attach = component_record list
 
+type mark2_record = anchor array
+  (* -- indexed by mark_class -- *)
+
 type gpos_subtable =
   | SinglePosAdjustment1 of glyph_id list * value_record
   | SinglePosAdjustment2 of (glyph_id * value_record) list
@@ -2161,6 +2164,7 @@ type gpos_subtable =
   | PairPosAdjustment2   of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
   | MarkBasePos1         of int * (glyph_id * mark_record) list * (glyph_id * base_record) list
   | MarkLigPos1          of int * (glyph_id * mark_record) list * (glyph_id * ligature_attach) list
+  | MarkMarkPos1         of int * (glyph_id * mark_record) list * (glyph_id * mark2_record) list
   (* temporary; must contain more kinds of adjustment subtables *)
 
 
@@ -2370,6 +2374,32 @@ let d_mark_to_ligature_attachment_subtable d =
 
   | _ -> err_version d (!% posFormat)
 
+
+let d_mark2_record = d_base_record
+
+
+let d_mark2_array  classCount d : (mark2_record list) ok =
+  let offset_Mark2Array = cur_pos d in
+  d_list (d_mark2_record offset_Mark2Array classCount) d
+
+
+let d_mark_to_mark_attachment_subtable d =
+  let offset_MarkToMarkPos = cur_pos d in
+  d_uint16 d >>= fun posFormat ->
+  match posFormat with
+  | 1 ->
+      d_fetch offset_MarkToMarkPos d_coverage d >>= fun mark1Coverage ->
+      d_fetch offset_MarkToMarkPos d_coverage d >>= fun mark2Coverage ->
+      d_uint16 d >>= fun classCount ->
+      d_fetch offset_MarkToMarkPos (d_mark_array classCount) d >>= fun markArray ->
+      d_fetch offset_MarkToMarkPos (d_mark2_array classCount) d >>= fun mark2Array ->
+      combine_coverage d mark1Coverage markArray >>= fun mark_assoc ->
+      combine_coverage d mark2Coverage mark2Array >>= fun mark2_assoc ->
+      return (MarkMarkPos1(classCount, mark_assoc, mark2_assoc))
+
+  | _ -> err_version d (!% posFormat)
+
+
 let lookup_gpos_exact offsetlst_SubTable lookupType d : (gpos_subtable list) ok =
   match lookupType with
   | 1 ->  (* -- Single adjustment -- *)
@@ -2388,8 +2418,8 @@ let lookup_gpos_exact offsetlst_SubTable lookupType d : (gpos_subtable list) ok 
   | 5 ->  (* -- MarkToLigature attachment -- *)
       seek_every_pos offsetlst_SubTable d_mark_to_ligature_attachment_subtable d
 
-  | 6 ->
-      return []  (* temporarily unsupported *)
+  | 6 ->  (* -- MarkToMark attachment -- *)
+      seek_every_pos offsetlst_SubTable d_mark_to_mark_attachment_subtable d
 
   | 7 ->
       return []  (* temporarily unsupported *)
@@ -2452,6 +2482,7 @@ type 'a folding_gpos_markbase1 = int -> 'a -> (glyph_id * mark_record) list -> (
 
 type 'a folding_gpos_marklig1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * ligature_attach) list -> 'a
 
+type 'a folding_gpos_markmark1 = 'a folding_gpos_markbase1
 
 let rec fold_subtables_gpos
     (f_single1 : 'a folding_gpos_single1)
@@ -2460,8 +2491,9 @@ let rec fold_subtables_gpos
     (f_pair2 : 'a folding_gpos_pair2)
     (f_markbase1 : 'a folding_gpos_markbase1)
     (f_marklig1 : 'a folding_gpos_marklig1)
+    (f_markmark1 : 'a folding_gpos_markmark1)
     (init : 'a) (subtablelst : gpos_subtable list) : 'a =
-  let iter = fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 f_marklig1 in
+  let iter = fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 f_marklig1 f_markmark1 in
     match subtablelst with
     | [] ->
         init
@@ -2490,6 +2522,10 @@ let rec fold_subtables_gpos
         let initnew = f_marklig1 classCount init mark_assoc ligature_assoc in
           iter initnew tail
 
+    | MarkMarkPos1(classCount, mark_assoc, mark2_assoc) :: tail ->
+        let initnew = f_markmark1 classCount init mark_assoc mark2_assoc in
+          iter initnew tail
+
 
 let gpos feature
     ?single1:(f_single1 = (fun x _ _ -> x))
@@ -2498,10 +2534,11 @@ let gpos feature
     ?pair2:(f_pair2 = (fun _ _ x _ -> x))
     ?markbase1:(f_markbase1 = (fun _ x _ _ -> x))
     ?marklig1:(f_marklig1 = (fun _ x _ _ -> x))
+    ?markmark1:(f_markmark1 = (fun _ x _ _ -> x))
     init =
   gxxx_subtable_list lookup_gpos feature >>= fun subtablelstlst ->
   let subtablelst = List.concat subtablelstlst in
-  return (fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 f_marklig1 init subtablelst)
+  return (fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 f_marklig1 f_markmark1 init subtablelst)
 
 
 (* -- MATH table -- *)

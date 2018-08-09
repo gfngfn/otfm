@@ -744,6 +744,8 @@ type 'a folding_gpos_markbase1 = int -> 'a -> (glyph_id * mark_record) list -> (
 
 type 'a folding_gpos_marklig1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * ligature_attach) list -> 'a
 
+type 'a folding_gpos_markmark1 = 'a folding_gpos_markbase1
+
 val gpos : gpos_feature ->
   ?single1:'a folding_gpos_single1 ->
   ?single2:'a folding_gpos_single2 ->
@@ -751,6 +753,7 @@ val gpos : gpos_feature ->
   ?pair2:'a folding_gpos_pair2 ->
   ?markbase1: 'a folding_gpos_markbase1 ->
   ?marklig1: 'a folding_gpos_marklig1 ->
+  ?markmark1: 'a folding_gpos_markmark1 ->
   'a -> ('a, error) result
 
 type math_value_record = int * device_table option
