@@ -2152,11 +2152,9 @@ type base_record = anchor array
 type gpos_subtable =
   | SinglePosAdjustment1 of glyph_id list * value_record
   | SinglePosAdjustment2 of (glyph_id * value_record) list
-  | PairPosAdjustment1 of (glyph_id * (glyph_id * value_record * value_record) list) list
-  | PairPosAdjustment2 of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
+  | PairPosAdjustment1   of (glyph_id * (glyph_id * value_record * value_record) list) list
+  | PairPosAdjustment2   of class_definition list * class_definition list * (class_value * (class_value * value_record * value_record) list) list
   | MarkBasePos1         of int * (glyph_id * mark_record) list * (glyph_id * base_record) list
-  | ExtensionPos       of gpos_subtable list
-  | UnsupportedGPOSSubtable
   (* temporary; must contain more kinds of adjustment subtables *)
 
 
@@ -2337,35 +2335,35 @@ let d_mark_to_base_attachment_subtable d =
   | _ -> err_version d (!% posFormat)
 
 
-let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
+let lookup_gpos_exact offsetlst_SubTable lookupType d : (gpos_subtable list) ok =
   match lookupType with
   | 1 ->  (* -- Single adjustment -- *)
       seek_every_pos offsetlst_SubTable d_single_adjustment_subtable d >>= fun subtablelst ->
-      return (ExtensionPos(subtablelst))
+      return subtablelst
 
   | 2 ->  (* -- Pair adjustment -- *)
       Format.fprintf fmtGSUB "number of subtables = %d\n" (List.length offsetlst_SubTable);  (* for debug *)
       seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d >>= fun subtablelst ->
-      return (ExtensionPos(subtablelst))
+      return subtablelst
 
   | 3 ->  (* -- Cursive attachment -- *)
-      return UnsupportedGPOSSubtable
+      return []  (* temporarily unsupported *)
 
   | 4 ->  (* -- MarkToBase attachment -- *)
       seek_every_pos offsetlst_SubTable d_mark_to_base_attachment_subtable d >>= fun subtablelst ->
-      return (ExtensionPos(subtablelst))
+      return subtablelst
 
   | 5 ->
-      return UnsupportedGPOSSubtable
+      return []  (* temporarily unsupported *)
 
   | 6 ->
-      return UnsupportedGPOSSubtable
+      return []  (* temporarily unsupported *)
 
   | 7 ->
-      return UnsupportedGPOSSubtable
+      return []  (* temporarily unsupported *)
 
   | 8 ->
-      return UnsupportedGPOSSubtable
+      return []  (* temporarily unsupported *)
 
   | 9 ->  (* -- Extension positioning [page 213] -- *)
       err `Invalid_extension_position
@@ -2374,7 +2372,7 @@ let lookup_gpos_exact offsetlst_SubTable lookupType d : gpos_subtable ok =
       err (`Invalid_GPOS_lookup_type(lookupType))
 
 
-let d_extension_position d : gpos_subtable ok =
+let d_extension_position d : (gpos_subtable list) ok =
     (* -- the position is supposed to be set
           to the beginning of ExtensionPosFormat1 subtable [page 213] -- *)
   let offset_ExtensionPos = cur_pos d in
@@ -2386,7 +2384,7 @@ let d_extension_position d : gpos_subtable ok =
   lookup_gpos_exact [offset] extensionLookupType d
 
 
-let lookup_gpos d : gpos_subtable ok =
+let lookup_gpos d : (gpos_subtable list) ok =
     (* -- the position is supposed to be set
           to the beginning of Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
@@ -2403,8 +2401,8 @@ let lookup_gpos d : gpos_subtable ok =
   d_offset_list offset_Lookup_table d >>= fun offsetlst_SubTable ->
   match lookupType with
   | 9 ->
-      seek_every_pos offsetlst_SubTable d_extension_position d >>= fun subtablelst ->
-      return (ExtensionPos(subtablelst))
+      seek_every_pos offsetlst_SubTable d_extension_position d >>= fun subtablelstlst ->
+      return (List.concat subtablelstlst)
 
   | _ ->
       lookup_gpos_exact offsetlst_SubTable lookupType d
@@ -2452,13 +2450,6 @@ let rec fold_subtables_gpos
         let initnew = f_markbase1 classCount init mark_assoc base_assoc in
           iter initnew tail
 
-    | ExtensionPos(subtablelstsub) :: tail ->
-        let initnew = iter init subtablelstsub in
-          iter initnew tail
-
-    | UnsupportedGPOSSubtable :: tail ->
-        iter init tail
-
 
 let gpos feature
     ?single1:(f_single1 = (fun x _ _ -> x))
@@ -2467,7 +2458,8 @@ let gpos feature
     ?pair2:(f_pair2 = (fun _ _ x _ -> x))
     ?markbase1:(f_markbase1 = (fun _ x _ _ -> x))
     init =
-  gxxx_subtable_list lookup_gpos feature >>= fun subtablelst ->
+  gxxx_subtable_list lookup_gpos feature >>= fun subtablelstlst ->
+  let subtablelst = List.concat subtablelstlst in
   return (fold_subtables_gpos f_single1 f_single2 f_pair1 f_pair2 f_markbase1 init subtablelst)
 
 
