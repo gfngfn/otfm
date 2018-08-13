@@ -727,7 +727,7 @@ type mark_record = mark_class * anchor
 type base_record = anchor array
   (* -- indexed by mark_class -- *)
 
-type component_record = anchor array
+type component_record = (anchor option) array
   (* -- indexed by mark_class -- *)
 
 type ligature_attach = component_record list

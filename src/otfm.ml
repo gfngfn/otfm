@@ -2149,7 +2149,7 @@ type mark_record = mark_class * anchor
 type base_record = anchor array
   (* -- indexed by mark_class -- *)
 
-type component_record = anchor array
+type component_record = (anchor option) array
   (* -- indexed by mark_class -- *)
 
 type ligature_attach = component_record list
@@ -2345,7 +2345,9 @@ let d_mark_to_base_attachment_subtable d =
   | _ -> err_version d (!% posFormat)
 
 
-let d_component_record = d_base_record
+let d_component_record offset_LigatureAttach classCount d : component_record ok =
+  d_repeat classCount (d_fetch_opt offset_LigatureAttach d_anchor) d >>= fun anchoroptlst ->
+  return (Array.of_list anchoroptlst)
 
 
 let d_ligature_attach classCount d : ligature_attach ok =
