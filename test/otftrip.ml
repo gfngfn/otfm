@@ -99,8 +99,9 @@ let pp_glyf ppf has_glyf d =
         | Ok (Some gloc) ->
             match Otfm.glyf d gloc with
             | Error _ as e -> e
-            | Ok (`Simple cs, bb) -> pp_simple ppf gid cs bb; loop (gid + 1)
-            | Ok (`Composite cs, bb) ->
+            | Ok None -> pp ppf "(none)"; loop (gid + 1)
+            | Ok (Some (`Simple cs, bb)) -> pp_simple ppf gid cs bb; loop (gid + 1)
+            | Ok (Some (`Composite cs, bb)) ->
                 pp_composite ppf gid cs bb; loop (gid + 1)
       in
       loop 0
