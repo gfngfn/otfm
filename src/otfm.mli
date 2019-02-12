@@ -391,7 +391,7 @@ type glyph_descr =
 (** The type for glyph descriptions. A simple or composite descriptions
     with the glyph's [(minx, miny, maxx, maxy)]'s bounding box. *)
 
-val glyf : decoder -> glyf_loc -> (glyph_descr, error) result
+val glyf : decoder -> glyf_loc -> (glyph_descr option, error) result
 (** [glyf d loc] is the glyph descroption located at [loc] by reading
     the {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf}
     table. Glyph locations are obtainted via {!loca}. *)
@@ -627,7 +627,7 @@ type gsub_langsys
 type gsub_feature
 (** The type for GSUB Feature. *)
 
-val gsub_script : decoder -> (gsub_script list, error) result
+val gsub_script : decoder -> ((gsub_script list) option, error) result
 (** [gsub_script d] returns all of the Script tags the font contains. *)
 
 val gsub_script_tag : gsub_script -> string
@@ -672,7 +672,7 @@ type gpos_langsys
 type gpos_feature
 (** The type for GPOS Feature. *)
 
-val gpos_script : decoder -> (gpos_script list, error) result
+val gpos_script : decoder -> ((gpos_script list) option, error) result
 (** [gpos_script d] returns all of the Script tags the font contains. *)
 
 val gpos_script_tag : gpos_script -> string
@@ -882,7 +882,7 @@ type math =
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} tables. *)
 
-val math : decoder -> (math, error) result
+val math : decoder -> (math option, error) result
 (** [math d] returns the whole information in the
     {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} table of [d]. *)
 
@@ -915,7 +915,7 @@ type cff_info =
     charstring_info     : charstring_info;
   }
 
-val cff : decoder -> (cff_info, error) result
+val cff : decoder -> (cff_info option, error) result
 
 type charstring_element
 
@@ -990,7 +990,7 @@ val charstring_bbox : path list -> (csx * csx * csy * csy) option
 
 type raw_glyph
 
-val get_raw_glyph : decoder -> glyph_id -> (raw_glyph, error) result
+val get_raw_glyph : decoder -> glyph_id -> (raw_glyph option, error) result
 
 
 module Encode : sig

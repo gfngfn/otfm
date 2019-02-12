@@ -298,6 +298,11 @@ type decoder_state =
   | Start
   | Ready
 
+type glyf_pos =
+  | Untouched
+  | Nonexistent
+  | AlreadyGot of int
+
 type decoder =
   {
     i                           : string;                     (* input data.                *)
@@ -308,7 +313,7 @@ type decoder =
     mutable flavour             : flavour;                    (* decoded flavour.           *)
     mutable tables              : (tag * int * int) list;     (* decoded table records.     *)
     mutable loca_pos_and_format : (int * loc_format) option;  (* for TTF fonts, lazy init.  *)
-    mutable glyf_pos            : int option;                 (* for TTF fonts, lazy init.  *)
+    mutable glyf_pos            : glyf_pos;                 (* for TTF fonts, lazy init.  *)
     mutable buf                 : Buffer.t;                   (* internal buffer.           *)
   }
 
@@ -645,7 +650,7 @@ let decoder src =
       ctx = `Offset_table;
       flavour = TTF_OT;    (* dummy initial value *)
       tables = [];         (* dummy initial value *)
-      loca_pos_and_format = None; glyf_pos = None;
+      loca_pos_and_format = None; glyf_pos = Untouched;
       buf = Buffer.create 253; }
   in
   d_version false d >>= fun is_single ->
@@ -927,16 +932,24 @@ type glyph_descr =
   | `Composite of glyph_composite_descr ] * (int * int * int * int)
 
 
-let init_glyf d () =
+let init_glyf d () : (int option) ok =
   match d.glyf_pos with
-  | Some(pos) ->
-      return pos
+  | AlreadyGot(pos) ->
+      return (Some(pos))
 
-  | None ->
-      seek_required_table Tag.glyf d () >>= fun () ->
-      let pos = d.i_pos in
-      d.glyf_pos <- Some(pos);
-      return pos
+  | Nonexistent ->
+      return None
+
+  | Untouched ->
+      seek_table Tag.glyf d () >>= function
+        | None ->
+            d.glyf_pos <- Nonexistent;
+            return None
+
+        | Some(_) ->
+            let pos = d.i_pos in
+            d.glyf_pos <- AlreadyGot(pos);
+            return (Some(pos))
 
 
 let d_rev_end_points d ccount =
@@ -1074,21 +1087,27 @@ let d_composite_glyph d =
 
 let glyf d loc =
   init_decoder d >>=
-  init_glyf d >>= fun pos ->
-  seek_pos (pos + loc) d  >>= fun () ->
-  d_int16 d >>= fun ccount ->
-  d_int16 d >>= fun xmin ->
-  d_int16 d >>= fun ymin ->
-  d_int16 d >>= fun xmax ->
-  d_int16 d >>= fun ymax ->
-  if ccount < -1 then
-    err_composite_format d ccount
-  else if ccount = -1 then
-    d_composite_glyph d >>= fun components ->
-    return (`Composite(components), (xmin, ymin, xmax, ymax))
-  else
-    d_simple_glyph d ccount >>= fun contours ->
-    return (`Simple(contours), (xmin, ymin, xmax, ymax))
+  init_glyf d >>= function
+  | None ->
+      return None
+
+  | Some(pos) ->
+      seek_pos (pos + loc) d  >>= fun () ->
+      d_int16 d >>= fun ccount ->
+      d_int16 d >>= fun xmin ->
+      d_int16 d >>= fun ymin ->
+      d_int16 d >>= fun xmax ->
+      d_int16 d >>= fun ymax ->
+      if ccount < -1 then
+        err_composite_format d ccount
+      else if ccount = -1 then
+        d_composite_glyph d >>= fun components ->
+        let ans = (`Composite(components), (xmin, ymin, xmax, ymax)) in
+        return (Some(ans))
+      else
+        d_simple_glyph d ccount >>= fun contours ->
+        let ans = (`Simple(contours), (xmin, ymin, xmax, ymax)) in
+        return (Some(ans))
 
 
 (* -- head table -- *)
@@ -1784,10 +1803,12 @@ let d_tag_offset_list d : ((string * int) list) ok =
   d_list (d_tag_offset_record offset_ScriptList) d
 
 
-let gxxx_script tag_Gxxx d : (gxxx_script list) ok =
+let gxxx_script tag_Gxxx d : ((gxxx_script list) option) ok =
   init_decoder d >>=
   seek_table tag_Gxxx d >>= function
-    | None    -> err (`Missing_required_table(tag_Gxxx))
+    | None ->
+        return None
+
     | Some(_) ->
         let offset_Gxxx = cur_pos d in
         d_uint32 d >>= fun version ->
@@ -1800,7 +1821,7 @@ let gxxx_script tag_Gxxx d : (gxxx_script list) ok =
             (d, scriptTag, offset_Script_table, offset_FeatureList, offset_LookupList)
           )
         in
-        return scriptList_res
+        return (Some(scriptList_res))
 
 
 let gsub_script = gxxx_script Tag.gsub
@@ -2906,10 +2927,12 @@ let d_math_variants d : math_variants ok =
   }
 
 
-let math d : math ok =
+let math d : (math option) ok =
   init_decoder d >>=
   seek_table Tag.math d >>= function
-    | None    -> err (`Missing_required_table(Tag.math))
+    | None ->
+        return None
+
     | Some(_) ->
         let offset_MATH = cur_pos d in
         Format.fprintf fmtMATH "begin MATH = %d\n" offset_MATH;
@@ -2922,11 +2945,14 @@ let math d : math ok =
         Format.fprintf fmtMATH "jump to MathVariants = %d\n" (cur_pos d);
         d_fetch offset_MATH d_math_variants d >>= fun mathVariants ->
         Format.fprintf fmtMATH "end MATH\n";
-        return {
-          math_constants  = mathConstants;
-          math_glyph_info = mathGlyphInfo;
-          math_variants   = mathVariants;
-        }
+        let math =
+          {
+            math_constants  = mathConstants;
+            math_glyph_info = mathGlyphInfo;
+            math_variants   = mathVariants;
+          }
+        in
+        return (Some(math))
 
 
 (* -- BASE table -- *)
@@ -3457,49 +3483,54 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
         (* -- uint8 value must be in [0 .. 255] -- *)
 
 
-let cff_first (d : decoder) : cff_first ok =
+let cff_first (d : decoder) : (cff_first option) ok =
   init_decoder d >>=
-  seek_required_table Tag.cff d >>= fun () ->
-  let offset_CFF = cur_pos d in
-  (* -- Header -- *)
+  seek_table Tag.cff d >>= function
+  | None ->
+      return None
+
+  | Some(_) ->
+      let offset_CFF = cur_pos d in
+      (* -- Header -- *)
 (*
-    Format.fprintf fmtCFF "* Header\n";  (* for debug *)
+      Format.fprintf fmtCFF "* Header\n";  (* for debug *)
 *)
-    d_uint8 d              >>= fun major ->
-    d_uint8 d              >>= fun minor ->
+      d_uint8 d              >>= fun major ->
+      d_uint8 d              >>= fun minor ->
 (*
-    Format.fprintf fmtCFF "version = %d.%d\n" major minor;  (* for debug *)
+      Format.fprintf fmtCFF "version = %d.%d\n" major minor;  (* for debug *)
 *)
-    d_uint8 d              >>= fun hdrSize ->
-    d_offsize d            >>= fun offSizeGlobal ->
-    d_skip (hdrSize - 4) d >>= fun () ->
+      d_uint8 d              >>= fun hdrSize ->
+      d_offsize d            >>= fun offSizeGlobal ->
+      d_skip (hdrSize - 4) d >>= fun () ->
 
   (* -- Name INDEX (which should contain only one element) -- *)
 (*
-    Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
+      Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
 *)
-    d_index_singleton d_bytes d >>= fun name ->
+      d_index_singleton d_bytes d >>= fun name ->
 
   (* -- Top DICT INDEX (which should contain only one DICT) -- *)
 (*
-    Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
+      Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
 *)
-    d_index_singleton d_dict d >>= fun dictmap ->
+      d_index_singleton d_dict d >>= fun dictmap ->
 
   (* -- String INDEX -- *)
 (*
-    Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
+      Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
 *)
-    d_index "(dummy)" d_bytes d >>= fun stridx ->
+      d_index "(dummy)" d_bytes d >>= fun stridx ->
 
   (* -- Global Subr INDEX -- *)
 (*
-    Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
+      Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
 *)
-    d_index (CharStringData(0, 0)) d_charstring_data d >>= fun gsubridx ->
-      (* temporary; should be decoded *)
+      d_index (CharStringData(0, 0)) d_charstring_data d >>= fun gsubridx ->
+        (* temporary; should be decoded *)
 
-    return (name, dictmap, stridx, gsubridx, offset_CFF)
+      let cff_first = (name, dictmap, stridx, gsubridx, offset_CFF) in
+      return (Some(cff_first))
 
 
 let err_dict_key key =
@@ -3679,74 +3710,81 @@ let seek_fdselect nGlyphs offset_FDSelect d : fdselect ok =
   | n -> err (`Unknown_fdselect_format(n))
 
 
-let cff d =
-  cff_first d >>= fun (font_name, dictmap, stridx, gsubridx, offset_CFF) ->
+let cff d : (cff_info option) ok =
+  cff_first d >>= function
+  | None ->
+      return None
+
+  | Some((font_name, dictmap, stridx, gsubridx, offset_CFF)) ->
 (*
-  get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
-  get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
-  get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
-  get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
-  get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
-  get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
+      get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
+      get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
+      get_sid         dictmap (LongKey(0) )              >>= fun sid_copyright ->
+      get_sid         dictmap (ShortKey(2))              >>= fun sid_full_name ->
+      get_sid         dictmap (ShortKey(3))              >>= fun sid_family_name ->
+      get_sid         dictmap (ShortKey(4))              >>= fun sid_weight ->
 *)
-  get_boolean_with_defautlt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
-  get_integer_with_default  dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
-  get_integer_with_default  dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
-  get_integer_with_default  dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
-  get_integer_with_default  dictmap (LongKey(5) ) 0            >>= fun paint_type ->
-  get_integer_with_default  dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
-  confirm (charstring_type = 2)
-    (`Invalid_charstring_type(charstring_type))      >>= fun () ->
+      get_boolean_with_defautlt dictmap (LongKey(1) ) false        >>= fun is_fixed_pitch ->
+      get_integer_with_default  dictmap (LongKey(2) ) 0            >>= fun italic_angle ->
+      get_integer_with_default  dictmap (LongKey(3) ) (-100)       >>= fun underline_position ->
+      get_integer_with_default  dictmap (LongKey(4) ) 50           >>= fun underline_thickness ->
+      get_integer_with_default  dictmap (LongKey(5) ) 0            >>= fun paint_type ->
+      get_integer_with_default  dictmap (LongKey(6) ) 2            >>= fun charstring_type ->
+      confirm (charstring_type = 2)
+        (`Invalid_charstring_type(charstring_type))      >>= fun () ->
 
-  (* -- have not implemented 'LongKey(7) --> font_matrix' yet; maybe it is not necessary -- *)
+      (* -- have not implemented 'LongKey(7) --> font_matrix' yet; maybe it is not necessary -- *)
 
-  get_iquad_opt        dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
-  get_integer_with_default      dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
-  get_integer          dictmap (ShortKey(17))             >>= fun reloffset_CharString_INDEX ->
-  let offset_CharString_INDEX = offset_CFF + reloffset_CharString_INDEX in
-  seek_number_of_glyphs offset_CharString_INDEX d >>= fun number_of_glyphs ->
-  let pairres =
-    if DictMap.mem (LongKey(30)) dictmap then
-    (* -- when the font is a CIDFont -- *)
-      get_ros                  dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
-      get_real_with_default    dictmap (LongKey(31)) 0.   >>= fun cid_font_version ->
-      get_integer_with_default dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
-      get_integer_with_default dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
-      get_integer_with_default dictmap (LongKey(34)) 8720 >>= fun cid_count ->
-      get_integer     dictmap (LongKey(36))      >>= fun reloffset_FDArray ->
-      get_integer     dictmap (LongKey(37))      >>= fun reloffset_FDSelect ->
-      get_string stridx sid_registry >>= fun registry ->
-      get_string stridx sid_ordering >>= fun ordering ->
-      let offset_FDArray = offset_CFF + reloffset_FDArray in
-      let offset_FDSelect = offset_CFF + reloffset_FDSelect in
-      seek_fdarray offset_CFF offset_FDArray d >>= fun fdarray ->
-      seek_fdselect number_of_glyphs offset_FDSelect d >>= fun fdselect ->
-      return (Some{
-        registry; ordering; supplement;
-        cid_font_version;
-        cid_font_revision;
-        cid_font_type;
-        cid_count;
-      }, FontDicts(fdarray, fdselect))
-    else
-    (* -- when the font is not a CIDFont -- *)
-      d_single_private offset_CFF dictmap d >>= fun singlepriv ->
-      return (None, SinglePrivate(singlepriv))
-  in
-  pairres >>= fun (cid_info, private_info) ->
-  return {
-    font_name;
-    is_fixed_pitch;
-    italic_angle;
-    underline_position;
-    underline_thickness;
-    paint_type;
-    font_bbox;
-    stroke_width;
-    cid_info;
-    number_of_glyphs;
-    charstring_info = (d, gsubridx, private_info, offset_CharString_INDEX);
-  }
+      get_iquad_opt        dictmap (ShortKey(5)) (0, 0, 0, 0) >>= fun font_bbox ->
+      get_integer_with_default      dictmap (LongKey(8) ) 0            >>= fun stroke_width ->
+      get_integer          dictmap (ShortKey(17))             >>= fun reloffset_CharString_INDEX ->
+      let offset_CharString_INDEX = offset_CFF + reloffset_CharString_INDEX in
+      seek_number_of_glyphs offset_CharString_INDEX d >>= fun number_of_glyphs ->
+      let pairres =
+        if DictMap.mem (LongKey(30)) dictmap then
+        (* -- when the font is a CIDFont -- *)
+          get_ros                  dictmap (LongKey(30))      >>= fun (sid_registry, sid_ordering, supplement) ->
+          get_real_with_default    dictmap (LongKey(31)) 0.   >>= fun cid_font_version ->
+          get_integer_with_default dictmap (LongKey(32)) 0    >>= fun cid_font_revision ->
+          get_integer_with_default dictmap (LongKey(33)) 0    >>= fun cid_font_type ->
+          get_integer_with_default dictmap (LongKey(34)) 8720 >>= fun cid_count ->
+          get_integer     dictmap (LongKey(36))      >>= fun reloffset_FDArray ->
+          get_integer     dictmap (LongKey(37))      >>= fun reloffset_FDSelect ->
+          get_string stridx sid_registry >>= fun registry ->
+          get_string stridx sid_ordering >>= fun ordering ->
+          let offset_FDArray = offset_CFF + reloffset_FDArray in
+          let offset_FDSelect = offset_CFF + reloffset_FDSelect in
+          seek_fdarray offset_CFF offset_FDArray d >>= fun fdarray ->
+          seek_fdselect number_of_glyphs offset_FDSelect d >>= fun fdselect ->
+          return (Some{
+            registry; ordering; supplement;
+            cid_font_version;
+            cid_font_revision;
+            cid_font_type;
+            cid_count;
+          }, FontDicts(fdarray, fdselect))
+        else
+        (* -- when the font is not a CIDFont -- *)
+          d_single_private offset_CFF dictmap d >>= fun singlepriv ->
+          return (None, SinglePrivate(singlepriv))
+      in
+      pairres >>= fun (cid_info, private_info) ->
+      let cff_info =
+        {
+          font_name;
+          is_fixed_pitch;
+          italic_angle;
+          underline_position;
+          underline_thickness;
+          paint_type;
+          font_bbox;
+          stroke_width;
+          cid_info;
+          number_of_glyphs;
+          charstring_info = (d, gsubridx, private_info, offset_CharString_INDEX);
+        }
+      in
+      return (Some(cff_info))
 
 
 let pop (stk : int Stack.t) : int ok =
@@ -4754,39 +4792,49 @@ let get_composite_offsets (data : string) : ((glyph_id * int) list, error) resul
 let get_raw_glyph d gid =
   loca_with_length d gid >>= function
   | None ->
-      return {
-        old_glyph_id = gid;
-        glyph_aw = 0;
-        glyph_lsb = 0;
-        glyph_bbox = (0, 0, 0, 0);
-        glyph_data = "";
-        glyph_data_length = 0;
-        glyph_composite_offsets = [];
-      }
+      let rawg =
+        {
+          old_glyph_id = gid;
+          glyph_aw = 0;
+          glyph_lsb = 0;
+          glyph_bbox = (0, 0, 0, 0);
+          glyph_data = "";
+          glyph_data_length = 0;
+          glyph_composite_offsets = [];
+        }
+      in
+      return (Some(rawg))
 
   | Some((loc, len)) ->
       init_decoder d >>=
-      init_glyf d >>= fun pos_glyf ->
-      let pos = pos_glyf + loc in
-      seek_pos pos d >>= fun () ->
-      d_int16 d >>= fun _ ->
-      d_int16 d >>= fun xmin ->
-      d_int16 d >>= fun ymin ->
-      d_int16 d >>= fun xmax ->
-      d_int16 d >>= fun ymax ->
-      seek_pos pos d >>= fun () ->
-      d_bytes len d >>= fun data ->
-      get_composite_offsets data >>= fun pairlst ->
-      hmtx_single d gid >>= fun (aw, lsb) ->
-      return {
-        old_glyph_id = gid;
-        glyph_aw = aw;
-        glyph_lsb = lsb;
-        glyph_bbox = (xmin, ymin, xmax, ymax);
-        glyph_data = data;
-        glyph_data_length = len;
-        glyph_composite_offsets = pairlst;
-      }
+      init_glyf d >>= function
+      | None ->
+          return None
+
+      | Some(pos_glyf) ->
+          let pos = pos_glyf + loc in
+          seek_pos pos d >>= fun () ->
+          d_int16 d >>= fun _ ->
+          d_int16 d >>= fun xmin ->
+          d_int16 d >>= fun ymin ->
+          d_int16 d >>= fun xmax ->
+          d_int16 d >>= fun ymax ->
+          seek_pos pos d >>= fun () ->
+          d_bytes len d >>= fun data ->
+          get_composite_offsets data >>= fun pairlst ->
+          hmtx_single d gid >>= fun (aw, lsb) ->
+          let rawg =
+            {
+              old_glyph_id = gid;
+              glyph_aw = aw;
+              glyph_lsb = lsb;
+              glyph_bbox = (xmin, ymin, xmax, ymax);
+              glyph_data = data;
+              glyph_data_length = len;
+              glyph_composite_offsets = pairlst;
+            }
+          in
+          return (Some(rawg))
 
 
 module Encode = struct
