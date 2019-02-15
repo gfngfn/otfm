@@ -1778,14 +1778,20 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
   combine_coverage d coverage datalst
 
 
-type gxxx_script = decoder * string * int * int * int
+type gxxx_script = {
+  script_decoder             : decoder;
+  script_tag                 : string;
+  script_offset_Script_table : int;
+  script_offset_FeatureList  : int;
+  script_offset_LookupList   : int;
+}
 
 type gsub_script = gxxx_script
 
 type gpos_script = gxxx_script
 
 
-let gxxx_script_tag (_, scriptTag, _, _, _) = scriptTag
+let gxxx_script_tag script = script.script_tag
 
 let gsub_script_tag = gxxx_script_tag
 
@@ -1806,22 +1812,28 @@ let d_tag_offset_list d : ((string * int) list) ok =
 let gxxx_script tag_Gxxx d : ((gxxx_script list) option) ok =
   init_decoder d >>=
   seek_table tag_Gxxx d >>= function
-    | None ->
-        return None
+  | None ->
+      return None
 
-    | Some(_) ->
-        let offset_Gxxx = cur_pos d in
-        d_uint32 d >>= fun version ->
-        confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
-        d_fetch offset_Gxxx d_tag_offset_list d >>= fun scriptList ->
-        d_offset offset_Gxxx d >>= fun offset_FeatureList ->
-        d_offset offset_Gxxx d >>= fun offset_LookupList ->
-        let scriptList_res =
-          scriptList |> List.map (fun (scriptTag, offset_Script_table) ->
-            (d, scriptTag, offset_Script_table, offset_FeatureList, offset_LookupList)
-          )
-        in
-        return (Some(scriptList_res))
+  | Some(_) ->
+      let offset_Gxxx = cur_pos d in
+      d_uint32 d >>= fun version ->
+      confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
+      d_fetch offset_Gxxx d_tag_offset_list d >>= fun scriptList ->
+      d_offset offset_Gxxx d >>= fun offset_FeatureList ->
+      d_offset offset_Gxxx d >>= fun offset_LookupList ->
+      let scriptList_res =
+        scriptList |> List.map (fun (scriptTag, offset_Script_table) ->
+          {
+            script_decoder             = d;
+            script_tag                 = scriptTag;
+            script_offset_Script_table = offset_Script_table;
+            script_offset_FeatureList  = offset_FeatureList;
+            script_offset_LookupList   = offset_LookupList;
+          }
+        )
+      in
+      return (Some(scriptList_res))
 
 
 let gsub_script = gxxx_script Tag.gsub
@@ -1844,7 +1856,10 @@ let gpos_langsys_tag = gxxx_langsys_tag
 
 
 let gxxx_langsys (script : gxxx_script) : (gxxx_langsys * gxxx_langsys list) ok =
-  let (d, scriptTag, offset_Script_table, offset_FeatureList, offset_LookupList) = script in
+  let d = script.script_decoder in
+  let offset_Script_table = script.script_offset_Script_table in
+  let offset_FeatureList = script.script_offset_FeatureList in
+  let offset_LookupList = script.script_offset_LookupList in
   Format.fprintf fmtGSUB "offset_Script_table = %d\n" offset_Script_table;  (* for debug *)
   seek_pos offset_Script_table d >>= fun () ->
   d_offset offset_Script_table d >>= fun offset_DefaultLangSys ->
@@ -1881,6 +1896,9 @@ let gpos_feature_tag = gxxx_feature_tag
 
 let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature list) ok =
   let (d, langSysTag, offset_LangSys_table, offset_FeatureList, offset_LookupList) = langsys in
+
+  Format.fprintf fmtGSUB "offset_LangSys_table = %d@," offset_LangSys_table;
+
   seek_pos offset_LangSys_table d >>= fun () ->
     (* -- now the position is set to the beginning of the required LangSys table *)
   d_uint16 d >>= fun offset_LookupOrder ->

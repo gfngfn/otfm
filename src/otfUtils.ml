@@ -4,7 +4,7 @@ let debugfmt =
   Format.formatter_of_out_channel (open_out dev_null)
 
 let fmtgen  = debugfmt
-let fmtGSUB = debugfmt
+let fmtGSUB = Format.std_formatter
 let fmtMATH = debugfmt
 (*
 let fmtCFF  = Format.std_formatter
