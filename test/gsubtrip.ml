@@ -60,8 +60,14 @@ let decode_gsub scripttag type3tag type4tag d =
 
       pickup scriptlst (fun gs -> Otfm.gsub_script_tag gs = scripttag)
         (`Msg(str "GSUB does not contain Script tag '%s'" scripttag)) >>= fun script ->
-      Otfm.gsub_langsys script >>= fun (langsys_DFLT, _) ->
-      Otfm.gsub_feature langsys_DFLT >>= fun (_, featurelst) ->
+      Otfm.gsub_langsys script >>= fun langsys_res ->
+      let langsys =
+        match langsys_res with
+        | (Some(langsys_DFLT), _)    -> langsys_DFLT
+        | (None, langsys_first :: _) -> langsys_first
+        | (None, [])                 -> failwith "no langsys"
+      in
+      Otfm.gsub_feature langsys >>= fun (_, featurelst) ->
 
       Format.printf "all GSUB Feature tags for '%s', 'DFLT':@ @[[%a]@]@," scripttag
         (Format.pp_print_list ~pp_sep Format.pp_print_string)
@@ -98,8 +104,14 @@ let decode_gpos scripttag tag d =
 
       pickup scriptlst (fun script -> Otfm.gpos_script_tag script = scripttag)
         (`Msg("GPOS does not contain Script tag '" ^ scripttag ^ "'")) >>= fun script_latn ->
-      Otfm.gpos_langsys script_latn >>= fun (langsys_DFLT, _) ->
-      Otfm.gpos_feature langsys_DFLT >>= fun (_, featurelst) ->
+      Otfm.gpos_langsys script_latn >>= fun langsys_res ->
+      let langsys =
+        match langsys_res with
+        | (Some(langsys_DFLT), _)    -> langsys_DFLT
+        | (None, langsys_first :: _) -> langsys_first
+        | (None, [])                 -> failwith "no langsys"
+      in
+      Otfm.gpos_feature langsys >>= fun (_, featurelst) ->
 
       Format.printf "all GPOS Feature tags for '%s', 'DFLT':@ @[[%a]@]@," scripttag
         (Format.pp_print_list ~pp_sep Format.pp_print_string)

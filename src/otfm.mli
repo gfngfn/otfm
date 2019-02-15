@@ -633,7 +633,7 @@ val gsub_script : decoder -> ((gsub_script list) option, error) result
 val gsub_script_tag : gsub_script -> string
 (** Returns the Script tag (e.g. ["arab"], ["cyrl"], ["hani"], ["latn"], etc.). *)
 
-val gsub_langsys : gsub_script -> (gsub_langsys * gsub_langsys list, error) result
+val gsub_langsys : gsub_script -> (gsub_langsys option * gsub_langsys list, error) result
 (** [gsub_langsys gs] returns
     the pair of DefaultLangSys and all of the LangSys tags for the given Script [gs]. *)
 
@@ -678,7 +678,7 @@ val gpos_script : decoder -> ((gpos_script list) option, error) result
 val gpos_script_tag : gpos_script -> string
 (** Returns the Script tag (e.g. ["arab"], ["cyrl"], ["hani"], ["latn"], etc.). *)
 
-val gpos_langsys : gpos_script -> (gpos_langsys * gpos_langsys list, error) result
+val gpos_langsys : gpos_script -> (gpos_langsys option * gpos_langsys list, error) result
 (** [gpos_langsys gs] returns
     the pair of DefaultLangSys and all of the LangSys tags for the given Script [gs]. *)
 
