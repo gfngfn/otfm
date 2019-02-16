@@ -105,53 +105,58 @@ let main fmt =
   | Otfm.SingleDecoder(d) ->
       begin
         print_endline "finish initializing decoder";
-        Otfm.cff d >>= fun cffinfo ->
-        let (x1, y1, x2, y2) = cffinfo.Otfm.font_bbox in
-        pp fmt "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
-        pp fmt "IsFixedPitch: %B\n" cffinfo.Otfm.is_fixed_pitch;
-        pp fmt "ItalicAngle: %d\n" cffinfo.Otfm.italic_angle;
-        pp fmt "UnderlinePosition: %d\n" cffinfo.Otfm.underline_position;
-        pp fmt "UnderlineThickness: %d\n" cffinfo.Otfm.underline_thickness;
-        pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
-        pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
-
-        charstring cffinfo gid >>= fun (bbox, pcs) ->
-
-        let fout = open_out outname in
-        Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
-        Printf.fprintf fout "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">";
-        let sx1 = svgx x1 in
-        let sy1 = svgx y1 in
-        let sx2 = svgx x2 in
-        let sy2 = svgx y2 in
-        Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"%d\" height=\"%d\" viewBox=\"%d %d %d %d\">" (sx2 - sx1) (sy2 - sy1) sx1 sy1 sx2 sy2;
-        Printf.fprintf fout "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"none\" stroke=\"blue\" />" sx1 sy1 (sx2 - sx1) (sy2 - sy1);
-
-        pcs |> List.iter (output_path fout);
-        output_bbox fmt fout bbox;
-(*
-        let path_sample = ((500, 100), [ Otfm.BezierTo((700, 200), (600, 300), (400, 400)); ]) in
-        output_path fout path_sample;
-        begin
-          match Otfm.charstring_bbox [path_sample] with
-          | None       -> Format.fprintf fmt "bbox = none\n"
-          | Some(bbox) -> output_bbox fmt fout bbox
-        end;
-*)
-        Printf.fprintf fout "</svg>";
-        close_out fout;
-
-        match cffinfo.Otfm.cid_info with
+        Otfm.cff d >>= function
         | None ->
-            pp fmt "Not a CIDFont\n";
+            pp fmt "Not a CFF\n";
             Ok()
 
-        | Some(cidinfo) ->
-            pp fmt "CIDFont\n";
-            pp fmt "Registry: '%s'\n" cidinfo.Otfm.registry;
-            pp fmt "Ordering: '%s'\n" cidinfo.Otfm.ordering;
-            pp fmt "Supplement: %d\n" cidinfo.Otfm.supplement;
-            Ok()
+        | Some(cffinfo) ->
+            let (x1, y1, x2, y2) = cffinfo.Otfm.font_bbox in
+            pp fmt "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
+            pp fmt "IsFixedPitch: %B\n" cffinfo.Otfm.is_fixed_pitch;
+            pp fmt "ItalicAngle: %d\n" cffinfo.Otfm.italic_angle;
+            pp fmt "UnderlinePosition: %d\n" cffinfo.Otfm.underline_position;
+            pp fmt "UnderlineThickness: %d\n" cffinfo.Otfm.underline_thickness;
+            pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
+            pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
+
+            charstring cffinfo gid >>= fun (bbox, pcs) ->
+
+            let fout = open_out outname in
+            Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
+            Printf.fprintf fout "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">";
+            let sx1 = svgx x1 in
+            let sy1 = svgx y1 in
+            let sx2 = svgx x2 in
+            let sy2 = svgx y2 in
+            Printf.fprintf fout "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"%d\" height=\"%d\" viewBox=\"%d %d %d %d\">" (sx2 - sx1) (sy2 - sy1) sx1 sy1 sx2 sy2;
+            Printf.fprintf fout "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"none\" stroke=\"blue\" />" sx1 sy1 (sx2 - sx1) (sy2 - sy1);
+
+            pcs |> List.iter (output_path fout);
+            output_bbox fmt fout bbox;
+    (*
+            let path_sample = ((500, 100), [ Otfm.BezierTo((700, 200), (600, 300), (400, 400)); ]) in
+            output_path fout path_sample;
+            begin
+              match Otfm.charstring_bbox [path_sample] with
+              | None       -> Format.fprintf fmt "bbox = none\n"
+              | Some(bbox) -> output_bbox fmt fout bbox
+            end;
+    *)
+            Printf.fprintf fout "</svg>";
+            close_out fout;
+
+            match cffinfo.Otfm.cid_info with
+            | None ->
+                pp fmt "Not a CIDFont\n";
+                Ok()
+
+            | Some(cidinfo) ->
+                pp fmt "CIDFont\n";
+                pp fmt "Registry: '%s'\n" cidinfo.Otfm.registry;
+                pp fmt "Ordering: '%s'\n" cidinfo.Otfm.ordering;
+                pp fmt "Supplement: %d\n" cidinfo.Otfm.supplement;
+                Ok()
       end
 
   | Otfm.TrueTypeCollection(_) ->
