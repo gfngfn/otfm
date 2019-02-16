@@ -1,6 +1,6 @@
 (* -*- coding: utf-8 -*- *)
 (*---------------------------------------------------------------------------
-   Copyright (c) 2013 Daniel C. Bünzli, and 2017-2018 Takashi Suwa. All rights reserved.
+   Copyright (c) 2013 Daniel C. Bünzli, and 2017-2019 Takashi Suwa. All rights reserved.
    Distributed under the ISC license, see terms at the end of the file.
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
@@ -358,23 +358,31 @@ let seek_table tag d () =
 
 let seek_required_table tag d () =
   seek_table tag d () >>= function
-    | Some(_) -> return ()
-    | None    -> err (`Missing_required_table(tag))
+  | Some(_) -> return ()
+  | None    -> err (`Missing_required_table(tag))
 
 let d_skip len d =
-  if miss d len then err_eoi d else
-    begin d.i_pos <- d.i_pos + len; Ok() end
+  if miss d len then err_eoi d else begin
+    d.i_pos <- d.i_pos + len;
+    return ()
+  end
 
 let raw_byte d =
   let j = d.i_pos in
-    begin d.i_pos <- d.i_pos + 1; unsafe_byte d.i j end
+  d.i_pos <- d.i_pos + 1;
+  unsafe_byte d.i j
 
 let d_bytes len d =
-  if miss d len then err_eoi d else
+  if miss d len then err_eoi d else begin
     let start = d.i_pos in
-      begin d.i_pos <- d.i_pos + len; return (String.sub d.i start len) end
+    d.i_pos <- d.i_pos + len;
+    return (String.sub d.i start len)
+  end
 
-let d_uint8 d = if miss d 1 then err_eoi d else return (raw_byte d)
+let d_uint8 d =
+  if miss d 1 then err_eoi d else
+    return (raw_byte d)
+
 let d_int8 d =
   d_uint8 d >>= fun i ->
   return (if i > 0x7F then i - 0x100 else i)
@@ -398,9 +406,7 @@ let d_uint24 d =
 
 let d_uint32 d =
   let open WideInt in
-    if miss d 4 then
-      err_eoi d
-    else
+    if miss d 4 then err_eoi d else
       let b0 = !% (raw_byte d) in
       let b1 = !% (raw_byte d) in
       let b2 = !% (raw_byte d) in
@@ -493,7 +499,7 @@ let d_repeat n df d =
 
 let d_list df d =
   d_uint16 d >>= fun count ->
-  Format.fprintf fmtgen "(d_list) count = %d\n" count;
+  Format.fprintf fmtgen "(d_list) count = %d@," count;
   d_repeat count df d
 
 
@@ -507,7 +513,7 @@ let d_list_filtered df predicate d =
       aux acc imax (i + 1)
   in
     d_uint16 d >>= fun count ->
-    Format.fprintf fmtgen "(d_list_filtered) count = %d\n" count;
+    Format.fprintf fmtgen "(d_list_filtered) count = %d@," count;
     aux Alist.empty count 0
 
 
@@ -549,10 +555,10 @@ let d_offset_opt (offset_origin : int) d : (int option) ok =
 
 let d_fetch offset_origin df d =
   let pos_before = cur_pos d in
-  Format.fprintf fmtgen "(d_fetch) | pos_before = %d\n" pos_before;
+  Format.fprintf fmtgen "(d_fetch) | pos_before = %d@," pos_before;
   d_offset offset_origin d >>= fun offset ->
-  Format.fprintf fmtgen "          | rel_offset = %d\n" (offset - offset_origin);
-  Format.fprintf fmtgen "          | offset     = %d\n" offset;
+  Format.fprintf fmtgen "          | rel_offset = %d@," (offset - offset_origin);
+  Format.fprintf fmtgen "          | offset     = %d@," offset;
   seek_pos offset d >>= fun () ->
   df d >>= fun res ->
   seek_pos (pos_before + 2) d >>= fun () ->
@@ -562,36 +568,36 @@ let d_fetch offset_origin df d =
 let d_fetch_opt offset_origin df d =
   let pos_before = cur_pos d in
   d_offset_opt offset_origin d >>= function
-    | None ->
-        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d\n" pos_before;
-        Format.fprintf fmtgen "              | NULL\n";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return None
+  | None ->
+      Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
+      Format.fprintf fmtgen "              | NULL@,";
+      seek_pos (pos_before + 2) d >>= fun () ->
+      return None
 
-    | Some(offset) ->
-        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d\n" pos_before;
-        Format.fprintf fmtgen "              | non-NULL\n";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun res ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return (Some(res))
+  | Some(offset) ->
+      Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
+      Format.fprintf fmtgen "              | non-NULL@,";
+      seek_pos offset d >>= fun () ->
+      df d >>= fun res ->
+      seek_pos (pos_before + 2) d >>= fun () ->
+      return (Some(res))
 
 
 let d_fetch_list offset_origin df d =
   let pos_before = cur_pos d in
-  Format.fprintf fmtgen "(d_fetch_list) | pos_before = %d\n" pos_before;
+  Format.fprintf fmtgen "(d_fetch_list) | pos_before = %d@," pos_before;
   d_offset_opt offset_origin d >>= function
-    | None ->
-        Format.fprintf fmtgen "               | NULL\n";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return []
+  | None ->
+      Format.fprintf fmtgen "               | NULL@,";
+      seek_pos (pos_before + 2) d >>= fun () ->
+      return []
 
-    | Some(offset) ->
-        Format.fprintf fmtgen "               | non-NULL\n";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun lst ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return lst
+  | Some(offset) ->
+      Format.fprintf fmtgen "               | non-NULL@,";
+      seek_pos offset d >>= fun () ->
+      df d >>= fun lst ->
+      seek_pos (pos_before + 2) d >>= fun () ->
+      return lst
 
 
 let d_fetch_long offset_origin df d =
@@ -680,33 +686,41 @@ let decoder_of_ttc_element ttcelem =
 
 let init_decoder d =
   match d.state with
-  | Ready    -> begin d.ctx <- `Table_directory; return () end
-  | Fatal(e) -> err e
-  | Start    ->
-      match d_structure d with
-      | Ok(()) as ok -> ok
-      | Error(e)     -> err_fatal d e
+  | Ready ->
+      d.ctx <- `Table_directory;
+      return ()
+
+  | Fatal(e) ->
+      err e
+
+  | Start ->
+      begin
+        match d_structure d with
+        | Ok(()) as ok -> ok
+        | Error(e)     -> err_fatal d e
+      end
 
 
 let flavour d =
-    init_decoder d >>= fun () -> return (d.flavour)
+    init_decoder d >>= fun () ->
+    return (d.flavour)
 
 
 let table_list d =
   let tags d = List.rev_map (fun (t, _, _) -> t) d.tables in
-    init_decoder d >>= fun () -> return (tags d)
+  init_decoder d >>= fun () -> return (tags d)
 
 
 let table_mem d tag =
   let exists_tag tag d = List.exists (fun (t, _, _) -> tag = t) d.tables in
-    init_decoder d >>= fun () -> return (exists_tag tag d)
+  init_decoder d >>= fun () -> return (exists_tag tag d)
 
 
 let table_raw d tag =
   init_decoder   d >>=
   seek_table tag d >>= function
-    | None      -> return None
-    | Some(len) -> d_bytes len d >>= fun bytes -> return (Some(bytes))
+  | None      -> return None
+  | Some(len) -> d_bytes len d >>= fun bytes -> return (Some(bytes))
 
 
 (* -- convenience -- *)
@@ -755,9 +769,9 @@ let postscript_name d = (* -- rigorous postscript name lookup, see OT spec p. 39
       with Exit -> invalid name
     in
     d_uint16 d >>= function
-      | 3 -> look_for 1 0x409 d_utf_16be
-      | 1 -> look_for 0 0 d_bytes
-      | _ -> d_skip (5 * 2) d >>= loop (ncount - 1)
+    | 3 -> look_for 1 0x409 d_utf_16be
+    | 1 -> look_for 0 0 d_bytes
+    | _ -> d_skip (5 * 2) d >>= loop (ncount - 1)
   in
   loop ncount ()
 
@@ -875,7 +889,7 @@ let cmap d : (cmap_subtable list) ok =
   seek_required_table Tag.cmap d >>= fun () ->
   let offset_cmap = cur_pos d in
   d_uint16 d >>= fun version ->                           (* -- cmap header. -- *)
-  if version <> 0 then err_version d (!% version) else
+  confirm (version = 0) (e_version d (!% version)) >>= fun () ->
   d_list (d_encoding_record offset_cmap) d >>= fun rawsubtbllst ->
   let subtbllst =
     rawsubtbllst |> List.filter (fun (_, (pid, eid, format)) ->
@@ -901,16 +915,16 @@ let cmap d : (cmap_subtable list) ok =
 
 let cmap_subtable_ids (subtbl : cmap_subtable) : int * int * int =
   let (_, ids) = subtbl in
-    ids
+  ids
 
 
 let cmap_subtable (subtbl : cmap_subtable) f acc =
   let ((d, offset), _) = subtbl in
-  Format.fprintf debugfmt "subtable offset = %d\n" offset;
+  Format.fprintf debugfmt "subtable offset = %d@," offset;
   seek_pos offset d >>= fun () ->
   (* -- now the position is set at the beginning of the designated cmap subtable --  *)
   d_uint16 d >>= fun format ->
-  Format.fprintf debugfmt "subtable format = %d\n" format;
+  Format.fprintf debugfmt "subtable format = %d@," format;
   match format with
   | 4  -> d_cmap_4 d f acc
   | 12 -> d_cmap_12 d f acc
@@ -941,7 +955,8 @@ let init_glyf d () : (int option) ok =
       return None
 
   | Untouched ->
-      seek_table Tag.glyf d () >>= function
+      begin
+        seek_table Tag.glyf d () >>= function
         | None ->
             d.glyf_pos <- Nonexistent;
             return None
@@ -950,6 +965,7 @@ let init_glyf d () : (int option) ok =
             let pos = d.i_pos in
             d.glyf_pos <- AlreadyGot(pos);
             return (Some(pos))
+      end
 
 
 let d_rev_end_points d ccount =
@@ -983,25 +999,25 @@ let d_rev_flags d pt_count =
 
 let d_rev_coord short_mask same_mask d flags =
   let rec loop x acc = function
-  | f :: fs ->
-      if f land short_mask > 0 then
-        begin
-          d_uint8 d >>= fun dx ->
-          let x = x + (if f land same_mask > 0 then dx else -dx) in
-          loop x (x :: acc) fs
-        end
-      else
-        begin
-          if f land same_mask > 0 then
+    | f :: fs ->
+        if f land short_mask > 0 then
+          begin
+            d_uint8 d >>= fun dx ->
+            let x = x + (if f land same_mask > 0 then dx else -dx) in
             loop x (x :: acc) fs
-          else
-            d_int16 d >>= fun dx ->
-            let x = x + dx in
-            loop x (x :: acc) fs
-        end
+          end
+        else
+          begin
+            if f land same_mask > 0 then
+              loop x (x :: acc) fs
+            else
+              d_int16 d >>= fun dx ->
+              let x = x + dx in
+              loop x (x :: acc) fs
+          end
 
-  | [] ->
-      return acc
+    | [] ->
+        return acc
   in
   loop 0 [] flags
 
@@ -1034,17 +1050,19 @@ let d_simple_glyph d ccount =
             | e :: es when e = i -> (true, es)
             | es                 -> (false, es)
           in
-          match acc with
-          | c :: cs ->
-              let new_pt = (f land 1 > 0,  List.hd rxs, List.hd rys) in
-              let acc' =
-                if new_contour then [new_pt] :: c :: cs else
-                (new_pt :: c) :: cs
-              in
-              combine repts fs (List.tl rxs) (List.tl rys) (i - 1) acc'
+          begin
+            match acc with
+            | c :: cs ->
+                let new_pt = (f land 1 > 0,  List.hd rxs, List.hd rys) in
+                let acc' =
+                  if new_contour then [new_pt] :: c :: cs else
+                  (new_pt :: c) :: cs
+                in
+                combine repts fs (List.tl rxs) (List.tl rys) (i - 1) acc'
 
-          | _ ->
-              assert false
+            | _ ->
+                assert false
+          end
     in
     return (combine (List.tl rev_epts) rev_flags rxs rys (pt_count - 1) ([] :: []))
 
@@ -1081,8 +1099,8 @@ let d_composite_glyph d =
         loop accnew
       else
         return (Alist.to_list accnew)
-    in
-    loop Alist.empty
+  in
+  loop Alist.empty
 
 
 let glyf d loc =
@@ -1209,18 +1227,22 @@ let d_hm_count d =
 
 
 let rec d_hmetric goffset i f acc last_adv d =
-  if i = 0 then return (acc, last_adv) else
-  d_uint16 d >>= fun adv ->
-  d_int16  d >>= fun lsb ->
-  let acc' = f acc (goffset - i) adv lsb in
-  d_hmetric goffset (i - 1) f acc' adv d
+  if i = 0 then
+    return (acc, last_adv)
+  else
+    d_uint16 d >>= fun adv ->
+    d_int16  d >>= fun lsb ->
+    let acc' = f acc (goffset - i) adv lsb in
+    d_hmetric goffset (i - 1) f acc' adv d
 
 
 let rec d_hlsb goffset i f acc adv d =
-  if i = 0 then return acc else
-  d_int16 d >>= fun lsb ->
-  let acc' = f acc (goffset - i) adv lsb in
-  d_hlsb goffset (i - 1) f acc' adv d
+  if i = 0 then
+    return acc
+  else
+    d_int16 d >>= fun lsb ->
+    let acc' = f acc (goffset - i) adv lsb in
+    d_hlsb goffset (i - 1) f acc' adv d
 
 
 let hmtx d f acc =
@@ -1273,7 +1295,7 @@ let maxp d =
   init_decoder d >>=
   seek_required_table Tag.maxp d >>= fun () ->
   d_uint32 d >>= fun version ->
-  if version <> !%% 0x00010000L then err_version d version else
+  confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
   d_uint16 d >>= fun maxp_num_glyphs ->
   d_uint16 d >>= fun maxp_max_points ->
   d_uint16 d >>= fun maxp_max_contours ->
@@ -1423,7 +1445,7 @@ let name d f acc =
   seek_required_table Tag.name d >>= fun () ->
   let pos_name = cur_pos d in
   d_uint16 d >>= fun version ->
-  if version < 0 || version > 1 then err_version d (!% version) else
+  confirm (0 <= version && version <= 1) (e_version d (!% version)) >>= fun () ->
   d_uint16 d >>= fun ncount ->
   d_uint16 d >>= fun soff ->
   let cpos = cur_pos d in
@@ -1478,7 +1500,7 @@ let os2 d =
   init_decoder d >>=
   seek_required_table Tag.os2 d >>= fun () ->
   d_uint16 d >>= fun version ->
-  if version > 0x0004 then err_version d (!% version) else
+  confirm (version <= 0x0004) (e_version d (!% version)) >>= fun () ->
   let opt v dec d =
     if version < v then return None else dec d >>= fun v -> return (Some(v))
   in
@@ -1555,30 +1577,39 @@ let kern_info c =
 
 
 let rec kern_tables ntables t p acc d =
-  if ntables = 0 then return acc else
-  d_uint16 d >>= fun version ->
-  if version > 0 then err_version d (!% version) else
-  d_uint16 d >>= fun len ->
-  d_uint16 d >>= fun coverage ->
-  let format = coverage lsr 8 in
-  let skip acc =
-    d_skip (len - 3 * 2) d >>= fun () ->
-    kern_tables (ntables - 1) t p acc d
-  in
-  if format <> 0 then skip acc else
-  match t acc (kern_info coverage) with
-  | `Skip, acc -> skip acc
-  | `Fold, acc ->
-      let rec d_pairs len acc d =
-        if len < 3 * 2 then d_skip len d >>= fun () -> return acc else
-        d_uint16 d >>= fun left ->
-        d_uint16 d >>= fun right ->
-        d_int16 d >>= fun values ->
-        d_pairs (len - 3 * 2) (p acc left right values) d
-      in
-      d_skip (4 * 2)  d >>= fun () ->
-      d_pairs len acc d >>= fun acc ->
+  if ntables = 0 then
+    return acc
+  else
+    d_uint16 d >>= fun version ->
+    confirm (version = 0) (e_version d (!% version)) >>= fun () ->
+    d_uint16 d >>= fun len ->
+    d_uint16 d >>= fun coverage ->
+    let format = coverage lsr 8 in
+    let skip acc =
+      d_skip (len - 3 * 2) d >>= fun () ->
       kern_tables (ntables - 1) t p acc d
+    in
+    if format <> 0 then
+      skip acc
+    else
+      match t acc (kern_info coverage) with
+      | (`Skip, acc) ->
+          skip acc
+
+      | (`Fold, acc) ->
+          let rec d_pairs len acc d =
+            if len < 3 * 2 then
+              d_skip len d >>= fun () ->
+              return acc
+            else
+              d_uint16 d >>= fun left ->
+              d_uint16 d >>= fun right ->
+              d_int16 d >>= fun values ->
+              d_pairs (len - 3 * 2) (p acc left right values) d
+          in
+          d_skip (4 * 2)  d >>= fun () ->
+          d_pairs len acc d >>= fun acc ->
+          kern_tables (ntables - 1) t p acc d
 
 
 let kern d t p acc =
@@ -1589,7 +1620,7 @@ let kern d t p acc =
 
   | Some(_) ->
       d_uint16 d >>= fun version ->
-      if version > 0 then err_version d (!% version) else
+      confirm (version = 0) (e_version d (!% version)) >>= fun () ->
       d_uint16 d >>= fun ntables ->
       kern_tables ntables t p acc d
 
@@ -1597,13 +1628,10 @@ let kern d t p acc =
 (* -- loca table -- *)
 
 let d_loca_format d () =
-  d_uint16 d >>= fun i ->
-  if i > 1 then
-    err_loca_format d i
-  else if i = 0 then
-    return ShortLocFormat
-  else
-    return LongLocFormat
+  d_uint16 d >>= function
+  | 0 -> return ShortLocFormat
+  | 1 -> return LongLocFormat
+  | i -> err_loca_format d i
 
 
 let init_loca d () =
@@ -1710,10 +1738,10 @@ let combine_coverage d coverage lst =
 
 let d_fetch offset_origin df d =
   let pos_before = cur_pos d in
-  Format.fprintf fmtgen "(d_fetch) | pos_before = %d\n" pos_before;
+  Format.fprintf fmtgen "(d_fetch) | pos_before = %d@," pos_before;
   d_offset offset_origin d >>= fun offset ->
-  Format.fprintf fmtgen "          | rel_offset = %d\n" (offset - offset_origin);
-  Format.fprintf fmtgen "          | offset     = %d\n" offset;
+  Format.fprintf fmtgen "          | rel_offset = %d@," (offset - offset_origin);
+  Format.fprintf fmtgen "          | offset     = %d@," offset;
   seek_pos offset d >>= fun () ->
   df d >>= fun res ->
   seek_pos (pos_before + 2) d >>= fun () ->
@@ -1724,14 +1752,14 @@ let d_fetch_opt offset_origin df d =
   let pos_before = cur_pos d in
   d_offset_opt offset_origin d >>= function
     | None ->
-        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d\n" pos_before;
+        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
         Format.fprintf fmtgen "              | NULL";
         seek_pos (pos_before + 2) d >>= fun () ->
         return None
 
     | Some(offset) ->
-        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d\n" pos_before;
-        Format.fprintf fmtgen "              | non-NULL\n";
+        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
+        Format.fprintf fmtgen "              | non-NULL@,";
         seek_pos offset d >>= fun () ->
         df d >>= fun res ->
         seek_pos (pos_before + 2) d >>= fun () ->
@@ -1740,15 +1768,15 @@ let d_fetch_opt offset_origin df d =
 
 let d_fetch_list offset_origin df d =
   let pos_before = cur_pos d in
-  Format.fprintf fmtgen "(d_fetch_list) | pos_before = %d\n" pos_before;
+  Format.fprintf fmtgen "(d_fetch_list) | pos_before = %d@," pos_before;
   d_offset_opt offset_origin d >>= function
     | None ->
-        Format.fprintf fmtgen "               | NULL\n";
+        Format.fprintf fmtgen "               | NULL@,";
         seek_pos (pos_before + 2) d >>= fun () ->
         return []
 
     | Some(offset) ->
-        Format.fprintf fmtgen "               | non-NULL\n";
+        Format.fprintf fmtgen "               | non-NULL@,";
         seek_pos offset d >>= fun () ->
         df d >>= fun lst ->
         seek_pos (pos_before + 2) d >>= fun () ->
@@ -1778,14 +1806,20 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (df : decoder -> 
   combine_coverage d coverage datalst
 
 
-type gxxx_script = decoder * string * int * int * int
+type gxxx_script = {
+  script_decoder             : decoder;
+  script_tag                 : string;
+  script_offset_Script_table : int;
+  script_offset_FeatureList  : int;
+  script_offset_LookupList   : int;
+}
 
 type gsub_script = gxxx_script
 
 type gpos_script = gxxx_script
 
 
-let gxxx_script_tag (_, scriptTag, _, _, _) = scriptTag
+let gxxx_script_tag script = script.script_tag
 
 let gsub_script_tag = gxxx_script_tag
 
@@ -1806,22 +1840,28 @@ let d_tag_offset_list d : ((string * int) list) ok =
 let gxxx_script tag_Gxxx d : ((gxxx_script list) option) ok =
   init_decoder d >>=
   seek_table tag_Gxxx d >>= function
-    | None ->
-        return None
+  | None ->
+      return None
 
-    | Some(_) ->
-        let offset_Gxxx = cur_pos d in
-        d_uint32 d >>= fun version ->
-        confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
-        d_fetch offset_Gxxx d_tag_offset_list d >>= fun scriptList ->
-        d_offset offset_Gxxx d >>= fun offset_FeatureList ->
-        d_offset offset_Gxxx d >>= fun offset_LookupList ->
-        let scriptList_res =
-          scriptList |> List.map (fun (scriptTag, offset_Script_table) ->
-            (d, scriptTag, offset_Script_table, offset_FeatureList, offset_LookupList)
-          )
-        in
-        return (Some(scriptList_res))
+  | Some(_) ->
+      let offset_Gxxx = cur_pos d in
+      d_uint32 d >>= fun version ->
+      confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
+      d_fetch offset_Gxxx d_tag_offset_list d >>= fun scriptList ->
+      d_offset offset_Gxxx d >>= fun offset_FeatureList ->
+      d_offset offset_Gxxx d >>= fun offset_LookupList ->
+      let scriptList_res =
+        scriptList |> List.map (fun (scriptTag, offset_Script_table) ->
+          {
+            script_decoder             = d;
+            script_tag                 = scriptTag;
+            script_offset_Script_table = offset_Script_table;
+            script_offset_FeatureList  = offset_FeatureList;
+            script_offset_LookupList   = offset_LookupList;
+          }
+        )
+      in
+      return (Some(scriptList_res))
 
 
 let gsub_script = gxxx_script Tag.gsub
@@ -1829,32 +1869,58 @@ let gsub_script = gxxx_script Tag.gsub
 let gpos_script = gxxx_script Tag.gpos
 
 
-type gxxx_langsys = decoder * string * int * int * int
+type gxxx_langsys = {
+  langsys_decoder            : decoder;
+  langsys_tag                : string;
+  langsys_offset_LangSys     : int;
+  langsys_offset_FeatureList : int;
+  langsys_offset_LookupList  : int;
+}
 
 type gsub_langsys = gxxx_langsys
 
 type gpos_langsys = gxxx_langsys
 
 
-let gxxx_langsys_tag (_, tag, _, _, _) = tag
+let gxxx_langsys_tag langsys = langsys.langsys_tag
 
 let gsub_langsys_tag = gxxx_langsys_tag
 
 let gpos_langsys_tag = gxxx_langsys_tag
 
 
-let gxxx_langsys (script : gxxx_script) : (gxxx_langsys * gxxx_langsys list) ok =
-  let (d, scriptTag, offset_Script_table, offset_FeatureList, offset_LookupList) = script in
-  Format.fprintf fmtGSUB "offset_Script_table = %d\n" offset_Script_table;  (* for debug *)
+let gxxx_langsys (script : gxxx_script) : (gxxx_langsys option * gxxx_langsys list) ok =
+  let d = script.script_decoder in
+  let offset_Script_table = script.script_offset_Script_table in
+  let offset_FeatureList = script.script_offset_FeatureList in
+  let offset_LookupList = script.script_offset_LookupList in
+  Format.fprintf fmtGSUB "offset_Script_table = %d@," offset_Script_table;  (* for debug *)
   seek_pos offset_Script_table d >>= fun () ->
-  d_offset offset_Script_table d >>= fun offset_DefaultLangSys ->
+  d_offset_opt offset_Script_table d >>= fun offset_DefaultLangSys_opt ->
   d_list (d_tag_offset_record offset_Script_table) d >>= fun langSysList ->
   let defaultLangSys_res =
-    (d, "DFLT", offset_DefaultLangSys, offset_FeatureList, offset_LookupList)
+    match offset_DefaultLangSys_opt with
+    | None ->
+        None
+
+    | Some(offset_DefaultLangSys) ->
+        Some{
+          langsys_decoder            = d;
+          langsys_tag                = "DFLT";
+          langsys_offset_LangSys     = offset_DefaultLangSys;
+          langsys_offset_FeatureList = offset_FeatureList;
+          langsys_offset_LookupList  = offset_LookupList;
+        }
   in
   let langSysList_res =
     langSysList |> List.map (fun (langSysTag, offset_LangSys_table) ->
-      (d, langSysTag, offset_LangSys_table, offset_FeatureList, offset_LookupList)
+      {
+        langsys_decoder            = d;
+        langsys_tag                = langSysTag;
+        langsys_offset_LangSys     = offset_LangSys_table;
+        langsys_offset_FeatureList = offset_FeatureList;
+        langsys_offset_LookupList  = offset_LookupList;
+      }
     )
   in
   return (defaultLangSys_res, langSysList_res)
@@ -1865,14 +1931,19 @@ let gsub_langsys = gxxx_langsys
 let gpos_langsys = gxxx_langsys
 
 
-type gxxx_feature = decoder * string * int * int
+type gxxx_feature = {
+  feature_decoder           : decoder;
+  feature_tag               : string;
+  feature_offset_Feature    : int;
+  feature_offset_LookupList : int;
+}
 
 type gsub_feature = gxxx_feature
 
 type gpos_feature = gxxx_feature
 
 
-let gxxx_feature_tag (_, tag, _, _) = tag
+let gxxx_feature_tag feature = feature.feature_tag
 
 let gsub_feature_tag = gxxx_feature_tag
 
@@ -1880,7 +1951,13 @@ let gpos_feature_tag = gxxx_feature_tag
 
 
 let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature list) ok =
-  let (d, langSysTag, offset_LangSys_table, offset_FeatureList, offset_LookupList) = langsys in
+  let d = langsys.langsys_decoder in
+  let offset_LangSys_table = langsys.langsys_offset_LangSys in
+  let offset_FeatureList = langsys.langsys_offset_FeatureList in
+  let offset_LookupList = langsys.langsys_offset_LookupList in
+
+  Format.fprintf fmtGSUB "offset_LangSys_table = %d@," offset_LangSys_table;
+
   seek_pos offset_LangSys_table d >>= fun () ->
     (* -- now the position is set to the beginning of the required LangSys table *)
   d_uint16 d >>= fun offset_LookupOrder ->
@@ -1888,12 +1965,17 @@ let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature 
   d_uint16 d >>= fun requiredFeatureIndex ->
   d_list d_uint16 d >>= fun featureIndex_list ->
     (* -- now we are going to see FeatureList table -- *)
-  Format.fprintf fmtGSUB "offset_FeatureList = %d\n" offset_FeatureList;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_FeatureList = %d@," offset_FeatureList;  (* for debug *)
   seek_pos offset_FeatureList d >>= fun () ->
   d_list_filtered (d_tag_offset_record offset_FeatureList) (fun fi -> List.mem fi featureIndex_list) d >>= fun featureList ->
   let featureList_res =
     featureList |> List.map (fun (featureTag, offset_Feature_table) ->
-      (d, featureTag, offset_Feature_table, offset_LookupList)
+      {
+        feature_decoder = d;
+        feature_tag = featureTag;
+        feature_offset_Feature = offset_Feature_table;
+        feature_offset_LookupList = offset_LookupList;
+      }
     )
   in
   let featurereq =
@@ -1914,7 +1996,14 @@ let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature 
       return (None, featureList_res)
 
   | Some((tagreq, offsetreq)) ->
-      let featurereq = (d, tagreq, offsetreq, offset_LookupList) in
+      let featurereq =
+        {
+          feature_decoder = d;
+          feature_tag = tagreq;
+          feature_offset_Feature = offsetreq;
+          feature_offset_LookupList = offset_LookupList;
+        }
+      in
       return (Some(featurereq), featureList_res)
 
 
@@ -1924,17 +2013,19 @@ let gpos_feature = gxxx_feature
 
 
 let gxxx_subtable_list (type a) (lookup_gxxx : decoder -> a ok) (feature : gxxx_feature) : (a list) ok =
-  let (d, featureTag, offset_Feature_table, offset_LookupList) = feature in
-  Format.fprintf fmtGSUB "offset_Feature_table = %d\n" offset_Feature_table;  (* for debug *)
+  let d = feature.feature_decoder in
+  let offset_Feature_table = feature.feature_offset_Feature in
+  let offset_LookupList = feature.feature_offset_LookupList in
+  Format.fprintf fmtGSUB "offset_Feature_table = %d@," offset_Feature_table;  (* for debug *)
   seek_pos offset_Feature_table d >>= fun () ->
     (* -- now the position is set to the beginning of the required Feature table -- *)
-  Format.fprintf fmtGSUB "---- Feature table ----\n";  (* for debug *)
+  Format.fprintf fmtGSUB "---- Feature table ----@,";  (* for debug *)
   d_uint16 d >>= fun featureParams ->
 (*
   confirm (featureParams = 0) (`Invalid_feature_params(featureParams)) >>= fun () ->
 *)
   d_list d_uint16 d >>= fun lookupListIndexList ->
-  Format.fprintf fmtGSUB "offset_LookupList = %d\n" offset_LookupList;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_LookupList = %d@," offset_LookupList;  (* for debug *)
   seek_pos offset_LookupList d >>= fun () ->
     (* -- now the position is set to the beginning of the LookupList table -- *)
   d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookupListIndexList) d >>= fun offsetlst_Lookup_table ->
@@ -1946,7 +2037,7 @@ let d_ligature_table d : (glyph_id list * glyph_id) ok =
           to the beginning of a Ligature table [page 255] -- *)
   d_uint16 d >>= fun ligGlyph ->
   d_uint16 d >>= fun compCount ->
-  Format.fprintf fmtGSUB "    [ligGlyph = %d ----> compCount = %d]\n" ligGlyph compCount;
+  Format.fprintf fmtGSUB "    [ligGlyph = %d ----> compCount = %d]@," ligGlyph compCount;
   d_repeat (compCount - 1) d_uint16 d >>= fun component ->
   return (component, ligGlyph)
 
@@ -1955,7 +2046,7 @@ let d_ligature_set_table d : ((glyph_id list * glyph_id) list) ok =
     (* -- the position is supposed to be set
           to the beginning of a LigatureSet table [page 254] -- *)
   let offset_LigatureSet_table = cur_pos d in
-  Format.fprintf fmtGSUB "offset_LigatureSet_table = %d\n" offset_LigatureSet_table;
+  Format.fprintf fmtGSUB "offset_LigatureSet_table = %d@," offset_LigatureSet_table;
   d_list (d_fetch offset_LigatureSet_table d_ligature_table) d
 
 
@@ -1963,9 +2054,9 @@ let d_ligature_substitution_subtable d : ((glyph_id * (glyph_id list * glyph_id)
     (* -- the position is supposed to be set
           to the beginning of Ligature SubstFormat1 subtable [page 254] -- *)
   let offset_Substitution_table = cur_pos d in
-  Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_Substitution_table = %d@," offset_Substitution_table;  (* for debug *)
   d_uint16 d >>= fun substFormat ->
-  Format.fprintf fmtGSUB "substFormat = %d\n" substFormat;  (* for debug *)
+  Format.fprintf fmtGSUB "substFormat = %d@," substFormat;  (* for debug *)
   confirm (substFormat = 1) (e_version d (!% substFormat)) >>= fun () ->
   d_with_coverage offset_Substitution_table d_ligature_set_table d
 
@@ -1980,7 +2071,7 @@ let d_alternate_substitution_subtable d : ((glyph_id * glyph_id list) list) ok =
     (* -- the position is supposed to be set
        to the beginning of Alternate SubstFormat1 subtable [page 253] -- *)
   let offset_Substitution_table = cur_pos d in
-  Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_Substitution_table = %d@," offset_Substitution_table;  (* for debug *)
   d_uint16 d >>= fun substFormat ->
   confirm (substFormat = 1) (e_version d (!% substFormat)) >>= fun () ->
   d_with_coverage offset_Substitution_table d_alternate_set_table d
@@ -2000,7 +2091,7 @@ let d_single_substitution_subtable d : ((glyph_id * glyph_id) list) ok =
     (* -- the position is supposed to be set
        to the beginning of Single SubstFormat1 or Single SubstFormat2 subtable [page 251] -- *)
   let offset_Substitution_table = cur_pos d in
-  Format.fprintf fmtGSUB "offset_Substitution_table = %d\n" offset_Substitution_table;  (* for debug *)
+  Format.fprintf fmtGSUB "offset_Substitution_table = %d@," offset_Substitution_table;  (* for debug *)
   d_uint16 d >>= fun substFormat ->
   match substFormat with
   | 1 -> d_single_substitution_subtable_format_1 offset_Substitution_table d
@@ -2013,9 +2104,9 @@ let lookup_gsub d : gsub_subtable ok =
           to the beginning of a Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
   d_uint16 d >>= fun lookupType ->
-  Format.fprintf fmtGSUB "# lookupType = %d\n" lookupType;  (* for debug *)
+  Format.fprintf fmtGSUB "# lookupType = %d@," lookupType;  (* for debug *)
   d_uint16 d >>= fun lookupFlag ->
-  Format.fprintf fmtGSUB "# lookupFlag = %d\n" lookupFlag;  (* for debug *)
+  Format.fprintf fmtGSUB "# lookupFlag = %d@," lookupFlag;  (* for debug *)
 (*
   let rightToLeft      = 0 < lookupFlag land 1 in
   let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
@@ -2024,7 +2115,7 @@ let lookup_gsub d : gsub_subtable ok =
 *)
   match lookupType with
   | 1 ->  (* -- single substitution -- *)
-      Format.fprintf fmtGSUB "LookupType 1\n";
+      Format.fprintf fmtGSUB "LookupType 1@,";
       d_list (d_fetch offset_Lookup_table d_single_substitution_subtable) d >>= fun gid_single_assoc_list ->
       return (SingleSubtable(List.concat gid_single_assoc_list))
 
@@ -2032,12 +2123,12 @@ let lookup_gsub d : gsub_subtable ok =
       return UnsupportedGSUBSubtable  (* temporary *)
 
   | 3 ->  (* -- alternate substitution -- *)
-      Format.fprintf fmtGSUB "LookupType 3\n";
+      Format.fprintf fmtGSUB "LookupType 3@,";
       d_list (d_fetch offset_Lookup_table d_alternate_substitution_subtable) d >>= fun gid_altset_assoc_list ->
       return (AlternateSubtable(List.concat gid_altset_assoc_list))
 
   | 4 ->  (* -- ligature substitution -- *)
-      Format.fprintf fmtGSUB "LookupType 4\n";  (* for debug *)
+      Format.fprintf fmtGSUB "LookupType 4@,";  (* for debug *)
       d_list (d_fetch offset_Lookup_table d_ligature_substitution_subtable) d >>= fun gidfst_ligset_assoc_list ->
       return (LigatureSubtable(List.concat gidfst_ligset_assoc_list))
 
@@ -2429,7 +2520,7 @@ let lookup_gpos_exact offsetlst_SubTable lookupType d : (gpos_subtable list) ok 
       seek_every_pos offsetlst_SubTable d_single_adjustment_subtable d
 
   | 2 ->  (* -- Pair adjustment -- *)
-      Format.fprintf fmtGSUB "number of subtables = %d\n" (List.length offsetlst_SubTable);  (* for debug *)
+      Format.fprintf fmtGSUB "number of subtables = %d@," (List.length offsetlst_SubTable);  (* for debug *)
       seek_every_pos offsetlst_SubTable d_pair_adjustment_subtable d
 
   | 3 ->  (* -- Cursive attachment -- *)
@@ -2474,9 +2565,9 @@ let lookup_gpos d : (gpos_subtable list) ok =
           to the beginning of Lookup table [page 137] -- *)
   let offset_Lookup_table = cur_pos d in
   d_uint16 d >>= fun lookupType ->
-  Format.fprintf fmtGSUB "# lookupType = %d\n" lookupType;  (* for debug *)
+  Format.fprintf fmtGSUB "# lookupType = %d@," lookupType;  (* for debug *)
   d_uint16 d >>= fun lookupFlag ->
-  Format.fprintf fmtGSUB "# lookupFlag = %d\n" lookupFlag;  (* for debug *)
+  Format.fprintf fmtGSUB "# lookupFlag = %d@," lookupFlag;  (* for debug *)
 (*
   let rightToLeft      = 0 < lookupFlag land 1 in
   let ignoreBaseGlyphs = 0 < lookupFlag land 2 in
@@ -2823,7 +2914,7 @@ let d_math_kern d : math_kern ok =
 
 
 let d_math_kern_info_record offset_MathKernInfo_table d : math_kern_info_record ok =
-  Format.fprintf fmtMATH "### MathKernInfoRecord[1] = %d\n" (cur_pos d);
+  Format.fprintf fmtMATH "### MathKernInfoRecord[1] = %d@," (cur_pos d);
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topRightMathKern_opt ->
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun topLeftMathKern_opt ->
   d_fetch_opt offset_MathKernInfo_table d_math_kern d >>= fun bottomRightMathKern_opt ->
@@ -2838,24 +2929,24 @@ let d_math_kern_info_record offset_MathKernInfo_table d : math_kern_info_record 
 
 let d_math_kern_info d : ((glyph_id * math_kern_info_record) list) ok =
   let offset_MathKernInfo_table = cur_pos d in
-  Format.fprintf fmtMATH "## MathKernInfo[1] = %d\n" (cur_pos d);
+  Format.fprintf fmtMATH "## MathKernInfo[1] = %d@," (cur_pos d);
   d_fetch offset_MathKernInfo_table d_coverage d >>= fun coverage ->
-  Format.fprintf fmtMATH "## MathKernInfo[2] = %d\n" (cur_pos d);
+  Format.fprintf fmtMATH "## MathKernInfo[2] = %d@," (cur_pos d);
   d_list (d_math_kern_info_record offset_MathKernInfo_table) d >>= fun mvrlst ->
-  Format.fprintf fmtMATH "## MathKernInfo[3] = %d\n" (cur_pos d);
+  Format.fprintf fmtMATH "## MathKernInfo[3] = %d@," (cur_pos d);
   combine_coverage d coverage mvrlst
 
 
 let d_math_glyph_info d : math_glyph_info ok =
   let offset_MathGlyphInfo_table = cur_pos d in
-  Format.fprintf fmtMATH "# jump to MathItalicsCorrection = %d\n" (cur_pos d);
+  Format.fprintf fmtMATH "# jump to MathItalicsCorrection = %d@," (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_italics_correction_info d >>= fun mathItalicsCorrection ->
-  Format.fprintf fmtMATH "# jump to MathTopAccentAttachment = %d\n" (cur_pos d);
+  Format.fprintf fmtMATH "# jump to MathTopAccentAttachment = %d@," (cur_pos d);
   d_fetch offset_MathGlyphInfo_table d_math_top_accent_attachment d >>= fun mathTopAccentAttachment ->
   d_fetch_opt offset_MathGlyphInfo_table d_coverage d >>= fun _ ->
-  Format.fprintf fmtMATH "# jump to MathKernInfo = %d\n" (cur_pos d);
+  Format.fprintf fmtMATH "# jump to MathKernInfo = %d@," (cur_pos d);
   d_fetch_list offset_MathGlyphInfo_table d_math_kern_info d >>= fun mathKernInfo ->
-  Format.fprintf fmtMATH "# END MathGlyphInfo\n";
+  Format.fprintf fmtMATH "# END MathGlyphInfo@,";
   return {
     math_italics_correction    = mathItalicsCorrection;
     math_top_accent_attachment = mathTopAccentAttachment;
@@ -2893,11 +2984,11 @@ let d_glyph_assembly d : (math_value_record * glyph_part_record list) ok =
 
 let d_math_glyph_construction d : math_glyph_construction ok =
   let offset_MathGlyphConstruction_table = cur_pos d in
-  Format.fprintf fmtMATH "| | {GlyphAssembly\n";
+  Format.fprintf fmtMATH "| | {GlyphAssembly@,";
   d_fetch_opt offset_MathGlyphConstruction_table d_glyph_assembly d >>= fun glyphAssembly ->
-  Format.fprintf fmtMATH "| | MathGlyphVariantRecord\n";
+  Format.fprintf fmtMATH "| | MathGlyphVariantRecord@,";
   d_list d_math_glyph_variant_record d >>= fun mathGlyphVariantRecord_lst ->
-  Format.fprintf fmtMATH "| | END MathGlyphConstruction}\n";
+  Format.fprintf fmtMATH "| | END MathGlyphConstruction}@,";
   return {
     glyph_assembly                 = glyphAssembly;
     math_glyph_variant_record_list = mathGlyphVariantRecord_lst;
@@ -2907,16 +2998,16 @@ let d_math_glyph_construction d : math_glyph_construction ok =
 let d_math_variants d : math_variants ok =
   let offset_MathVariants_table = cur_pos d in
   d_uint16 d >>= fun minConnectorOverlap ->
-  Format.fprintf fmtMATH "| VertGlyphCoverage\n";
+  Format.fprintf fmtMATH "| VertGlyphCoverage@,";
   d_fetch offset_MathVariants_table d_coverage d >>= fun vertGlyphCoverage ->
-  Format.fprintf fmtMATH "| HorizGlyphCoverage\n";
+  Format.fprintf fmtMATH "| HorizGlyphCoverage@,";
   d_fetch offset_MathVariants_table d_coverage d >>= fun horizGlyphCoverage ->
   d_uint16 d >>= fun vertGlyphCount ->
   d_uint16 d >>= fun horizGlyphCount ->
   let df = d_fetch offset_MathVariants_table d_math_glyph_construction in
-  Format.fprintf fmtMATH "| VertGlyphConstruction\n";
+  Format.fprintf fmtMATH "| VertGlyphConstruction@,";
   d_repeat vertGlyphCount df d >>= fun vertGlyphConstruction_lst ->
-  Format.fprintf fmtMATH "| HorizGlyphConstruction\n";
+  Format.fprintf fmtMATH "| HorizGlyphConstruction@,";
   d_repeat horizGlyphCount df d >>= fun horizGlyphConstruction_lst ->
   combine_coverage d vertGlyphCoverage vertGlyphConstruction_lst >>= fun vertcomb ->
   combine_coverage d horizGlyphCoverage horizGlyphConstruction_lst >>= fun horizcomb ->
@@ -2935,16 +3026,16 @@ let math d : (math option) ok =
 
     | Some(_) ->
         let offset_MATH = cur_pos d in
-        Format.fprintf fmtMATH "begin MATH = %d\n" offset_MATH;
+        Format.fprintf fmtMATH "begin MATH = %d@," offset_MATH;
         d_uint32 d >>= fun version ->
         confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
-        Format.fprintf fmtMATH "jump to MathConstants = %d\n" (cur_pos d);
+        Format.fprintf fmtMATH "jump to MathConstants = %d@," (cur_pos d);
         d_fetch offset_MATH d_math_constants d >>= fun mathConstants ->
-        Format.fprintf fmtMATH "jump to MathGlyphInfo = %d\n" (cur_pos d);
+        Format.fprintf fmtMATH "jump to MathGlyphInfo = %d@," (cur_pos d);
         d_fetch offset_MATH d_math_glyph_info d >>= fun mathGlyphInfo ->
-        Format.fprintf fmtMATH "jump to MathVariants = %d\n" (cur_pos d);
+        Format.fprintf fmtMATH "jump to MathVariants = %d@," (cur_pos d);
         d_fetch offset_MATH d_math_variants d >>= fun mathVariants ->
-        Format.fprintf fmtMATH "end MATH\n";
+        Format.fprintf fmtMATH "end MATH@,";
         let math =
           {
             math_constants  = mathConstants;
@@ -3130,7 +3221,7 @@ let d_index (type a) (dummy : a) (dl : int -> decoder -> a ok) (d : decoder) : (
   in
   d_uint16 d >>= fun count ->
 (*
-  Format.fprintf fmtCFF "INDEX count: %d\n" count;  (* for debug *)
+  Format.fprintf fmtCFF "INDEX count: %d@," count;  (* for debug *)
 *)
   if count = 0 then
     return [| |]
@@ -3138,7 +3229,7 @@ let d_index (type a) (dummy : a) (dl : int -> decoder -> a ok) (d : decoder) : (
     let arr = Array.make count dummy in
     d_offsize d                       >>= fun offSize ->
 (*
-    Format.fprintf fmtCFF "INDEX offSize: %a\n" pp_offsize offSize;  (* for debug *)
+    Format.fprintf fmtCFF "INDEX offSize: %a@," pp_offsize offSize;  (* for debug *)
 *)
     d_cff_length_list offSize count d >>= fun lenlst ->
     loop_data arr 0 lenlst >>= fun () ->
@@ -3154,7 +3245,7 @@ let d_charstring_data (len : int) (d : decoder) : charstring_data ok =
 
 let d_cff_real d =
 (*
-  Format.fprintf fmtCFF "d_cff_real\n";  (* for debug *)
+  Format.fprintf fmtCFF "d_cff_real@,";  (* for debug *)
 *)
   let to_float lst =
     float_of_string (String.concat "" lst)
@@ -3193,7 +3284,7 @@ let d_cff_real d =
 let d_index_access (type a) (dl : int -> decoder -> a ok) (iaccess : int) (d : decoder) : (a option) ok =
   d_uint16 d >>= fun count ->
 (*
-  Format.fprintf fmtCFF "count = %d\n" count;  (* for debug *)
+  Format.fprintf fmtCFF "count = %d@," count;  (* for debug *)
 *)
   if iaccess < 0 || count <= iaccess then
     return None
@@ -3207,7 +3298,7 @@ let d_index_access (type a) (dl : int -> decoder -> a ok) (iaccess : int) (d : d
       | OffSize4 -> 4
     in
 (*
-    Format.fprintf fmtCFF "OffSize = %a\n" pp_offsize offSize;  (* for debug *)
+    Format.fprintf fmtCFF "OffSize = %a@," pp_offsize offSize;  (* for debug *)
 *)
     let offset_origin = (cur_pos d) + (count + 1) * ofszint - 1 in
     d_skip (iaccess * ofszint) d >>= fun () ->
@@ -3298,7 +3389,7 @@ let d_dict_keyval d : (int * cff_value list * cff_key) ok =
   let rec aux stepsum vacc =
     d_dict_element d >>= fun (step, elem) ->
 (*
-      Format.fprintf fmtCFF "dict element: %d, %a\n" step pp_element elem;  (* for debug *)
+      Format.fprintf fmtCFF "dict element: %d, %a@," step pp_element elem;  (* for debug *)
 *)
       match elem with
       | Value(v) -> aux (stepsum + step) (Alist.extend vacc v)
@@ -3315,7 +3406,7 @@ let d_dict len d : ((cff_value list) DictMap.t) ok =
       loop_keyval (mapacc |> DictMap.add k vlst) (len - step) d
   in
 (*
-  Format.fprintf fmtCFF "length = %d\n" len;  (* for debug *)
+  Format.fprintf fmtCFF "length = %d@," len;  (* for debug *)
 *)
   loop_keyval DictMap.empty len d
 
@@ -3352,10 +3443,10 @@ let pp_short_key fmt key =
 let pp_charstring_element fmt = function
   | ArgumentInteger(i)     -> Format.fprintf fmt "%d " i
   | ArgumentReal(r)        -> Format.fprintf fmt "%f " r
-  | Operator(ShortKey(i))  -> Format.fprintf fmt "%a\n" pp_short_key i
-  | Operator(LongKey(i))   -> Format.fprintf fmt "OP(12 %d)\n" i
-  | HintMaskOperator(arg)  -> Format.fprintf fmt "HINTMASK(...)\n"
-  | CntrMaskOperator(arg)  -> Format.fprintf fmt "CNTRMASK(...)\n"
+  | Operator(ShortKey(i))  -> Format.fprintf fmt "%a@," pp_short_key i
+  | Operator(LongKey(i))   -> Format.fprintf fmt "OP(12 %d)@," i
+  | HintMaskOperator(arg)  -> Format.fprintf fmt "HINTMASK(...)@,"
+  | CntrMaskOperator(arg)  -> Format.fprintf fmt "CNTRMASK(...)@,"
 
 
 let d_stem_argument (numstem : int) (d : decoder) : (int * stem_argument) ok =
@@ -3381,7 +3472,7 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   let return_argument (step, cselem) =
 (*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-    Format.fprintf fmtCFF "\n  # numarg = %d ---> %d\n" numarg (numarg + 1);  (* for debug *)
+    Format.fprintf fmtCFF "\n  # numarg = %d ---> %d@," numarg (numarg + 1);  (* for debug *)
 *)
     return (step, { numarg = numarg + 1; numstem = numstem }, cselem)
   in
@@ -3394,7 +3485,7 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   let return_subroutine_operator cselem =
 (*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-    Format.fprintf fmtCFF "  # numarg = %d ---> %d\n" numarg (numarg - 1);  (* for debug *)
+    Format.fprintf fmtCFF "  # numarg = %d ---> %d@," numarg (numarg - 1);  (* for debug *)
 *)
     return (1, { numarg = numarg - 1; numstem = numstem }, cselem)
 
@@ -3402,8 +3493,8 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   let return_stem (step, cselem) =
 (*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
-    Format.fprintf fmtCFF "  # step = %d, numarg = %d\n" step numarg;  (* for debug *)
-    Format.fprintf fmtCFF "  # stem = %d ----> %d\n" numstem (numstem + numarg / 2);  (* for debug *)
+    Format.fprintf fmtCFF "  # step = %d, numarg = %d@," step numarg;  (* for debug *)
+    Format.fprintf fmtCFF "  # stem = %d ----> %d@," numstem (numstem + numarg / 2);  (* for debug *)
 *)
     return (step, { numarg = 0; numstem = numstem + numarg / 2 }, cselem)
   in
@@ -3438,7 +3529,7 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   | 19 ->
     (* -- hintmask operator -- *)
 (*
-      Format.fprintf fmtCFF "hintmask (numstem = %d (numarg = %d) ---> %d)\n" numstem numarg (numstem + numarg / 2);  (*for debug *)
+      Format.fprintf fmtCFF "hintmask (numstem = %d (numarg = %d) ---> %d)@," numstem numarg (numstem + numarg / 2);  (*for debug *)
 *)
         d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
         return_stem (1 + step, HintMaskOperator(bits))
@@ -3446,7 +3537,7 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
   | 20 ->
     (* -- cntrmask operator -- *)
 (*
-      Format.fprintf fmtCFF "  # cntrmask (numstem = %d (numarg = %d) ---> %d)\n" numstem numarg (numstem + numarg / 2);  (*for debug *)
+      Format.fprintf fmtCFF "  # cntrmask (numstem = %d (numarg = %d) ---> %d)@," numstem numarg (numstem + numarg / 2);  (*for debug *)
 *)
       d_stem_argument (numstem + numarg / 2) d >>= fun (step, bits) ->
       return_stem (1 + step, CntrMaskOperator(bits))
@@ -3493,12 +3584,12 @@ let cff_first (d : decoder) : (cff_first option) ok =
       let offset_CFF = cur_pos d in
       (* -- Header -- *)
 (*
-      Format.fprintf fmtCFF "* Header\n";  (* for debug *)
+      Format.fprintf fmtCFF "* Header@,";  (* for debug *)
 *)
       d_uint8 d              >>= fun major ->
       d_uint8 d              >>= fun minor ->
 (*
-      Format.fprintf fmtCFF "version = %d.%d\n" major minor;  (* for debug *)
+      Format.fprintf fmtCFF "version = %d.%d@," major minor;  (* for debug *)
 *)
       d_uint8 d              >>= fun hdrSize ->
       d_offsize d            >>= fun offSizeGlobal ->
@@ -3506,25 +3597,25 @@ let cff_first (d : decoder) : (cff_first option) ok =
 
   (* -- Name INDEX (which should contain only one element) -- *)
 (*
-      Format.fprintf fmtCFF "* Name INDEX\n";  (* for debug *)
+      Format.fprintf fmtCFF "* Name INDEX@,";  (* for debug *)
 *)
       d_index_singleton d_bytes d >>= fun name ->
 
   (* -- Top DICT INDEX (which should contain only one DICT) -- *)
 (*
-      Format.fprintf fmtCFF "* Top DICT INDEX\n";  (* for debug *)
+      Format.fprintf fmtCFF "* Top DICT INDEX@,";  (* for debug *)
 *)
       d_index_singleton d_dict d >>= fun dictmap ->
 
   (* -- String INDEX -- *)
 (*
-      Format.fprintf fmtCFF "* String INDEX\n";  (* for debug *)
+      Format.fprintf fmtCFF "* String INDEX@,";  (* for debug *)
 *)
       d_index "(dummy)" d_bytes d >>= fun stridx ->
 
   (* -- Global Subr INDEX -- *)
 (*
-      Format.fprintf fmtCFF "* Global Subr INDEX\n";  (* for debug *)
+      Format.fprintf fmtCFF "* Global Subr INDEX@,";  (* for debug *)
 *)
       d_index (CharStringData(0, 0)) d_charstring_data d >>= fun gsubridx ->
         (* temporary; should be decoded *)
@@ -3612,7 +3703,7 @@ let d_single_private offset_CFF dictmap d : single_private ok =
     match privateopt with
     | None ->
 (*
-        Format.fprintf fmtCFF "No Private DICT\n";  (* for debug *)
+        Format.fprintf fmtCFF "No Private DICT@,";  (* for debug *)
 *)
         err `Invalid_cff_no_private_dict
 
@@ -3634,13 +3725,13 @@ let d_single_private offset_CFF dictmap d : single_private ok =
               let offset_lsubrs = offset_private + selfoffset_lsubrs in
               seek_pos offset_lsubrs d >>= fun () ->
       (*
-              Format.fprintf fmtCFF "* Local Subr INDEX\n";  (* for debug *)
+              Format.fprintf fmtCFF "* Local Subr INDEX@,";  (* for debug *)
       *)
               d_index (CharStringData(0, 0)) d_charstring_data d
         in
         lsubrsidx_res >>= fun lsubridx ->
 (*
-        Format.fprintf fmtCFF "length = %d\n" (Array.length lsubridx);  (* for debug *)
+        Format.fprintf fmtCFF "length = %d@," (Array.length lsubridx);  (* for debug *)
 *)
         return { default_width_x; nominal_width_x; local_subr_index = lsubridx }
 
@@ -3965,7 +4056,7 @@ let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
         32768
   in
 (*
-  Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d\n" arrlen bias i (bias + i);  (* for debug *)
+  Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d@," arrlen bias i (bias + i);  (* for debug *)
 *)
   try
     let CharStringData(offset, len) = idx.(bias + i) in
@@ -3980,8 +4071,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
 (*
   let () =  (* for debug *)
     match woptoptprev with
-    | None    -> Format.fprintf fmtCFF "# X %a\n" pp_charstring_element cselem;  (* for debug *)
-    | Some(_) -> Format.fprintf fmtCFF "# O %a\n" pp_charstring_element cselem;  (* for debug *)
+    | None    -> Format.fprintf fmtCFF "# X %a@," pp_charstring_element cselem;  (* for debug *)
+    | Some(_) -> Format.fprintf fmtCFF "# O %a@," pp_charstring_element cselem;  (* for debug *)
   in  (* for debug *)
 *)
   let return_with_width ret =
@@ -4073,7 +4164,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
                 | []      -> return (lenrest, Some(None), cstate, [])
                 | _       ->
 (*
-                    Format.fprintf fmtCFF "!!endchar1\n";
+                    Format.fprintf fmtCFF "!!endchar1@,";
                     Format.pp_print_list pp_int fmtCFF lst;
 *)
                     err `Invalid_charstring
@@ -4085,7 +4176,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
                 | [] -> return_cleared []
                 | _  ->
 (*
-                    Format.fprintf fmtCFF "!!endchar2\n";
+                    Format.fprintf fmtCFF "!!endchar2@,";
                     Format.pp_print_list pp_int fmtCFF lst;
 *)
                     err `Invalid_charstring
@@ -4428,7 +4519,7 @@ let charstring_absolute (csinfo : charstring_info) (gid : glyph_id) =
       pcs |> List.fold_left (fun prevres pcselem ->
         prevres >>= fun (curv, accopt) ->
 (*
-        Format.fprintf fmtCFF "%a\n" pp_parsed_charstring pcselem;  (* for debug *)
+        Format.fprintf fmtCFF "%a@," pp_parsed_charstring pcselem;  (* for debug *)
 *)
         match pcselem with
         | HintMask(_)
@@ -4900,7 +4991,7 @@ module Encode = struct
     let (sp, lenp) = pad_data s len in
     let chksum = table_checksum sp lenp in
 (*
-    Printf.printf "table checksum: %d\n" chksum;
+    Printf.printf "table checksum: %d@," chksum;
 *)
       {
         table_tag            = tag;
@@ -4923,7 +5014,7 @@ module Encode = struct
     let b0 = ui lsr 8 in
     let b1 = ui - (b0 lsl 8) in
 (*
-    Printf.printf "uint16 %d --> (%d, %d)\n" ui b0 b1;
+    Printf.printf "uint16 %d --> (%d, %d)@," ui b0 b1;
 *)
     begin
       enc_byte enc (Char.chr b0);
@@ -4990,7 +5081,7 @@ module Encode = struct
     else
       let ui = if is_neg i then i +% (!%% 0x100000000L) else i in
 (*
-      Printf.printf "i32 -> u32 (%d ---> %d)\n" i ui;
+      Printf.printf "i32 -> u32 (%d ---> %d)@," i ui;
 *)
       begin
         enc_uint32_unsafe enc ui;
@@ -5008,7 +5099,7 @@ module Encode = struct
         let q0 = wi lsr 32 in
         let q1 = wi -% (q0 lsl 32) in
 (*
-      Printf.printf "time %s ---> (%d, %d)\n" (Int64.to_string ui64) q0 q1;
+      Printf.printf "time %s ---> (%d, %d)@," (Int64.to_string ui64) q0 q1;
 *)
       begin
         enc_uint32_unsafe enc q0;
@@ -5020,7 +5111,7 @@ module Encode = struct
   let enc_direct enc s =
     begin
 (*
-      Printf.printf "direct \"%s\"\n" s;
+      Printf.printf "direct \"%s\"@," s;
 *)
       Buffer.add_string enc.buffer s;
       return ()
@@ -5046,7 +5137,7 @@ module Encode = struct
     let rawtbllst = List.sort compare_table rawtbllst in
 
 (*
-    Printf.printf "# make_font_file: header\n";
+    Printf.printf "# make_font_file: header@,";
 *)
   (* -- outputs the header -- *)
     let enc_header = create_encoder () in
@@ -5062,7 +5153,7 @@ module Encode = struct
     enc_direct enc data_header >>= fun () ->
 
 (*
-    Printf.printf "# make_font_file: table directories\n";
+    Printf.printf "# make_font_file: table directories@,";
 *)
   (* -- outputs all table directories -- *)
     let offset_checkSumAdjustment_ref = ref None in
@@ -5071,7 +5162,7 @@ module Encode = struct
       res >>= fun (offset, chksum) ->
       let strtag = Tag.to_bytes rawtbl.table_tag in
 (*
-      Printf.printf "## for '%s'\n" strtag;
+      Printf.printf "## for '%s'@," strtag;
 *)
       enc_direct enc strtag                             >>= fun () ->
       enc_uint32 enc rawtbl.table_checksum              >>= fun () ->
@@ -5084,13 +5175,13 @@ module Encode = struct
       let offsetnew = offset + rawtbl.table_padded_length in
       let chksumnew = add_checksum chksum rawtbl.table_checksum in
 (*
-      Printf.printf "  $ checksum %d + %d ---> %d\n" chksum rawtbl.table_checksum chksumnew;
+      Printf.printf "  $ checksum %d + %d ---> %d@," chksum rawtbl.table_checksum chksumnew;
 *)
       return (offsetnew, chksumnew)
     ) (return (offset_init, chksum_init)) >>= fun (_, chksum) ->
 
 (*
-    Printf.printf "# make_font_file: tables\n";
+    Printf.printf "# make_font_file: tables@,";
 *)
   (* -- outputs all tables -- *)
     rawtbllst |> List.fold_left (fun res rawtbl ->
@@ -5099,7 +5190,7 @@ module Encode = struct
     ) (return ()) >>= fun () ->
 
 (*
-    Printf.printf "# make_font_file: update 'checkSumAdjustment'\n";
+    Printf.printf "# make_font_file: update 'checkSumAdjustment'@,";
 *)
     let checkSumAdjustment =
       let temp = (!%% 0xB1B0AFBAL) -% chksum in
@@ -5130,7 +5221,7 @@ module Encode = struct
 
   let head (h : head) : raw_table ok =
 (*
-    Printf.printf "# 'head' table\n";
+    Printf.printf "# 'head' table@,";
 *)
     let enc = create_encoder () in
     let fontRevision = h.head_font_revision in
@@ -5162,7 +5253,7 @@ module Encode = struct
 
   let hhea (numberOfHMetrics : int) (h : hhea) : raw_table ok =
 (*
-    Printf.printf "# 'hhea' table\n";
+    Printf.printf "# 'hhea' table@,";
 *)
     let enc = create_encoder () in
     enc_uint32 enc (!% 0x00010000)               >>= fun () ->
@@ -5183,7 +5274,7 @@ module Encode = struct
     enc_int16  enc 0                             >>= fun () ->  (* -- 'metricDataFormat' -- *)
     enc_uint16 enc numberOfHMetrics              >>= fun () ->
 (*
-    Printf.printf "# end 'hhea' table\n";
+    Printf.printf "# end 'hhea' table@,";
 *)
     let rawtbl = to_raw_table Tag.hhea enc in
     return rawtbl
@@ -5191,7 +5282,7 @@ module Encode = struct
 
   let maxp (m : maxp) : raw_table ok =
 (*
-    Printf.printf "# 'maxp' table\n";
+    Printf.printf "# 'maxp' table@,";
 *)
     let enc = create_encoder () in
     enc_uint32 enc (!% 0x00010000)                 >>= fun () ->  (* -- Table version number -- *)
@@ -5210,7 +5301,7 @@ module Encode = struct
     enc_uint16 enc m.maxp_max_component_elements   >>= fun () ->
     enc_uint16 enc m.maxp_max_component_depth      >>= fun () ->
 (*
-    Printf.printf "# end 'maxp' table\n";
+    Printf.printf "# end 'maxp' table@,";
 *)
     let rawtbl = to_raw_table Tag.maxp enc in
     return rawtbl
@@ -5278,7 +5369,7 @@ module Encode = struct
 
   let truetype_outline_tables (glyphlst : raw_glyph list) =
 (*
-    Printf.printf "# 'hmtx', 'glyf', and 'loca' table\n";
+    Printf.printf "# 'hmtx', 'glyf', and 'loca' table@,";
 *)
 
     let numGlyphs = List.length glyphlst in
