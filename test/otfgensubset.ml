@@ -63,13 +63,16 @@ let main () =
     | Otfm.TrueTypeCollection(_) -> err (`Msg "unsupported TTC")
   end >>= fun d ->
 
-  OtfSubset.make d gidlst >>= fun data ->
+  OtfSubset.make d gidlst >>= function
+  | None ->
+      print_endline "None";
+      return ()
 
-  let fout = open_out srcout in
-  output_string fout data;
-  close_out fout;
-
-  return ()
+  | Some(data) ->
+      let fout = open_out srcout in
+      output_string fout data;
+      close_out fout;
+      return ()
 
 
 let _ =
