@@ -889,7 +889,7 @@ let cmap d : (cmap_subtable list) ok =
   seek_required_table Tag.cmap d >>= fun () ->
   let offset_cmap = cur_pos d in
   d_uint16 d >>= fun version ->                           (* -- cmap header. -- *)
-  if version <> 0 then err_version d (!% version) else
+  confirm (version = 0) (e_version d (!% version)) >>= fun () ->
   d_list (d_encoding_record offset_cmap) d >>= fun rawsubtbllst ->
   let subtbllst =
     rawsubtbllst |> List.filter (fun (_, (pid, eid, format)) ->
@@ -1295,7 +1295,7 @@ let maxp d =
   init_decoder d >>=
   seek_required_table Tag.maxp d >>= fun () ->
   d_uint32 d >>= fun version ->
-  if version <> !%% 0x00010000L then err_version d version else
+  confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
   d_uint16 d >>= fun maxp_num_glyphs ->
   d_uint16 d >>= fun maxp_max_points ->
   d_uint16 d >>= fun maxp_max_contours ->
@@ -1445,7 +1445,7 @@ let name d f acc =
   seek_required_table Tag.name d >>= fun () ->
   let pos_name = cur_pos d in
   d_uint16 d >>= fun version ->
-  if version < 0 || version > 1 then err_version d (!% version) else
+  confirm (0 <= version && version <= 1) (e_version d (!% version)) >>= fun () ->
   d_uint16 d >>= fun ncount ->
   d_uint16 d >>= fun soff ->
   let cpos = cur_pos d in
@@ -1500,7 +1500,7 @@ let os2 d =
   init_decoder d >>=
   seek_required_table Tag.os2 d >>= fun () ->
   d_uint16 d >>= fun version ->
-  if version > 0x0004 then err_version d (!% version) else
+  confirm (version <= 0x0004) (e_version d (!% version)) >>= fun () ->
   let opt v dec d =
     if version < v then return None else dec d >>= fun v -> return (Some(v))
   in
@@ -1577,30 +1577,39 @@ let kern_info c =
 
 
 let rec kern_tables ntables t p acc d =
-  if ntables = 0 then return acc else
-  d_uint16 d >>= fun version ->
-  if version > 0 then err_version d (!% version) else
-  d_uint16 d >>= fun len ->
-  d_uint16 d >>= fun coverage ->
-  let format = coverage lsr 8 in
-  let skip acc =
-    d_skip (len - 3 * 2) d >>= fun () ->
-    kern_tables (ntables - 1) t p acc d
-  in
-  if format <> 0 then skip acc else
-  match t acc (kern_info coverage) with
-  | `Skip, acc -> skip acc
-  | `Fold, acc ->
-      let rec d_pairs len acc d =
-        if len < 3 * 2 then d_skip len d >>= fun () -> return acc else
-        d_uint16 d >>= fun left ->
-        d_uint16 d >>= fun right ->
-        d_int16 d >>= fun values ->
-        d_pairs (len - 3 * 2) (p acc left right values) d
-      in
-      d_skip (4 * 2)  d >>= fun () ->
-      d_pairs len acc d >>= fun acc ->
+  if ntables = 0 then
+    return acc
+  else
+    d_uint16 d >>= fun version ->
+    confirm (version = 0) (e_version d (!% version)) >>= fun () ->
+    d_uint16 d >>= fun len ->
+    d_uint16 d >>= fun coverage ->
+    let format = coverage lsr 8 in
+    let skip acc =
+      d_skip (len - 3 * 2) d >>= fun () ->
       kern_tables (ntables - 1) t p acc d
+    in
+    if format <> 0 then
+      skip acc
+    else
+      match t acc (kern_info coverage) with
+      | (`Skip, acc) ->
+          skip acc
+
+      | (`Fold, acc) ->
+          let rec d_pairs len acc d =
+            if len < 3 * 2 then
+              d_skip len d >>= fun () ->
+              return acc
+            else
+              d_uint16 d >>= fun left ->
+              d_uint16 d >>= fun right ->
+              d_int16 d >>= fun values ->
+              d_pairs (len - 3 * 2) (p acc left right values) d
+          in
+          d_skip (4 * 2)  d >>= fun () ->
+          d_pairs len acc d >>= fun acc ->
+          kern_tables (ntables - 1) t p acc d
 
 
 let kern d t p acc =
@@ -1611,7 +1620,7 @@ let kern d t p acc =
 
   | Some(_) ->
       d_uint16 d >>= fun version ->
-      if version > 0 then err_version d (!% version) else
+      confirm (version = 0) (e_version d (!% version)) >>= fun () ->
       d_uint16 d >>= fun ntables ->
       kern_tables ntables t p acc d
 
@@ -1619,13 +1628,10 @@ let kern d t p acc =
 (* -- loca table -- *)
 
 let d_loca_format d () =
-  d_uint16 d >>= fun i ->
-  if i > 1 then
-    err_loca_format d i
-  else if i = 0 then
-    return ShortLocFormat
-  else
-    return LongLocFormat
+  d_uint16 d >>= function
+  | 0 -> return ShortLocFormat
+  | 1 -> return LongLocFormat
+  | i -> err_loca_format d i
 
 
 let init_loca d () =
