@@ -1,6 +1,6 @@
 (* -*- coding: utf-8 -*- *)
 (*---------------------------------------------------------------------------
-   Copyright (c) 2013 Daniel C. Bünzli, and 2017-2018 Takashi Suwa. All rights reserved.
+   Copyright (c) 2013 Daniel C. Bünzli, and 2017-2019 Takashi Suwa. All rights reserved.
    Distributed under the ISC license, see terms at the end of the file.
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
@@ -358,23 +358,31 @@ let seek_table tag d () =
 
 let seek_required_table tag d () =
   seek_table tag d () >>= function
-    | Some(_) -> return ()
-    | None    -> err (`Missing_required_table(tag))
+  | Some(_) -> return ()
+  | None    -> err (`Missing_required_table(tag))
 
 let d_skip len d =
-  if miss d len then err_eoi d else
-    begin d.i_pos <- d.i_pos + len; Ok() end
+  if miss d len then err_eoi d else begin
+    d.i_pos <- d.i_pos + len;
+    return ()
+  end
 
 let raw_byte d =
   let j = d.i_pos in
-    begin d.i_pos <- d.i_pos + 1; unsafe_byte d.i j end
+  d.i_pos <- d.i_pos + 1;
+  unsafe_byte d.i j
 
 let d_bytes len d =
-  if miss d len then err_eoi d else
+  if miss d len then err_eoi d else begin
     let start = d.i_pos in
-      begin d.i_pos <- d.i_pos + len; return (String.sub d.i start len) end
+    d.i_pos <- d.i_pos + len;
+    return (String.sub d.i start len)
+  end
 
-let d_uint8 d = if miss d 1 then err_eoi d else return (raw_byte d)
+let d_uint8 d =
+  if miss d 1 then err_eoi d else
+    return (raw_byte d)
+
 let d_int8 d =
   d_uint8 d >>= fun i ->
   return (if i > 0x7F then i - 0x100 else i)
@@ -398,9 +406,7 @@ let d_uint24 d =
 
 let d_uint32 d =
   let open WideInt in
-    if miss d 4 then
-      err_eoi d
-    else
+    if miss d 4 then err_eoi d else
       let b0 = !% (raw_byte d) in
       let b1 = !% (raw_byte d) in
       let b2 = !% (raw_byte d) in
@@ -562,36 +568,36 @@ let d_fetch offset_origin df d =
 let d_fetch_opt offset_origin df d =
   let pos_before = cur_pos d in
   d_offset_opt offset_origin d >>= function
-    | None ->
-        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
-        Format.fprintf fmtgen "              | NULL@,";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return None
+  | None ->
+      Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
+      Format.fprintf fmtgen "              | NULL@,";
+      seek_pos (pos_before + 2) d >>= fun () ->
+      return None
 
-    | Some(offset) ->
-        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
-        Format.fprintf fmtgen "              | non-NULL@,";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun res ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return (Some(res))
+  | Some(offset) ->
+      Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
+      Format.fprintf fmtgen "              | non-NULL@,";
+      seek_pos offset d >>= fun () ->
+      df d >>= fun res ->
+      seek_pos (pos_before + 2) d >>= fun () ->
+      return (Some(res))
 
 
 let d_fetch_list offset_origin df d =
   let pos_before = cur_pos d in
   Format.fprintf fmtgen "(d_fetch_list) | pos_before = %d@," pos_before;
   d_offset_opt offset_origin d >>= function
-    | None ->
-        Format.fprintf fmtgen "               | NULL@,";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return []
+  | None ->
+      Format.fprintf fmtgen "               | NULL@,";
+      seek_pos (pos_before + 2) d >>= fun () ->
+      return []
 
-    | Some(offset) ->
-        Format.fprintf fmtgen "               | non-NULL@,";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun lst ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return lst
+  | Some(offset) ->
+      Format.fprintf fmtgen "               | non-NULL@,";
+      seek_pos offset d >>= fun () ->
+      df d >>= fun lst ->
+      seek_pos (pos_before + 2) d >>= fun () ->
+      return lst
 
 
 let d_fetch_long offset_origin df d =
@@ -680,33 +686,41 @@ let decoder_of_ttc_element ttcelem =
 
 let init_decoder d =
   match d.state with
-  | Ready    -> begin d.ctx <- `Table_directory; return () end
-  | Fatal(e) -> err e
-  | Start    ->
-      match d_structure d with
-      | Ok(()) as ok -> ok
-      | Error(e)     -> err_fatal d e
+  | Ready ->
+      d.ctx <- `Table_directory;
+      return ()
+
+  | Fatal(e) ->
+      err e
+
+  | Start ->
+      begin
+        match d_structure d with
+        | Ok(()) as ok -> ok
+        | Error(e)     -> err_fatal d e
+      end
 
 
 let flavour d =
-    init_decoder d >>= fun () -> return (d.flavour)
+    init_decoder d >>= fun () ->
+    return (d.flavour)
 
 
 let table_list d =
   let tags d = List.rev_map (fun (t, _, _) -> t) d.tables in
-    init_decoder d >>= fun () -> return (tags d)
+  init_decoder d >>= fun () -> return (tags d)
 
 
 let table_mem d tag =
   let exists_tag tag d = List.exists (fun (t, _, _) -> tag = t) d.tables in
-    init_decoder d >>= fun () -> return (exists_tag tag d)
+  init_decoder d >>= fun () -> return (exists_tag tag d)
 
 
 let table_raw d tag =
   init_decoder   d >>=
   seek_table tag d >>= function
-    | None      -> return None
-    | Some(len) -> d_bytes len d >>= fun bytes -> return (Some(bytes))
+  | None      -> return None
+  | Some(len) -> d_bytes len d >>= fun bytes -> return (Some(bytes))
 
 
 (* -- convenience -- *)
@@ -755,9 +769,9 @@ let postscript_name d = (* -- rigorous postscript name lookup, see OT spec p. 39
       with Exit -> invalid name
     in
     d_uint16 d >>= function
-      | 3 -> look_for 1 0x409 d_utf_16be
-      | 1 -> look_for 0 0 d_bytes
-      | _ -> d_skip (5 * 2) d >>= loop (ncount - 1)
+    | 3 -> look_for 1 0x409 d_utf_16be
+    | 1 -> look_for 0 0 d_bytes
+    | _ -> d_skip (5 * 2) d >>= loop (ncount - 1)
   in
   loop ncount ()
 
@@ -901,7 +915,7 @@ let cmap d : (cmap_subtable list) ok =
 
 let cmap_subtable_ids (subtbl : cmap_subtable) : int * int * int =
   let (_, ids) = subtbl in
-    ids
+  ids
 
 
 let cmap_subtable (subtbl : cmap_subtable) f acc =
@@ -941,7 +955,8 @@ let init_glyf d () : (int option) ok =
       return None
 
   | Untouched ->
-      seek_table Tag.glyf d () >>= function
+      begin
+        seek_table Tag.glyf d () >>= function
         | None ->
             d.glyf_pos <- Nonexistent;
             return None
@@ -950,6 +965,7 @@ let init_glyf d () : (int option) ok =
             let pos = d.i_pos in
             d.glyf_pos <- AlreadyGot(pos);
             return (Some(pos))
+      end
 
 
 let d_rev_end_points d ccount =
@@ -983,25 +999,25 @@ let d_rev_flags d pt_count =
 
 let d_rev_coord short_mask same_mask d flags =
   let rec loop x acc = function
-  | f :: fs ->
-      if f land short_mask > 0 then
-        begin
-          d_uint8 d >>= fun dx ->
-          let x = x + (if f land same_mask > 0 then dx else -dx) in
-          loop x (x :: acc) fs
-        end
-      else
-        begin
-          if f land same_mask > 0 then
+    | f :: fs ->
+        if f land short_mask > 0 then
+          begin
+            d_uint8 d >>= fun dx ->
+            let x = x + (if f land same_mask > 0 then dx else -dx) in
             loop x (x :: acc) fs
-          else
-            d_int16 d >>= fun dx ->
-            let x = x + dx in
-            loop x (x :: acc) fs
-        end
+          end
+        else
+          begin
+            if f land same_mask > 0 then
+              loop x (x :: acc) fs
+            else
+              d_int16 d >>= fun dx ->
+              let x = x + dx in
+              loop x (x :: acc) fs
+          end
 
-  | [] ->
-      return acc
+    | [] ->
+        return acc
   in
   loop 0 [] flags
 
@@ -1034,17 +1050,19 @@ let d_simple_glyph d ccount =
             | e :: es when e = i -> (true, es)
             | es                 -> (false, es)
           in
-          match acc with
-          | c :: cs ->
-              let new_pt = (f land 1 > 0,  List.hd rxs, List.hd rys) in
-              let acc' =
-                if new_contour then [new_pt] :: c :: cs else
-                (new_pt :: c) :: cs
-              in
-              combine repts fs (List.tl rxs) (List.tl rys) (i - 1) acc'
+          begin
+            match acc with
+            | c :: cs ->
+                let new_pt = (f land 1 > 0,  List.hd rxs, List.hd rys) in
+                let acc' =
+                  if new_contour then [new_pt] :: c :: cs else
+                  (new_pt :: c) :: cs
+                in
+                combine repts fs (List.tl rxs) (List.tl rys) (i - 1) acc'
 
-          | _ ->
-              assert false
+            | _ ->
+                assert false
+          end
     in
     return (combine (List.tl rev_epts) rev_flags rxs rys (pt_count - 1) ([] :: []))
 
@@ -1081,8 +1099,8 @@ let d_composite_glyph d =
         loop accnew
       else
         return (Alist.to_list accnew)
-    in
-    loop Alist.empty
+  in
+  loop Alist.empty
 
 
 let glyf d loc =
@@ -1209,18 +1227,22 @@ let d_hm_count d =
 
 
 let rec d_hmetric goffset i f acc last_adv d =
-  if i = 0 then return (acc, last_adv) else
-  d_uint16 d >>= fun adv ->
-  d_int16  d >>= fun lsb ->
-  let acc' = f acc (goffset - i) adv lsb in
-  d_hmetric goffset (i - 1) f acc' adv d
+  if i = 0 then
+    return (acc, last_adv)
+  else
+    d_uint16 d >>= fun adv ->
+    d_int16  d >>= fun lsb ->
+    let acc' = f acc (goffset - i) adv lsb in
+    d_hmetric goffset (i - 1) f acc' adv d
 
 
 let rec d_hlsb goffset i f acc adv d =
-  if i = 0 then return acc else
-  d_int16 d >>= fun lsb ->
-  let acc' = f acc (goffset - i) adv lsb in
-  d_hlsb goffset (i - 1) f acc' adv d
+  if i = 0 then
+    return acc
+  else
+    d_int16 d >>= fun lsb ->
+    let acc' = f acc (goffset - i) adv lsb in
+    d_hlsb goffset (i - 1) f acc' adv d
 
 
 let hmtx d f acc =
