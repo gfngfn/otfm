@@ -1,7 +1,9 @@
 PREFIX=/usr/local/bin
 OCB=ocamlbuild -use-ocamlfind
 
-all:
+all: otf gsub cff examples subset
+
+otf:
 	$(OCB) otftrip.native
 	mv otftrip.native otftrip-local
 
