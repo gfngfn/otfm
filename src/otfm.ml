@@ -5010,6 +5010,14 @@ module Encode = struct
       Buffer.add_char enc.buffer ch
 
 
+  let enc_pad enc n =
+    let rec aux = function
+      | 0 -> return ()
+      | x -> (Buffer.add_char enc.buffer (Char.chr 0); aux (x - 1))
+    in
+    aux n
+
+
   let enc_uint16_unsafe enc ui =
     let b0 = ui lsr 8 in
     let b1 = ui - (b0 lsl 8) in
@@ -5427,10 +5435,12 @@ module Encode = struct
       glyphlst |> List.fold_left (fun res g ->
         res >>= fun offset ->
         let data = fix_composite_element_glyph_id ht g in
-        enc_direct enc_glyf data >>= fun () ->
-        enc_for_loca offset >>= fun () ->
         let len = g.glyph_data_length in
-        return (offset + len)
+        let plen = (4 - (len mod 4)) mod 4 in
+        enc_direct enc_glyf data >>= fun () ->
+        enc_pad enc_glyf plen >>= fun () ->
+        enc_for_loca offset >>= fun () ->
+        return (offset + len + plen)
       ) (return offset_init) >>= fun offset_last ->
       enc_for_loca offset_last >>= fun () ->
       let rawtbl_glyf = to_raw_table Tag.glyf enc_glyf in
