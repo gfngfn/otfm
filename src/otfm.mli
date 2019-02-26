@@ -724,13 +724,18 @@ type mark_class = int
 
 type mark_record = mark_class * anchor
 
-type base_record = anchor array
+type base_record = (anchor option) array
   (* -- indexed by mark_class -- *)
+  (* -- UNDOCUMENTED (in OpenType 1.8.3) -- *)
+  (* -- BaseRecord tables can contain NULL pointers. -- *)
 
 type component_record = (anchor option) array
   (* -- indexed by mark_class -- *)
 
 type ligature_attach = component_record list
+
+type mark2_record = anchor array
+  (* -- indexed by mark_class -- *)
 
 type 'a folding_gpos_single1 = 'a -> glyph_id list -> value_record -> 'a
 
@@ -744,7 +749,7 @@ type 'a folding_gpos_markbase1 = int -> 'a -> (glyph_id * mark_record) list -> (
 
 type 'a folding_gpos_marklig1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * ligature_attach) list -> 'a
 
-type 'a folding_gpos_markmark1 = 'a folding_gpos_markbase1
+type 'a folding_gpos_markmark1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * mark2_record) list -> 'a
 
 val gpos : gpos_feature ->
   ?single1:'a folding_gpos_single1 ->
