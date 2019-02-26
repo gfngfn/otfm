@@ -7,7 +7,7 @@ type position =
   | Pair1 of Otfm.glyph_id * (Otfm.glyph_id * Otfm.value_record * Otfm.value_record) list
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
   | MarkBase1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.base_record) list
-  | MarkMark1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.base_record) list
+  | MarkMark1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.mark2_record) list
 
 
 let skip gid _ = gid
@@ -156,18 +156,34 @@ let pp_anchor fmt (dux, duy, _) =
   Format.fprintf fmt "(%d, %d)" dux duy
 
 
+let pp_anchor_opt fmt = function
+  | Some(dux, duy, _) -> Format.fprintf fmt "(%d, %d)" dux duy
+  | None              -> Format.fprintf fmt "NULL"
+
+
 let pp_mark_record fmt (gid, (markcls, anch)) =
   Format.fprintf fmt "%d --> %d %a" gid markcls pp_anchor anch
 
 
 let pp_base_record fmt (gid, ancharr) =
+  Format.fprintf fmt "%d --> {%a}" gid (Format.pp_print_list ~pp_sep pp_anchor_opt) (Array.to_list ancharr)
+
+
+let pp_mark2_record fmt (gid, ancharr) =
   Format.fprintf fmt "%d --> {%a}" gid (Format.pp_print_list ~pp_sep pp_anchor) (Array.to_list ancharr)
 
 
-let print_mark s clscnt markassoc dataassoc =
+let print_markbase s clscnt markassoc dataassoc =
   Format.printf "#MarkToData (classCount = %d)@,@[<v2>@," clscnt;
   Format.printf "mark: @[[%a]@]@," (Format.pp_print_list ~pp_sep pp_mark_record) markassoc;
   Format.printf "%s: @[[%a]@]" s (Format.pp_print_list ~pp_sep pp_base_record) dataassoc;
+  Format.printf "@]@,"
+
+
+let print_markmark s clscnt markassoc dataassoc =
+  Format.printf "#MarkToData (classCount = %d)@,@[<v2>@," clscnt;
+  Format.printf "mark: @[[%a]@]@," (Format.pp_print_list ~pp_sep pp_mark_record) markassoc;
+  Format.printf "%s: @[[%a]@]" s (Format.pp_print_list ~pp_sep pp_mark2_record) dataassoc;
   Format.printf "@]@,"
 
 
@@ -214,10 +230,10 @@ let () =
             Format.printf "#Pair2 %d -> (length: %d)@," clsfst (List.length pairposset)
 
         | MarkBase1(clscnt, markassoc, baseassoc) ->
-            print_mark "base" clscnt markassoc baseassoc
+            print_markbase "base" clscnt markassoc baseassoc
 
         | MarkMark1(clscnt, markassoc, mark2assoc) ->
-            print_mark "mark2" clscnt markassoc mark2assoc
+            print_markmark "mark2" clscnt markassoc mark2assoc
         );
         Format.printf "@]@,";
         Format.printf "@]";

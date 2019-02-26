@@ -2258,8 +2258,10 @@ type mark_class = int
 
 type mark_record = mark_class * anchor
 
-type base_record = anchor array
+type base_record = (anchor option) array
   (* -- indexed by mark_class -- *)
+  (* -- UNDOCUMENTED (in OpenType 1.8.3) -- *)
+  (* -- BaseRecord tables can contain NULL pointers. -- *)
 
 type component_record = (anchor option) array
   (* -- indexed by mark_class -- *)
@@ -2431,7 +2433,7 @@ let d_mark_array classCount d : (mark_record list) ok =
 
 
 let d_base_record offset_BaseArray classCount d : base_record ok =
-  d_repeat classCount (d_fetch offset_BaseArray d_anchor) d >>= fun anchorlst ->
+  d_repeat classCount (d_fetch_opt offset_BaseArray d_anchor) d >>= fun anchorlst ->
   return (Array.of_list anchorlst)
 
 
@@ -2489,7 +2491,9 @@ let d_mark_to_ligature_attachment_subtable d =
   | _ -> err_version d (!% posFormat)
 
 
-let d_mark2_record = d_base_record
+let d_mark2_record offset_Mark2Array classCount d : mark2_record ok =
+  d_repeat classCount (d_fetch offset_Mark2Array d_anchor) d >>= fun anchorlst ->
+  return (Array.of_list anchorlst)
 
 
 let d_mark2_array  classCount d : (mark2_record list) ok =
@@ -2596,7 +2600,7 @@ type 'a folding_gpos_markbase1 = int -> 'a -> (glyph_id * mark_record) list -> (
 
 type 'a folding_gpos_marklig1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * ligature_attach) list -> 'a
 
-type 'a folding_gpos_markmark1 = 'a folding_gpos_markbase1
+type 'a folding_gpos_markmark1 = int -> 'a -> (glyph_id * mark_record) list -> (glyph_id * mark2_record) list -> 'a
 
 let rec fold_subtables_gpos
     (f_single1 : 'a folding_gpos_single1)
