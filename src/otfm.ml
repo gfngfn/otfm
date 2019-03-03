@@ -5476,8 +5476,17 @@ module Encode = struct
     aux 0 1
 
 
-  let make_font_file rawtbllst =
-    let sfntVersion = !% 0x00010000 in
+  type outline_type =
+    | TrueTypeOutline
+    | CFFData
+
+
+  let make_font_file oltype rawtbllst =
+    let sfntVersion =
+      match oltype with
+      | TrueTypeOutline -> !% 0x00010000
+      | CFFData         -> !% 0x4F54544F
+    in
     let numTables = List.length rawtbllst in
     let (searchRange, entrySelector) = calculate_header_constants numTables in
     let rangeShift = numTables * 16 - searchRange in
@@ -5627,18 +5636,13 @@ module Encode = struct
     return rawtbl
 
 
-  type maxp_version =
-    | TrueTypeVersion
-    | CFFVersion
-
-
-  let maxp (version : maxp_version) (m : maxp) : raw_table ok =
+  let maxp oltype (m : maxp) : raw_table ok =
 (*
     Printf.printf "# 'maxp' table@,";
 *)
     let enc = create_encoder () in
-    ( match version with
-      | TrueTypeVersion ->
+    ( match oltype with
+      | TrueTypeOutline ->
           enc_uint32 enc (!% 0x00010000)                 >>= fun () ->  (* -- Table version number -- *)
           enc_uint16 enc m.maxp_num_glyphs               >>= fun () ->
           enc_uint16 enc m.maxp_max_points               >>= fun () ->
@@ -5655,7 +5659,7 @@ module Encode = struct
           enc_uint16 enc m.maxp_max_component_elements   >>= fun () ->
           enc_uint16 enc m.maxp_max_component_depth
 
-      | CFFVersion ->
+      | CFFData ->
           enc_uint32 enc (!% 0x00005000)                 >>= fun () ->  (* -- Table version number -- *)
           enc_uint16 enc m.maxp_num_glyphs
 

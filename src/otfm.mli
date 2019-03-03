@@ -1006,11 +1006,11 @@ module Encode : sig
 
   type raw_table
 
-  type maxp_version =
-    | TrueTypeVersion
-    | CFFVersion
+  type outline_type =
+    | TrueTypeOutline
+    | CFFData
 
-  val make_font_file : raw_table list -> (string, error) result
+  val make_font_file : outline_type -> raw_table list -> (string, error) result
 
   val empty_cmap : unit -> (raw_table, error) result
 
@@ -1018,7 +1018,7 @@ module Encode : sig
 
   val hhea : int -> hhea -> (raw_table, error) result
 
-  val maxp : maxp_version -> maxp -> (raw_table, error) result
+  val maxp : outline_type -> maxp -> (raw_table, error) result
 
   type glyph_output_info = {
 
