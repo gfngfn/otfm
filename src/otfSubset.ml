@@ -32,12 +32,13 @@ let make d cffinfo gidlst =
       in
       encf rglst >>= fun (info, gdata) ->
       let rawtbl_hmtx = info.Otfm.Encode.hmtx in
-      let glyph_tables =
+      let (glyph_tables, maxp_version) =
         match gdata with
         | TrueTypeGlyph(rawtbl_glyf, rawtbl_loca) ->
-            [rawtbl_glyf; rawtbl_loca]
+            ([rawtbl_glyf; rawtbl_loca], Otfm.Encode.TrueTypeVersion)
+
         | CFFGlyph(rawtbl_cff) ->
-            [rawtbl_cff]
+            ([rawtbl_cff]              , Otfm.Encode.CFFVersion)
       in
 
     (* -- updates the 'maxp' table -- *)
@@ -47,7 +48,7 @@ let make d cffinfo gidlst =
           Otfm.maxp_num_glyphs = info.Otfm.Encode.number_of_glyphs;
         }
       in
-      Otfm.Encode.maxp maxpnew >>= fun rawtbl_maxp ->
+      Otfm.Encode.maxp maxp_version maxpnew >>= fun rawtbl_maxp ->
 
     (* -- updates the 'head' table -- *)
       Otfm.head d >>= fun head ->

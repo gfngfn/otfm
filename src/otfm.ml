@@ -1298,37 +1298,57 @@ let maxp d =
   init_decoder d >>=
   seek_required_table Tag.maxp d >>= fun () ->
   d_uint32 d >>= fun version ->
-    confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
+    confirm (version = !%% 0x00005000L || version = !%% 0x00010000L) (e_version d version) >>= fun () ->
   d_uint16 d >>= fun maxp_num_glyphs ->
-  d_uint16 d >>= fun maxp_max_points ->
-  d_uint16 d >>= fun maxp_max_contours ->
-  d_uint16 d >>= fun maxp_max_composite_points ->
-  d_uint16 d >>= fun maxp_max_composite_contours ->
-  d_uint16 d >>= fun maxp_max_zones ->
-  d_uint16 d >>= fun maxp_max_twilight_points ->
-  d_uint16 d >>= fun maxp_max_storage ->
-  d_uint16 d >>= fun maxp_max_function_defs ->
-  d_uint16 d >>= fun maxp_max_instruction_defs ->
-  d_uint16 d >>= fun maxp_max_stack_elements ->
-  d_uint16 d >>= fun maxp_max_size_of_instructions ->
-  d_uint16 d >>= fun maxp_max_component_elements ->
-  d_uint16 d >>= fun maxp_max_component_depth ->
-  return {
-    maxp_num_glyphs;
-    maxp_max_points;
-    maxp_max_contours;
-    maxp_max_composite_points;
-    maxp_max_composite_contours;
-    maxp_max_zones;
-    maxp_max_twilight_points;
-    maxp_max_storage;
-    maxp_max_function_defs;
-    maxp_max_instruction_defs;
-    maxp_max_stack_elements;
-    maxp_max_size_of_instructions;
-    maxp_max_component_elements;
-    maxp_max_component_depth;
-  }
+  if version = !%% 0x00005000L then
+    (* Fonts with CFF Data *)
+    return {
+      maxp_num_glyphs               = maxp_num_glyphs;
+      maxp_max_points               = 0;
+      maxp_max_contours             = 0;
+      maxp_max_composite_points     = 0;
+      maxp_max_composite_contours   = 0;
+      maxp_max_zones                = 0;
+      maxp_max_twilight_points      = 0;
+      maxp_max_storage              = 0;
+      maxp_max_function_defs        = 0;
+      maxp_max_instruction_defs     = 0;
+      maxp_max_stack_elements       = 0;
+      maxp_max_size_of_instructions = 0;
+      maxp_max_component_elements   = 0;
+      maxp_max_component_depth      = 0;
+    }
+  else
+    (* Fonts with TrueType outlines *)
+    d_uint16 d >>= fun maxp_max_points ->
+    d_uint16 d >>= fun maxp_max_contours ->
+    d_uint16 d >>= fun maxp_max_composite_points ->
+    d_uint16 d >>= fun maxp_max_composite_contours ->
+    d_uint16 d >>= fun maxp_max_zones ->
+    d_uint16 d >>= fun maxp_max_twilight_points ->
+    d_uint16 d >>= fun maxp_max_storage ->
+    d_uint16 d >>= fun maxp_max_function_defs ->
+    d_uint16 d >>= fun maxp_max_instruction_defs ->
+    d_uint16 d >>= fun maxp_max_stack_elements ->
+    d_uint16 d >>= fun maxp_max_size_of_instructions ->
+    d_uint16 d >>= fun maxp_max_component_elements ->
+    d_uint16 d >>= fun maxp_max_component_depth ->
+    return {
+      maxp_num_glyphs;
+      maxp_max_points;
+      maxp_max_contours;
+      maxp_max_composite_points;
+      maxp_max_composite_contours;
+      maxp_max_zones;
+      maxp_max_twilight_points;
+      maxp_max_storage;
+      maxp_max_function_defs;
+      maxp_max_instruction_defs;
+      maxp_max_stack_elements;
+      maxp_max_size_of_instructions;
+      maxp_max_component_elements;
+      maxp_max_component_depth;
+    }
 
 
 (* -- name table -- *)
@@ -5607,26 +5627,39 @@ module Encode = struct
     return rawtbl
 
 
-  let maxp (m : maxp) : raw_table ok =
+  type maxp_version =
+    | TrueTypeVersion
+    | CFFVersion
+
+
+  let maxp (version : maxp_version) (m : maxp) : raw_table ok =
 (*
     Printf.printf "# 'maxp' table@,";
 *)
     let enc = create_encoder () in
-    enc_uint32 enc (!% 0x00010000)                 >>= fun () ->  (* -- Table version number -- *)
-    enc_uint16 enc m.maxp_num_glyphs               >>= fun () ->
-    enc_uint16 enc m.maxp_max_points               >>= fun () ->
-    enc_uint16 enc m.maxp_max_contours             >>= fun () ->
-    enc_uint16 enc m.maxp_max_composite_points     >>= fun () ->
-    enc_uint16 enc m.maxp_max_composite_contours   >>= fun () ->
-    enc_uint16 enc m.maxp_max_zones                >>= fun () ->
-    enc_uint16 enc m.maxp_max_twilight_points      >>= fun () ->
-    enc_uint16 enc m.maxp_max_storage              >>= fun () ->
-    enc_uint16 enc m.maxp_max_function_defs        >>= fun () ->
-    enc_uint16 enc m.maxp_max_instruction_defs     >>= fun () ->
-    enc_uint16 enc m.maxp_max_stack_elements       >>= fun () ->
-    enc_uint16 enc m.maxp_max_size_of_instructions >>= fun () ->
-    enc_uint16 enc m.maxp_max_component_elements   >>= fun () ->
-    enc_uint16 enc m.maxp_max_component_depth      >>= fun () ->
+    ( match version with
+      | TrueTypeVersion ->
+          enc_uint32 enc (!% 0x00010000)                 >>= fun () ->  (* -- Table version number -- *)
+          enc_uint16 enc m.maxp_num_glyphs               >>= fun () ->
+          enc_uint16 enc m.maxp_max_points               >>= fun () ->
+          enc_uint16 enc m.maxp_max_contours             >>= fun () ->
+          enc_uint16 enc m.maxp_max_composite_points     >>= fun () ->
+          enc_uint16 enc m.maxp_max_composite_contours   >>= fun () ->
+          enc_uint16 enc m.maxp_max_zones                >>= fun () ->
+          enc_uint16 enc m.maxp_max_twilight_points      >>= fun () ->
+          enc_uint16 enc m.maxp_max_storage              >>= fun () ->
+          enc_uint16 enc m.maxp_max_function_defs        >>= fun () ->
+          enc_uint16 enc m.maxp_max_instruction_defs     >>= fun () ->
+          enc_uint16 enc m.maxp_max_stack_elements       >>= fun () ->
+          enc_uint16 enc m.maxp_max_size_of_instructions >>= fun () ->
+          enc_uint16 enc m.maxp_max_component_elements   >>= fun () ->
+          enc_uint16 enc m.maxp_max_component_depth
+
+      | CFFVersion ->
+          enc_uint32 enc (!% 0x00005000)                 >>= fun () ->  (* -- Table version number -- *)
+          enc_uint16 enc m.maxp_num_glyphs
+
+    ) >>= fun () ->
 (*
     Printf.printf "# end 'maxp' table@,";
 *)
