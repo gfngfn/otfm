@@ -5152,7 +5152,8 @@ module Encode = struct
 
   let enc_uint8 enc (ui : int) =
     if not (0 <= ui && ui < 256) then
-      err (`Not_encodable_as_uint8(ui))
+      failwith "enc fail uint8"
+      (*err (`Not_encodable_as_uint8(ui))*)
     else
       begin
         enc_byte enc (Char.chr ui);
