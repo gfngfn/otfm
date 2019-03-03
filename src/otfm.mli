@@ -258,6 +258,7 @@ type error =
   | `Not_encodable_as_int8            of int
   | `Not_encodable_as_uint16          of int
   | `Not_encodable_as_int16           of int
+  | `Not_encodable_as_uint24          of int
   | `Not_encodable_as_uint32          of WideInt.t
   | `Not_encodable_as_int32           of WideInt.t
   | `Not_encodable_as_time            of WideInt.t
@@ -904,8 +905,11 @@ type cff_cid_info =
 
 type charstring_info
 
+type cff_first
+
 type cff_info =
   {
+    cff_first           : cff_first;
     font_name           : string;
     is_fixed_pitch      : bool;
     italic_angle        : int;
@@ -995,7 +999,7 @@ val charstring_bbox : path list -> (csx * csx * csy * csy) option
 
 type raw_glyph
 
-val get_raw_glyph : decoder -> glyph_id -> (raw_glyph option, error) result
+val get_raw_glyph : decoder -> cff_info option -> glyph_id -> (raw_glyph option, error) result
 
 
 module Encode : sig
@@ -1016,8 +1020,6 @@ module Encode : sig
 
   (* -- main table data -- *)
     hmtx : raw_table;
-    glyf : raw_table;
-    loca : raw_table;
 
   (* -- for 'maxp' table -- *)
     number_of_glyphs : int;
@@ -1037,7 +1039,15 @@ module Encode : sig
     number_of_h_metrics    : int;
   }
 
-  val truetype_outline_tables : raw_glyph list -> (glyph_output_info, error) result
+  type glyph_data =
+    | TrueTypeGlyph of raw_table * raw_table
+        (* glyf, loca *)
+    | CFFGlyph      of raw_table
+        (* CFF *)
+
+  val truetype_outline_tables : raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+
+  val cff_outline_tables      : decoder -> cff_info -> raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
 end
 

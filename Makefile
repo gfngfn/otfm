@@ -1,5 +1,5 @@
 PREFIX=/usr/local/bin
-OCB=ocamlbuild -use-ocamlfind
+OCB=ocamlbuild -use-ocamlfind -pkgs str
 
 all: otf gsub cff examples subset
 

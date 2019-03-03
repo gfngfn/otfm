@@ -160,6 +160,7 @@ type error =
   | `Not_encodable_as_int8            of int
   | `Not_encodable_as_uint16          of int
   | `Not_encodable_as_int16           of int
+  | `Not_encodable_as_uint24          of int
   | `Not_encodable_as_uint32          of wint
   | `Not_encodable_as_int32           of wint
   | `Not_encodable_as_time            of wint
@@ -270,6 +271,8 @@ let pp_error ppf = function
     pp ppf "@[Not@ encodable@ as@ uint16@ (%d)@]" ui
 | `Not_encodable_as_int16 i ->
     pp ppf "@[Not@ encodable@ as@ int16@ (%d)@]" i
+| `Not_encodable_as_uint24 ui ->
+    pp ppf "@[Not@ encodable@ as@ uint24@ (%d)@]" ui
 | `Not_encodable_as_uint32 wui ->
     pp ppf "@[Not@ encodable@ as@ uint32@ (%a)@]" WideInt.pp wui
 | `Not_encodable_as_int32 wi ->
@@ -3108,7 +3111,15 @@ type charstring_data =
 
 type subroutine_index = charstring_data array
 
-type cff_first = string * dict * string_index * subroutine_index * int
+type cff_header =
+  {
+    major    : int;
+    minor    : int;
+    hdrSize  : int;
+    offSize  : offsize;
+  }
+
+type cff_first = cff_header * string * dict * string_index * subroutine_index * int
 
 type cff_cid_info =
   {
@@ -3143,6 +3154,7 @@ type charstring_info = decoder * subroutine_index * private_info * int
 
 type cff_info =
   {
+    cff_first           : cff_first;
     font_name           : string;
     is_fixed_pitch      : bool;
     italic_angle        : int;
@@ -3598,6 +3610,14 @@ let cff_first (d : decoder) : (cff_first option) ok =
       d_uint8 d              >>= fun hdrSize ->
       d_offsize d            >>= fun offSizeGlobal ->
       d_skip (hdrSize - 4) d >>= fun () ->
+      let header =
+        {
+          major   = major;
+          minor   = minor;
+          hdrSize = hdrSize;
+          offSize = offSizeGlobal;
+        }
+      in
 
   (* -- Name INDEX (which should contain only one element) -- *)
 (*
@@ -3624,7 +3644,7 @@ let cff_first (d : decoder) : (cff_first option) ok =
       d_index (CharStringData(0, 0)) d_charstring_data d >>= fun gsubridx ->
         (* temporary; should be decoded *)
 
-      let cff_first = (name, dictmap, stridx, gsubridx, offset_CFF) in
+      let cff_first = (header, name, dictmap, stridx, gsubridx, offset_CFF) in
       return (Some(cff_first))
 
 
@@ -3810,7 +3830,7 @@ let cff d : (cff_info option) ok =
   | None ->
       return None
 
-  | Some((font_name, dictmap, stridx, gsubridx, offset_CFF)) ->
+  | Some((header, font_name, dictmap, stridx, gsubridx, offset_CFF) as cff_first) ->
 (*
       get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
       get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
@@ -3866,6 +3886,7 @@ let cff d : (cff_info option) ok =
       pairres >>= fun (cid_info, private_info) ->
       let cff_info =
         {
+          cff_first;
           font_name;
           is_fixed_pitch;
           italic_angle;
@@ -4884,7 +4905,7 @@ let get_composite_offsets (data : string) : ((glyph_id * int) list, error) resul
     loop 10 Alist.empty
 
 
-let get_raw_glyph d gid =
+let get_ttf_raw_glyph d gid =
   loca_with_length d gid >>= function
   | None ->
       let rawg =
@@ -4930,6 +4951,79 @@ let get_raw_glyph d gid =
             }
           in
           return (Some(rawg))
+
+
+let get_cff_raw_glyph d cffinfo gid =
+  match charstring_absolute cffinfo.charstring_info gid with
+  | Error(oerr) ->
+     return None
+
+  | Ok(None) ->
+      let rawg =
+        {
+          old_glyph_id = gid;
+          glyph_aw = 0;
+          glyph_lsb = 0;
+          glyph_bbox = (0, 0, 0, 0);
+          glyph_data = "";
+          glyph_data_length = 0;
+          glyph_composite_offsets = [];
+        }
+      in
+      return (Some(rawg))
+        (* needs reconsideration; maybe should emit an error *)
+
+  | Ok(Some(pathlst)) ->
+      begin
+        match charstring_bbox pathlst with
+        | None ->
+            let rawg =
+              {
+                old_glyph_id = gid;
+                glyph_aw = 0;
+                glyph_lsb = 0;
+                glyph_bbox = (0, 0, 0, 0);
+                glyph_data = "";
+                glyph_data_length = 0;
+                glyph_composite_offsets = [];
+              }
+            in
+            return (Some(rawg))
+
+        | Some(bbox_raw) ->
+            let (_, _, _, offset_CharString_INDEX) = cffinfo.charstring_info in
+            seek_pos offset_CharString_INDEX d >>= fun () ->
+            d_index_access d_charstring_data gid d >>= function
+            | None ->
+                return None
+
+            | Some(CharStringData(offset, len)) ->
+                seek_pos offset d >>= fun () ->
+                d_bytes len d >>= fun data ->
+                let (xmin_raw, ymin_raw, xmax_raw, ymax_raw) = bbox_raw in
+                hmtx_single d gid >>= fun (aw, lsb) ->
+                let rawg =
+                  {
+                    old_glyph_id = gid;
+                    glyph_aw = aw;
+                    glyph_lsb = lsb;
+                    glyph_bbox = (xmin_raw, ymin_raw, xmax_raw, ymax_raw);
+                    glyph_data = data;
+                    glyph_data_length = len;
+                    glyph_composite_offsets = [];
+                  }
+                in
+                return (Some(rawg))
+      end
+
+
+let get_raw_glyph d cffinfo gid =
+  match cffinfo with
+  | None ->
+      get_ttf_raw_glyph d gid
+
+  | Some(cffinfo) ->
+      get_cff_raw_glyph d cffinfo gid
 
 
 module Encode = struct
@@ -5006,6 +5100,15 @@ module Encode = struct
       }
 
 
+  let dummy_raw_table =
+    {
+        table_tag            = !%% 0L;
+        table_content_length = 0;
+        table_padded_length  = 0;
+        table_checksum       = !%% 0L;
+        table_data           = "";
+    }
+
   let compare_table rawtbl1 rawtbl2 =
     Tag.compare rawtbl1.table_tag rawtbl2.table_tag
 
@@ -5031,6 +5134,18 @@ module Encode = struct
     begin
       enc_byte enc (Char.chr b0);
       enc_byte enc (Char.chr b1);
+    end
+
+
+  let enc_uint24_unsafe enc ui =
+    let b0 = ui lsr 16 in
+    let r0 = ui - (b0 lsl 16) in
+    let b1 = r0 lsr 8 in
+    let b2 = r0 - (b1 lsl 8) in
+    begin
+      enc_byte enc (Char.chr b0);
+      enc_byte enc (Char.chr b1);
+      enc_byte enc (Char.chr b2);
     end
 
 
@@ -5073,6 +5188,17 @@ module Encode = struct
         enc_uint16_unsafe enc ui;
         return ()
       end
+
+
+  let enc_uint24 enc ui =
+    let open WideInt in
+      if not (0 <= ui && ui < 0x1000000) then
+        err (`Not_encodable_as_uint24(ui))
+      else
+        begin
+          enc_uint24_unsafe enc ui;
+          return ()
+        end
 
 
   let enc_uint32 enc ui =
@@ -5128,6 +5254,185 @@ module Encode = struct
       Buffer.add_string enc.buffer s;
       return ()
     end
+
+  let sum_of_list   f lst = lst |> List.fold_left (fun acc elem -> acc + f elem) 0
+  let sum_of_array f arr = arr |> Array.fold_left (fun acc elem -> acc + f elem) 0
+
+  let int_of_offsize ofsz =
+    match ofsz with
+    | OffSize1 -> 1
+    | OffSize2 -> 2
+    | OffSize3 -> 3
+    | OffSize4 -> 4
+
+  let enc_offsize enc ofsz =
+    enc_uint8 enc (int_of_offsize ofsz)
+
+  let enc_cff_offset ofsz enc (off : wint) =
+    match ofsz with
+    | OffSize1 -> enc_uint8  enc (WideInt.to_int off)
+    | OffSize2 -> enc_uint16 enc (WideInt.to_int off)
+    | OffSize3 -> enc_uint24 enc (WideInt.to_int off)
+    | OffSize4 -> enc_uint32 enc off
+
+  let calculate_offsize maxoff =
+    if      maxoff < 256      then OffSize1
+    else if maxoff < 65536    then OffSize2
+    else if maxoff < 16777216 then OffSize3
+    else                           OffSize4
+
+  let enc_index_singleton enc ef len data =
+    enc_uint16 enc 1 >>= fun () ->
+    let ofsz = calculate_offsize (len + 1) in
+    enc_offsize    enc ofsz >>= fun () ->
+    enc_cff_offset ofsz enc !%1         >>= fun () ->
+    enc_cff_offset ofsz enc !%(len + 1) >>= fun () ->
+    ef                  enc data        >>= fun () ->
+    return ()
+
+
+  let enc_index (type a) enc ef (items : (a * int (* length of item *) ) array) =
+    let count = Array.length items in
+    let datalen = sum_of_array (fun item -> snd item) items in
+    enc_uint16 enc count >>= fun () ->
+    let ofsz = calculate_offsize (datalen + 1) in
+    enc_offsize enc ofsz >>= fun () ->
+    items |> Array.fold_left (fun acc (_, len) ->
+      acc >>= fun offset ->
+      enc_cff_offset ofsz enc !%offset >>= fun () ->
+      return (offset + len)
+    ) (return 1) >>= fun last_offset ->
+    enc_cff_offset ofsz enc !%last_offset >>= fun () ->
+    items |> Array.fold_left (fun acc (data, _) ->
+      acc >>= fun () ->
+      ef enc data
+    ) (return ())
+
+
+  let enc_copy_direct d enc offset len =
+    seek_pos offset d >>= fun () ->
+    d_bytes len d >>= fun data ->
+    enc_direct enc data
+
+
+  let enc_fdselect_format0 enc fdselect =
+    enc_uint8 enc 0 (* Format0 *) >>= fun () ->
+    fdselect |> Array.fold_left (fun res sel ->
+      res >>= fun () -> enc_uint8 enc sel) (return ())
+
+
+  let nibbles_of_float fl =
+    let str = Str.global_replace (Str.regexp "E-") (Format.sprintf "%G" fl) "M" in
+    let clst = List.init (String.length str) (String.get str) in
+    clst |> List.map (fun c ->
+      match c with
+      | '.'                           -> 0xa
+      | 'E'                           -> 0xb
+      | 'M' (* this means "E-" *)     -> 0xc
+      | '-'                           -> 0xe
+      | _ when ('0' <= c && c <= '9') -> (Char.code c) - (Char.code '0')
+      | _                             -> failwith "bug: enc_dict_element" )
+
+
+
+  let enc_nibbles enc nlst =
+    let rec aux lst =
+      match lst with
+      | a :: b :: rest ->
+          enc_uint8 enc ((a lsl 4) + b) >>= fun () ->
+          aux rest
+
+      | a :: [] ->
+          enc_uint8 enc ((a lsl 4) + 0xf)
+
+      | [] ->
+          enc_uint8 enc 0xff
+    in
+    aux nlst
+
+
+  let enc_dict_element enc elem =
+    match elem with
+    | Value(Integer(i)) when i |> is_in_range (-107) 107 ->
+        enc_uint8 enc (i + 139)
+
+    | Value(Integer(i)) when i |> is_in_range 108 1131 ->
+        enc_uint8 enc (i / 256 + 247) >>= fun () ->
+        enc_uint8 enc (i mod 256 - 108)
+
+    | Value(Integer(i)) when i |> is_in_range (-1131) (-108) ->
+        enc_uint8 enc (-(i / 256 - 251)) >>= fun () ->
+        enc_uint8 enc (-(i mod 256 + 108))
+
+    | Value(Integer(i)) when i |> is_in_range (-32768) 32767 ->
+        enc_uint8 enc 28 >>= fun () ->
+        enc_int16 enc i
+
+    | Value(Integer(i)) ->
+        enc_uint8 enc 29 >>= fun () ->
+        enc_int32 enc !%i
+
+    | Value(Real(f)) ->
+        enc_uint8 enc 30 >>= fun () ->
+        enc_nibbles enc (nibbles_of_float f)
+
+    | Key(ShortKey(i)) when i |> is_in_range 0 11 ->
+        enc_uint8 enc i
+
+    | Key(ShortKey(i)) when i |> is_in_range 13 21 ->
+        enc_uint8 enc i
+
+    | Key(LongKey(i)) ->
+        enc_uint8 enc 12 >>= fun () ->
+        enc_uint8 enc i
+
+    | _ ->
+        err `Invalid_cff_not_an_element
+
+
+  let enc_dict enc dictmap =
+    DictMap.fold (fun k vlst acc ->
+      acc >>= fun () ->
+      vlst |> List.fold_left (fun acc v ->
+        enc_dict_element enc (Value(v))
+      ) (return ()) >>= fun () ->
+      enc_dict_element enc (Key(k))
+    ) dictmap (return ())
+
+
+  let get_encoded_dict_element_length elem =
+    match elem with
+    | Value(Integer(i)) when i |> is_in_range (-107) 107     -> 1
+    | Value(Integer(i)) when i |> is_in_range 108 1131       -> 2
+    | Value(Integer(i)) when i |> is_in_range (-1131) (-108) -> 2
+    | Value(Integer(i)) when i |> is_in_range (-32768) 32767 -> 3
+    | Value(Integer(i))                                      -> 5
+    | Value(Real(f)) ->
+        let nlen = List.length (nibbles_of_float f) in
+        let len = if nlen mod 2 = 0 then nlen + 2 else nlen + 1 in
+        (1 + len)
+    | Key(ShortKey(i)) when i |> is_in_range 0 11            -> 1
+    | Key(ShortKey(i)) when i |> is_in_range 13 21           -> 1
+    | Key(LongKey(i))                                        -> 2
+    | _              -> failwith "get_encoded_dict_element_length"
+
+  let get_encoded_dict_length dictmap =
+    DictMap.fold (fun k vlst sum ->
+      let sum = vlst |> List.fold_left (fun acc v ->
+        sum + get_encoded_dict_element_length (Value(v))) sum
+      in
+      sum + get_encoded_dict_element_length (Key(k))
+    ) dictmap 0
+
+
+  (*
+  let enc_cff_header enc header =
+    enc_uint8   enc header.major   >>= fun () ->
+    enc_uint8   enc header.minor   >>= fun () ->
+    enc_uint8   enc header.hdrSize >>= fun () ->
+    enc_offsize enc header.offSize >>= fun () ->
+    enc_pad     enc (header.hdrSize - 4)
+  *)
 
 
   let calculate_header_constants numTables =
@@ -5323,8 +5628,6 @@ module Encode = struct
 
   (* -- main table data -- *)
     hmtx : raw_table;
-    glyf : raw_table;
-    loca : raw_table;
 
   (* -- for 'maxp' table -- *)
     number_of_glyphs : int;
@@ -5343,6 +5646,12 @@ module Encode = struct
     x_max_extent           : int;
     number_of_h_metrics    : int;
   }
+
+  type glyph_data =
+    | TrueTypeGlyph of raw_table * raw_table
+        (* glyf, loca *)
+    | CFFGlyph      of raw_table
+        (* CFF *)
 
 
   let update_bbox (xMin0, yMin0, xMax0, yMax0) (xMin1, yMin1, xMax1, yMax1) =
@@ -5450,24 +5759,269 @@ module Encode = struct
       let rawtbl_glyf = to_raw_table Tag.glyf enc_glyf in
       let rawtbl_loca = to_raw_table Tag.loca enc_loca in
 
-      return {
-        hmtx = rawtbl_hmtx;
-        glyf = rawtbl_glyf;
-        loca = rawtbl_loca;
+      let out_info =
+        {
+          hmtx = rawtbl_hmtx;
 
-        number_of_glyphs = numGlyphs;
+          number_of_glyphs = numGlyphs;
 
-        xmin = xMin;
-        ymin = yMin;
-        xmax = xMax;
-        ymax = yMax;
-        index_to_loc_format = locfmt;
+          xmin = xMin;
+          ymin = yMin;
+          xmax = xMax;
+          ymax = yMax;
+          index_to_loc_format = locfmt;
 
-        advance_width_max      = awmax;
-        min_left_side_bearing  = minlsb;
-        min_right_side_bearing = minrsb;
-        x_max_extent           = xmaxext;
-        number_of_h_metrics    = numberOfHMetrics;
-      }
+          advance_width_max      = awmax;
+          min_left_side_bearing  = minlsb;
+          min_right_side_bearing = minrsb;
+          x_max_extent           = xmaxext;
+          number_of_h_metrics    = numberOfHMetrics;
+        }
+      in
+      let glyph_data = TrueTypeGlyph(rawtbl_glyf, rawtbl_loca) in
+      return ((out_info, glyph_data))
+
+
+  type charstring_raw       = (string * int)
+
+  let calculate_index_length count datalen =
+    if count = 0 then 2
+    else
+      let ofsz = int_of_offsize (calculate_offsize (datalen + 1)) in
+      2 + 1 + ofsz * (count + 1) + datalen
+
+
+  let d_private_lsubr_pair_opt offset_CFF dictmap d =
+    get_integer_pair_opt dictmap (ShortKey(18)) >>= fun privateopt ->
+    match privateopt with
+    | None ->
+        return (None)
+
+    | Some(size_private, reloffset_private) ->
+        let offset_private = offset_CFF + reloffset_private in
+        seek_pos offset_private d >>= fun () ->
+        d_dict size_private d >>= fun dictmap_private ->
+        get_integer_opt dictmap (ShortKey(19)) >>= fun lsubroffopt ->
+        match lsubroffopt with
+        | None ->
+            return (Some(dictmap_private, None))
+
+        | Some(selfoffset_lsubr) ->
+            let offset_lsubr = offset_private + selfoffset_lsubr in
+            seek_pos offset_lsubr d >>= fun () ->
+            d_index (CharStringData(0, 0)) d_charstring_data d >>= fun lsubridx ->
+            return (Some(dictmap_private, Some(lsubridx)))
+
+
+  let d_fontdict_private_pair_array offset_CFF dictmap d =
+    get_integer dictmap (LongKey(36)) >>= fun offset_FDArray ->
+    seek_pos (offset_CFF + offset_FDArray) d >>= fun () ->
+    d_index DictMap.empty d_dict d >>= fun arrraw ->
+    try
+      let arr =
+        arrraw |> Array.map (fun font_dictmap ->
+          let res =
+            d_private_lsubr_pair_opt offset_CFF font_dictmap d
+          in
+          match res with
+          | Error(e)        -> raise (Internal(e))
+          | Ok(priv_lsubr_pair_opt) -> (font_dictmap, priv_lsubr_pair_opt)
+        )
+      in
+      return arr
+    with
+    | Internal(e) -> err e
+
+
+
+  let calculate_subr_index_length arr =
+    calculate_index_length (Array.length arr) (sum_of_array (function CharStringData(_, len) -> len) arr)
+
+
+  let fix_offset key newoffset dictmap =
+    DictMap.update key (function None -> None | Some(_) -> Some(Integer(newoffset))) dictmap
+
+  let fix_private_offset =
+    fix_offset (ShortKey(18))
+
+  let fix_lsubr_offset =
+    fix_offset (ShortKey(19))
+
+  let make_elem_len_pair_of_array f arr =
+    Array.map (fun x -> (x, f x)) arr
+
+  let enc_cff_table (d : decoder) (enc : encoder) (cfffirst : cff_first) (charstrings : charstring_raw array) (fdselect : (int array) option) =
+    let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cfffirst in
+
+    let header_len      = header.hdrSize in
+    let nameidx_len     = calculate_index_length 1 (String.length name) in
+    let topdictidx_len  = calculate_index_length 1 (get_encoded_dict_length dictmap) in
+    let stridx_len      = calculate_index_length (Array.length stridx) (sum_of_array String.length stridx) in
+    let gsubridx_len    = calculate_subr_index_length gsubridx in
+    let fdsel_off       = header_len + nameidx_len + topdictidx_len + stridx_len + gsubridx_len in
+    let fdsel_len       =
+      match fdselect with
+      | None      -> 0
+      | Some(arr) -> 1 + Array.length arr (* Format0 *)
+    in
+    let csidx_off       = fdsel_off + fdsel_len in
+    let csidx_len       = calculate_index_length (Array.length charstrings) (sum_of_array (function (_, len) -> len) charstrings) in
+    let fontdict_off    = csidx_off + csidx_len in
+
+    (* layout remaining data *)
+    ( match fdselect with
+      | None ->
+          d_private_lsubr_pair_opt offset_CFF dictmap d >>= fun pairopt ->
+          begin
+            match pairopt with
+            | None ->
+                return ([||], [||], [||])
+            | Some(priv_dictmap, lsubropt) ->
+                let privdict_len = get_encoded_dict_length priv_dictmap in
+                let lsubrlist =
+                  match lsubropt with
+                  | None        -> [||]
+                  | Some(lsubr) -> [| lsubr |]
+                in
+                return ([||], [| priv_dictmap |], lsubrlist)
+          end
+
+      | Some(arr) ->
+          d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
+          let fdarray = pairarray |> Array.fold_left (fun acc (font_dictmap, _) ->
+            font_dictmap :: acc ) [] |> List.rev |> Array.of_list in
+          let privarray = pairarray |> Array.fold_left (fun acc (_, priv_lsubr_pair_opt) ->
+            match priv_lsubr_pair_opt with
+            | None          -> acc
+            | Some(priv, _) -> priv :: acc ) [] |> List.rev |> Array.of_list
+          in
+          let lsubrarray = pairarray |> Array.fold_left (fun acc (_, priv_lsubr_pair_opt) ->
+            match priv_lsubr_pair_opt with
+            | Some(_, Some(lsubr)) -> lsubr :: acc
+            | _                    -> acc ) [] |> List.rev |> Array.of_list
+          in
+          return (fdarray, privarray, lsubrarray)
+
+    ) >>= fun (fdarray, privarray, lsubrarray) ->
+
+    let dictmap = DictMap.remove (ShortKey(15)) dictmap in (* remove charset *)
+
+    (* Header *)
+    enc_copy_direct     d enc offset_CFF header_len >>= fun () ->
+    (* Name INDEX *)
+    enc_index_singleton enc enc_direct nameidx_len name >>= fun () ->
+    (* Top DICT INDEX *)
+    enc_index_singleton enc enc_dict topdictidx_len dictmap >>= fun () ->
+    (* String INDEX *)
+    enc_index           enc enc_direct (make_elem_len_pair_of_array String.length stridx) >>= fun () ->
+    (* Global Subr INDEX *)
+    enc_index           enc (fun enc e ->
+                              match e with
+                              | CharStringData(offset, len) ->
+                                enc_copy_direct d enc (offset + offset_CFF) len)
+                        (make_elem_len_pair_of_array (function CharStringData(_, len) -> len) gsubridx) >>= fun () ->
+
+    (* FDSelect (CIDFonts only) *)
+    ( match fdselect with
+      | None      -> return ()
+      | Some(arr) -> enc_fdselect_format0 enc arr ) >>= fun () ->
+    (* CharStrings INDEX *)
+    enc_index           enc (fun enc cs -> enc_direct enc cs) charstrings >>= fun () ->
+    (* Font DICT INDEX (CIDFonts only) *)
+    (* Private DICT *)
+    (* Local Subr INDEX *)
+    return ()
+
+
+  let cff_outline_tables d cffinfo (glyphlst : raw_glyph list) =
+    let numGlyphs = List.length glyphlst in
+
+    let ht = OldToNewGlyphID.create (numGlyphs * 2) in
+    glyphlst |> List.iteri (fun gidnew rg ->
+      OldToNewGlyphID.add ht rg.old_glyph_id gidnew
+    );
+
+    if numGlyphs > 64999 then
+      err (`Too_many_glyphs_for_encoding(numGlyphs))
+    else
+      begin
+        match glyphlst with
+        | []          -> err `No_glyph_for_encoding
+        | gfirst :: _ -> return gfirst
+      end >>= fun gfirst ->
+      let lsb_init = gfirst.glyph_lsb in
+      let rsb_init = get_right_side_bearing gfirst in
+      let xext_init = get_x_extent gfirst in
+
+      let numberOfHMetrics = numGlyphs in
+
+    (* -- outputs 'hmtx' table and calculates (xMin, yMin, xMax, yMax) -- *)
+      let enc_hmtx = create_encoder () in
+      let bbox_init = (0, 0, 0, 0) in
+      let aw_init = 0 in
+      glyphlst |> List.fold_left (fun res g ->
+        res >>= fun (bbox, aw, lsb, rsb, xext) ->
+        enc_uint16 enc_hmtx g.glyph_aw  >>= fun () ->
+        enc_int16  enc_hmtx g.glyph_lsb >>= fun () ->
+        let bboxnew = update_bbox bbox g.glyph_bbox in
+        let awnew = max aw g.glyph_aw in
+        let lsbnew = min lsb g.glyph_lsb in
+        let rsbnew = min rsb (get_right_side_bearing g) in
+        let xextnew = max xext (get_x_extent g) in
+        return (bboxnew, awnew, lsbnew, rsbnew, xextnew)
+      ) (return (bbox_init, aw_init, lsb_init, rsb_init, xext_init))
+        >>= fun ((xMin, yMin, xMax, yMax), awmax, minlsb, minrsb, xmaxext) ->
+      let rawtbl_hmtx = to_raw_table Tag.hmtx enc_hmtx in
+
+    (* -- outputs 'cff' table -- *)
+      let enc_cff = create_encoder () in
+      let charstrings = Array.make numGlyphs ("", 0) in
+      let (_, _, privinfo, _) = cffinfo.charstring_info in
+      let (fdselect, regf) =
+        match privinfo with
+        | SinglePrivate(singlepriv)    ->
+            (None, (fun _ _ -> return ()))
+        | FontDicts(fdarray, fdselect) ->
+            let arr = Array.make numGlyphs 0 in
+            let f = (fun gidnew gidold ->
+              select_fd_index fdselect gidold >>= fun fdindex ->
+              arr.(gidnew) <- fdindex;
+              return ()
+            ) in
+            (Some(arr), f)
+      in
+      glyphlst |> List.fold_left (fun res g ->
+        res >>= fun newgid ->
+        let data = g.glyph_data in
+        let len = g.glyph_data_length in
+        charstrings.(newgid) <- (data, len);
+        regf newgid g.old_glyph_id >>= fun () ->
+        return (newgid + 1)
+      ) (return 0) >>= fun _ ->
+      enc_cff_table d enc_cff cffinfo.cff_first charstrings fdselect >>= fun () ->
+      let rawtbl_cff = to_raw_table Tag.cff enc_cff in
+
+      let out_info =
+        {
+          hmtx = rawtbl_hmtx;
+
+          number_of_glyphs = numGlyphs;
+
+          xmin = xMin;
+          ymin = yMin;
+          xmax = xMax;
+          ymax = yMax;
+          index_to_loc_format = ShortLocFormat; (* dummy *)
+
+          advance_width_max      = awmax;
+          min_left_side_bearing  = minlsb;
+          min_right_side_bearing = minrsb;
+          x_max_extent           = xmaxext;
+          number_of_h_metrics    = numberOfHMetrics;
+        }
+      in
+      let glyph_data = CFFGlyph(rawtbl_cff) in
+      return ((out_info, glyph_data))
+
 
 end
