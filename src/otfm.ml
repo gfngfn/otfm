@@ -5315,6 +5315,9 @@ module Encode = struct
     enc_direct enc data
 
 
+  let enc_array enc ef arr =
+    arr|> Array.fold_left (fun acc x -> acc >>= fun () -> ef enc x) (return ())
+
   let enc_fdselect_format0 enc fdselect =
     enc_uint8 enc 0 (* Format0 *) >>= fun () ->
     fdselect |> Array.fold_left (fun res sel ->
@@ -5322,7 +5325,7 @@ module Encode = struct
 
 
   let nibbles_of_float fl =
-    let str = Str.global_replace (Str.regexp "E-") (Format.sprintf "%G" fl) "M" in
+    let str = Str.global_replace (Str.regexp "E-") "M" (Format.sprintf "%G" fl) in
     let clst = List.init (String.length str) (String.get str) in
     clst |> List.map (fun c ->
       match c with
@@ -5331,7 +5334,7 @@ module Encode = struct
       | 'M' (* this means "E-" *)     -> 0xc
       | '-'                           -> 0xe
       | _ when ('0' <= c && c <= '9') -> (Char.code c) - (Char.code '0')
-      | _                             -> failwith "bug: enc_dict_element" )
+      | _                             -> failwith "bug: nibbles_of_float" )
 
 
 
@@ -5833,13 +5836,17 @@ module Encode = struct
     | Internal(e) -> err e
 
 
+  let get_charstring_length = function
+    CharStringData(_, len) -> len
 
-  let calculate_subr_index_length arr =
-    calculate_index_length (Array.length arr) (sum_of_array (function CharStringData(_, len) -> len) arr)
+  let calculate_index_length_of_array f arr =
+    calculate_index_length (Array.length arr) (sum_of_array f arr)
 
+  let calculate_subr_index_length =
+    calculate_index_length_of_array get_charstring_length
 
   let fix_offset key newoffset dictmap =
-    DictMap.update key (function None -> None | Some(_) -> Some(Integer(newoffset))) dictmap
+    DictMap.update key (function None -> None | Some(_) -> Some([Integer(newoffset)])) dictmap
 
   let fix_private_offset =
     fix_offset (ShortKey(18))
@@ -5850,13 +5857,18 @@ module Encode = struct
   let make_elem_len_pair_of_array f arr =
     Array.map (fun x -> (x, f x)) arr
 
+  let enc_charstring_data d offset_CFF enc csd =
+    match csd with
+    | CharStringData(offset, len) ->
+        enc_copy_direct d enc (offset + offset_CFF) len
+
   let enc_cff_table (d : decoder) (enc : encoder) (cfffirst : cff_first) (charstrings : charstring_raw array) (fdselect : (int array) option) =
     let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cfffirst in
 
     let header_len      = header.hdrSize in
     let nameidx_len     = calculate_index_length 1 (String.length name) in
     let topdictidx_len  = calculate_index_length 1 (get_encoded_dict_length dictmap) in
-    let stridx_len      = calculate_index_length (Array.length stridx) (sum_of_array String.length stridx) in
+    let stridx_len      = calculate_index_length_of_array String.length stridx in
     let gsubridx_len    = calculate_subr_index_length gsubridx in
     let fdsel_off       = header_len + nameidx_len + topdictidx_len + stridx_len + gsubridx_len in
     let fdsel_len       =
@@ -5865,44 +5877,75 @@ module Encode = struct
       | Some(arr) -> 1 + Array.length arr (* Format0 *)
     in
     let csidx_off       = fdsel_off + fdsel_len in
-    let csidx_len       = calculate_index_length (Array.length charstrings) (sum_of_array (function (_, len) -> len) charstrings) in
+    let csidx_len       = calculate_index_length_of_array snd charstrings in
     let fontdict_off    = csidx_off + csidx_len in
 
-    (* layout remaining data *)
+    (* layout remaining data, and fix offsets in DICTs *)
     ( match fdselect with
       | None ->
           d_private_lsubr_pair_opt offset_CFF dictmap d >>= fun pairopt ->
           begin
             match pairopt with
             | None ->
-                return ([||], [||], [||])
+                return (dictmap, [||], [||], [||])
             | Some(priv_dictmap, lsubropt) ->
-                let privdict_len = get_encoded_dict_length priv_dictmap in
-                let lsubrlist =
+                let lsubrarray =
                   match lsubropt with
                   | None        -> [||]
                   | Some(lsubr) -> [| lsubr |]
                 in
-                return ([||], [| priv_dictmap |], lsubrlist)
+                let priv_len           = get_encoded_dict_length priv_dictmap in
+                let priv_start_offset  = fontdict_off + 0 in
+                let lsubr_start_offset = priv_start_offset + priv_len in
+                let newdictmap         = fix_private_offset priv_start_offset dictmap in
+                let newpriv            = fix_lsubr_offset lsubr_start_offset priv_dictmap in
+                return (newdictmap, [||], [| newpriv |], lsubrarray)
           end
 
       | Some(arr) ->
+          let extract_pairarray pairarray =
+            let fdarray = pairarray |> Array.fold_left (fun acc (font_dictmap, _) ->
+              font_dictmap :: acc ) [] |> List.rev |> Array.of_list in
+            let privarray = pairarray |> Array.fold_left (fun acc (_, priv_lsubr_pair_opt) ->
+              match priv_lsubr_pair_opt with
+              | None          -> acc
+              | Some(priv, _) -> priv :: acc ) [] |> List.rev |> Array.of_list
+            in
+            let lsubrarray = pairarray |> Array.fold_left (fun acc (_, priv_lsubr_pair_opt) ->
+              match priv_lsubr_pair_opt with
+              | Some(_, Some(lsubr)) -> lsubr :: acc
+              | _                    -> acc ) [] |> List.rev |> Array.of_list
+            in
+            (fdarray, privarray, lsubrarray)
+          in
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
-          let fdarray = pairarray |> Array.fold_left (fun acc (font_dictmap, _) ->
-            font_dictmap :: acc ) [] |> List.rev |> Array.of_list in
-          let privarray = pairarray |> Array.fold_left (fun acc (_, priv_lsubr_pair_opt) ->
-            match priv_lsubr_pair_opt with
-            | None          -> acc
-            | Some(priv, _) -> priv :: acc ) [] |> List.rev |> Array.of_list
-          in
-          let lsubrarray = pairarray |> Array.fold_left (fun acc (_, priv_lsubr_pair_opt) ->
-            match priv_lsubr_pair_opt with
-            | Some(_, Some(lsubr)) -> lsubr :: acc
-            | _                    -> acc ) [] |> List.rev |> Array.of_list
-          in
-          return (fdarray, privarray, lsubrarray)
+          let (fdarray, privarray, _) = extract_pairarray pairarray in
+          let fontdict_len       = calculate_index_length_of_array get_encoded_dict_length fdarray in
+          let priv_len           = sum_of_array get_encoded_dict_length privarray in
+          let priv_start_offset  = fontdict_off + fontdict_len in
+          let lsubr_start_offset = priv_start_offset + priv_len in
+          ignore (pairarray |> Array.fold_left (fun (i, priv_next_offset, lsubr_next_offset) pairopt ->
+            match pairopt with
+            | (fd, Some(priv, lsubropt)) ->
+                begin
+                  let newfd = fix_private_offset priv_next_offset fd in
+                  let (newpriv, lsubr_len) =
+                      match lsubropt with
+                      | Some(lsubr) -> (fix_lsubr_offset lsubr_next_offset priv, calculate_subr_index_length lsubr)
+                      | None        -> (priv, 0)
+                  in
+                  let newpair = (newfd, Some(newpriv, lsubropt)) in
+                  pairarray.(i) <- newpair;
+                  (i + 1, priv_next_offset + (get_encoded_dict_length priv), lsubr_next_offset + lsubr_len)
+                end
 
-    ) >>= fun (fdarray, privarray, lsubrarray) ->
+            | _ -> (i + 1, priv_next_offset, lsubr_next_offset)
+
+          ) (0, priv_start_offset, lsubr_start_offset));
+          let (fdarray, privarray, lsubrarray) = extract_pairarray pairarray in
+          return (dictmap, fdarray, privarray, lsubrarray)
+
+    ) >>= fun (dictmap, fdarray, privarray, lsubrarray) ->
 
     let dictmap = DictMap.remove (ShortKey(15)) dictmap in (* remove charset *)
 
@@ -5915,22 +5958,22 @@ module Encode = struct
     (* String INDEX *)
     enc_index           enc enc_direct (make_elem_len_pair_of_array String.length stridx) >>= fun () ->
     (* Global Subr INDEX *)
-    enc_index           enc (fun enc e ->
-                              match e with
-                              | CharStringData(offset, len) ->
-                                enc_copy_direct d enc (offset + offset_CFF) len)
-                        (make_elem_len_pair_of_array (function CharStringData(_, len) -> len) gsubridx) >>= fun () ->
+    enc_index           enc (enc_charstring_data d offset_CFF)
+                          (make_elem_len_pair_of_array get_charstring_length gsubridx) >>= fun () ->
 
     (* FDSelect (CIDFonts only) *)
     ( match fdselect with
       | None      -> return ()
       | Some(arr) -> enc_fdselect_format0 enc arr ) >>= fun () ->
     (* CharStrings INDEX *)
-    enc_index           enc (fun enc cs -> enc_direct enc cs) charstrings >>= fun () ->
+    enc_index enc (fun enc cs -> enc_direct enc cs) charstrings >>= fun () ->
     (* Font DICT INDEX (CIDFonts only) *)
+    enc_index enc enc_dict (make_elem_len_pair_of_array get_encoded_dict_length fdarray) >>= fun () ->
     (* Private DICT *)
+    enc_array enc enc_dict privarray >>= fun () ->
     (* Local Subr INDEX *)
-    return ()
+    enc_array enc (fun enc idx -> enc_index enc (enc_charstring_data d offset_CFF)
+                    (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray
 
 
   let cff_outline_tables d cffinfo (glyphlst : raw_glyph list) =
