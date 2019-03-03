@@ -1298,7 +1298,7 @@ let maxp d =
   init_decoder d >>=
   seek_required_table Tag.maxp d >>= fun () ->
   d_uint32 d >>= fun version ->
-  confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
+    confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
   d_uint16 d >>= fun maxp_num_glyphs ->
   d_uint16 d >>= fun maxp_max_points ->
   d_uint16 d >>= fun maxp_max_contours ->
@@ -5363,12 +5363,12 @@ module Encode = struct
         enc_uint8 enc (i + 139)
 
     | Value(Integer(i)) when i |> is_in_range 108 1131 ->
-        enc_uint8 enc (i / 256 + 247) >>= fun () ->
-        enc_uint8 enc (i mod 256 - 108)
+        enc_uint8 enc (247 + ((i - 108) / 256)) >>= fun () ->
+        enc_uint8 enc ((i - 108) mod 256)
 
     | Value(Integer(i)) when i |> is_in_range (-1131) (-108) ->
-        enc_uint8 enc (-(i / 256 - 251)) >>= fun () ->
-        enc_uint8 enc (-(i mod 256 + 108))
+        enc_uint8 enc (254 - ((i + 1131) / 256)) >>= fun () ->
+        enc_uint8 enc (255 - ((i + 1131) mod 256))
 
     | Value(Integer(i)) when i |> is_in_range (-32768) 32767 ->
         enc_uint8 enc 28 >>= fun () ->
