@@ -5877,7 +5877,7 @@ module Encode = struct
         let offset_private = offset_CFF + reloffset_private in
         seek_pos offset_private d >>= fun () ->
         d_dict size_private d >>= fun dictmap_private ->
-        get_integer_opt dictmap (ShortKey(19)) >>= fun lsubroffopt ->
+        get_integer_opt dictmap_private (ShortKey(19)) >>= fun lsubroffopt ->
         match lsubroffopt with
         | None ->
             return (Some(dictmap_private, None))
@@ -5982,13 +5982,14 @@ module Encode = struct
           in
 
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
-          let (fdarray, privarray, _) = extract_pairarray pairarray in
+          let (fdarray, privarray, lsubrarray) = extract_pairarray pairarray in
 
           let fdidx_len          = calculate_index_length_of_array (calculate_encoded_dict_length true) fdarray in
           let priv_len           = sum_of_array (calculate_encoded_dict_length true) privarray in
+          let lsubr_len          = sum_of_array calculate_subr_index_length lsubrarray in
           let priv_start_offset  = fdidx_offset + fdidx_len in
           let lsubr_start_offset = priv_start_offset + priv_len in
-          Format.printf "priv:%x lsubr:%x\n%!" priv_start_offset lsubr_start_offset;
+          Format.printf "priv:%x lsubr:%x end:%x\n%!" priv_start_offset lsubr_start_offset (lsubr_start_offset + lsubr_len);
 
           ignore (pairarray |> Array.fold_left (fun (i, priv_next_offset, lsubr_next_offset) pairopt ->
             match pairopt with
@@ -6014,7 +6015,7 @@ module Encode = struct
 
     ) >>= fun (dictmap, fdarray, privarray, lsubrarray) ->
 
-    Format.printf "lengt of fdarray:%d privarray:%d lsubrarray:%d\n%!"
+    Format.printf "length of fdarray:%d privarray:%d lsubrarray:%d\n%!"
       (Array.length fdarray) (Array.length privarray) (Array.length lsubrarray);
 
     (* Header *)
