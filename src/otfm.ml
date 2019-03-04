@@ -5962,7 +5962,7 @@ module Encode = struct
           begin
             match pairopt with
             | None ->
-                return (dictmap, [||], [||], [||])
+                return (dictmap, None, [||], [||], [||])
 
             | Some(priv, lsubropt) ->
                 let lsubrarray =
@@ -5976,7 +5976,7 @@ module Encode = struct
                 let newdictmap         = fix_private_offset priv_len priv_start_offset dictmap in
                 let newpriv            = fix_lsubr_offset (lsubr_start_offset - priv_start_offset) priv in
                 Format.printf "priv:%x lsubr:%x\n%!" priv_start_offset lsubr_start_offset;
-                return (newdictmap, [||], [|newpriv|], lsubrarray)
+                return (newdictmap, None, [||], [|newpriv|], lsubrarray)
 
           end
 
@@ -6015,7 +6015,7 @@ module Encode = struct
           in
 
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
-          let (fdmapping, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
+          let (newfdmapping, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
           let (fdarray, privarray, lsubrarray) = extract_pairarray pairarray in
 
           let fdidx_len          = calculate_index_length_of_array (calculate_encoded_dict_length true) fdarray in
@@ -6045,9 +6045,9 @@ module Encode = struct
 
           let (newfdarray, newprivarray, newlsubrarray) = extract_pairarray pairarray in
           let newdictmap = dictmap |> fix_fd_related_offset fdidx_offset fdsel_offset in
-          return (newdictmap, newfdarray, newprivarray, newlsubrarray)
+          return (newdictmap, Some(newfdmapping), newfdarray, newprivarray, newlsubrarray)
 
-    ) >>= fun (dictmap, fdarray, privarray, lsubrarray) ->
+    ) >>= fun (dictmap, fdselect, fdarray, privarray, lsubrarray) ->
 
     Format.printf "length of fdarray:%d privarray:%d lsubrarray:%d\n%!"
       (Array.length fdarray) (Array.length privarray) (Array.length lsubrarray);
@@ -6070,8 +6070,8 @@ module Encode = struct
     (* CharStrings INDEX *)
     enc_index enc enc_direct charstrings >>= fun () ->
     (* Font DICT INDEX (CIDFonts only) *)
-      (fdarray.(0)) |> DictMap.iter (fun k vlst -> Format.printf "key %a : \n" pp_element (Key(k));
-                                      vlst |> List.iter (fun v -> Format.printf "value : %a\n" pp_element (Value(v))));
+    (*  (fdarray.(0)) |> DictMap.iter (fun k vlst -> Format.printf "key %a : \n" pp_element (Key(k));
+                                      vlst |> List.iter (fun v -> Format.printf "value : %a\n" pp_element (Value(v))));*)
     enc_index enc (enc_dict true) (make_elem_len_pair_of_array (calculate_encoded_dict_length true) fdarray) >>= fun () ->
     (* Private DICT *)
     enc_array enc (enc_dict true) privarray >>= fun () ->
