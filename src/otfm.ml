@@ -6000,9 +6000,9 @@ module Encode = struct
     (* Header *)
     enc_copy_direct     d enc offset_CFF header_len >>= fun () ->
     (* Name INDEX *)
-    enc_index_singleton enc enc_direct nameidx_len name >>= fun () ->
+    enc_index_singleton enc enc_direct (String.length name) name >>= fun () ->
     (* Top DICT INDEX *)
-    enc_index_singleton enc enc_dict topdictidx_len dictmap >>= fun () ->
+    enc_index_singleton enc enc_dict (calculate_encoded_dict_length dictmap) dictmap >>= fun () ->
     (* String INDEX *)
     enc_index           enc enc_direct (make_elem_len_pair_of_array String.length stridx) >>= fun () ->
     (* Global Subr INDEX *)
