@@ -5909,10 +5909,10 @@ module Encode = struct
     | Internal(e) -> err e
 
 
-  let enc_charstring_data d offset_CFF enc csd =
+  let enc_charstring_data d enc csd =
     match csd with
     | CharStringData(offset, len) ->
-        enc_copy_direct d enc (offset + offset_CFF) len
+        enc_copy_direct d enc offset len
 
 
   let enc_cff_table (d : decoder) (enc : encoder) (cfffirst : cff_first) (charstrings : charstring_raw array) (fdselect : (int array) option) =
@@ -6023,7 +6023,7 @@ module Encode = struct
     (* String INDEX *)
     enc_index           enc enc_direct (make_elem_len_pair_of_array String.length stridx) >>= fun () ->
     (* Global Subr INDEX *)
-    enc_index           enc (enc_charstring_data d offset_CFF)
+    enc_index           enc (enc_charstring_data d)
                           (make_elem_len_pair_of_array get_charstring_length gsubridx) >>= fun () ->
     (* FDSelect (CIDFonts only) *)
     ( match fdselect with
@@ -6038,7 +6038,7 @@ module Encode = struct
     (* Private DICT *)
     enc_array enc (enc_dict true) privarray >>= fun () ->
     (* Local Subr INDEX *)
-    enc_array enc (fun enc idx -> enc_index enc (enc_charstring_data d offset_CFF)
+    enc_array enc (fun enc idx -> enc_index enc (enc_charstring_data d)
                     (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray
 
 
