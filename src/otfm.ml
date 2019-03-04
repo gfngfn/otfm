@@ -5310,13 +5310,13 @@ module Encode = struct
 
   let enc_index (type a) enc ef (elems : (a * int (* length of element *) ) array) =
     let count   = Array.length elems in
-    let datalen = sum_of_array (fun e -> snd e) elems in
+    let datalen = sum_of_array snd elems in
     let ofsz    = calculate_offsize (datalen + 1) in
     enc_uint16  enc count >>= fun () ->
     if count = 0 then
       return ()
     else
-      enc_offsize enc ofsz  >>= fun () ->
+      enc_offsize enc ofsz >>= fun () ->
 
       elems |> Array.fold_left (fun res (_, len) ->
         res >>= fun offset ->
@@ -5436,8 +5436,8 @@ module Encode = struct
     | Value(Integer(i))                                      -> 5
     | Value(Real(f)) ->
         let nlen = List.length (nibbles_of_float f) in
-        let len = if nlen mod 2 = 0 then nlen + 2 else nlen + 1 in
-        (1 + len)
+        let nlen = if nlen mod 2 = 0 then nlen + 2 else nlen + 1 in
+        (1 + (nlen / 2))
     | Key(ShortKey(i)) when i |> is_in_range 0 11            -> 1
     | Key(ShortKey(i)) when i |> is_in_range 13 21           -> 1
     | Key(LongKey(i))                                        -> 2
@@ -5923,6 +5923,10 @@ module Encode = struct
     let csidx_offset    = fdsel_offset + fdsel_len in
     let csidx_len       = calculate_index_length_of_array snd charstrings in
     let fdidx_offset    = csidx_offset + csidx_len in
+    Format.printf "header:%x name:%x top:%x str:%x gsubr:%x fdsel:%x cs:%x fdidx:%x\n%!"
+      0 (header_len) (header_len+nameidx_len) (header_len+nameidx_len+topdictidx_len)
+      (header_len+nameidx_len+topdictidx_len+stridx_len)
+      fdsel_offset csidx_offset fdidx_offset;
 
     (* layout remaining data, and fix offsets in DICTs *)
     ( match fdselect with
@@ -5944,6 +5948,7 @@ module Encode = struct
                 let lsubr_start_offset = priv_start_offset + priv_len in
                 let newdictmap         = fix_private_offset priv_len priv_start_offset dictmap in
                 let newpriv            = fix_lsubr_offset lsubr_start_offset priv in
+                Format.printf "priv:%x lsubr:%x\n%!" priv_start_offset lsubr_start_offset;
                 return (newdictmap, [||], [|newpriv|], lsubrarray)
 
           end
@@ -5970,6 +5975,7 @@ module Encode = struct
           let priv_len           = sum_of_array calculate_encoded_dict_length privarray in
           let priv_start_offset  = fdidx_offset + fdidx_len in
           let lsubr_start_offset = priv_start_offset + priv_len in
+          Format.printf "priv:%x lsubr:%x\n%!" priv_start_offset lsubr_start_offset;
 
           ignore (pairarray |> Array.fold_left (fun (i, priv_next_offset, lsubr_next_offset) pairopt ->
             match pairopt with
