@@ -5915,6 +5915,20 @@ module Encode = struct
         enc_copy_direct d enc offset len
 
 
+  module IntSet = Set.Make
+    (struct
+      type t = int
+      let compare i j = i - j
+    end)
+
+
+  module IntMap = Map.Make
+    (struct
+      type t = int
+      let compare i j = i - j
+    end)
+
+
   let enc_cff_table (d : decoder) (enc : encoder) (cfffirst : cff_first) (charstrings : charstring_raw array) (fdselect : (int array) option) =
     let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cfffirst in
 
@@ -5966,7 +5980,7 @@ module Encode = struct
 
           end
 
-      | Some(arr) ->
+      | Some(fdmapping) ->
           let extract_pairarray pairarray =
             let fdarray = pairarray |> Array.map fst in
             let (privrevlst, lsubrrevlst) = pairarray |> Array.fold_left (fun (plst, llst) (_, pairopt) ->
@@ -5980,8 +5994,28 @@ module Encode = struct
             let lsubrarray = lsubrrevlst |> List.rev |> Array.of_list in
             (fdarray, privarray, lsubrarray)
           in
+          let remove_unused_fontdict fdmapping fdarr =
+            let usedset = fdmapping |> Array.fold_left (fun set id -> IntSet.add id set) IntSet.empty in
+            let (_, _, newidmap, fdrevlst) =
+              fdarr |> Array.fold_left (fun (id, newid, map, fdlst) fd ->
+                if IntSet.mem id usedset then
+                  (id + 1, newid + 1, IntMap.add id newid map, fd :: fdlst)
+                else
+                  (id + 1, newid, map, fdlst)
+              ) (0, 0, IntMap.empty, [])
+            in
+            let newfdmapping = fdmapping |> Array.map (fun id ->
+              match IntMap.find_opt id newidmap with
+              | None        -> id
+              | Some(newid) -> newid
+            )
+            in
+            let newfdarr = fdrevlst |> List.rev |> Array.of_list in
+            (newfdmapping, newfdarr)
+          in
 
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
+          let (fdmapping, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
           let (fdarray, privarray, lsubrarray) = extract_pairarray pairarray in
 
           let fdidx_len          = calculate_index_length_of_array (calculate_encoded_dict_length true) fdarray in
@@ -6096,14 +6130,14 @@ module Encode = struct
             (None, (fun _ _ -> return ()))
 
         | FontDicts(fdarray, fdselect) ->
-            let fdmap = Array.make numGlyphs 0 in
+            let fdmapping = Array.make numGlyphs 0 in
             let f = (fun gidnew gidold ->
               select_fd_index fdselect gidold >>= fun fdindex ->
-              fdmap.(gidnew) <- fdindex;
+              fdmapping.(gidnew) <- fdindex;
               return ()
             )
             in
-            (Some(fdmap), f)
+            (Some(fdmapping), f)
       in
       glyphlst |> List.fold_left (fun res g ->
         res >>= fun newgid ->
