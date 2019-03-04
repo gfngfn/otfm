@@ -5377,8 +5377,12 @@ module Encode = struct
     aux nlst
 
 
-  let enc_dict_element enc elem =
+  let enc_dict_element is_fixed_int (* if true, always encode integers into 5 byte *) enc elem =
     match elem with
+    | Value(Integer(i)) when is_fixed_int ->
+        enc_uint8 enc 29 >>= fun () ->
+        enc_int32 enc !%i
+
     | Value(Integer(i)) when i |> is_in_range (-107) 107 ->
         enc_uint8 enc (i + 139)
 
@@ -5416,19 +5420,20 @@ module Encode = struct
         err `Invalid_cff_not_an_element
 
 
-  let enc_dict enc dictmap =
+  let enc_dict is_fixed_int enc dictmap =
     DictMap.fold (fun k vlst res ->
       res >>= fun () ->
       vlst |> List.fold_left (fun res v ->
         res >>= fun () ->
-        enc_dict_element enc (Value(v))
+        enc_dict_element is_fixed_int enc (Value(v))
       ) (return ()) >>= fun () ->
-      enc_dict_element enc (Key(k))
+      enc_dict_element is_fixed_int enc (Key(k))
     ) dictmap (return ())
 
 
-  let calculate_encoded_dict_element_length elem =
+  let calculate_encoded_dict_element_length is_fixed_int elem =
     match elem with
+    | Value(Integer(i)) when is_fixed_int                    -> 5
     | Value(Integer(i)) when i |> is_in_range (-107) 107     -> 1
     | Value(Integer(i)) when i |> is_in_range 108 1131       -> 2
     | Value(Integer(i)) when i |> is_in_range (-1131) (-108) -> 2
@@ -5444,12 +5449,12 @@ module Encode = struct
     | _       -> failwith "calcutate_encoded_dict_element_length"
 
 
-  let calculate_encoded_dict_length dictmap =
+  let calculate_encoded_dict_length is_fixed_int dictmap =
     DictMap.fold (fun k vlst sum ->
       let sum = vlst |> List.fold_left (fun acc v ->
-        acc + calculate_encoded_dict_element_length (Value(v))) sum
+        acc + calculate_encoded_dict_element_length is_fixed_int (Value(v))) sum
       in
-      sum + calculate_encoded_dict_element_length (Key(k))
+      sum + calculate_encoded_dict_element_length is_fixed_int (Key(k))
     ) dictmap 0
 
 
@@ -5909,9 +5914,11 @@ module Encode = struct
   let enc_cff_table (d : decoder) (enc : encoder) (cfffirst : cff_first) (charstrings : charstring_raw array) (fdselect : (int array) option) =
     let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cfffirst in
 
+    let dictmap = dictmap |> DictMap.remove (ShortKey(15)) in (* remove charset *)
+
     let header_len      = header.hdrSize in
     let nameidx_len     = calculate_index_length 1 (String.length name) in
-    let topdictidx_len  = calculate_index_length 1 (calculate_encoded_dict_length dictmap) in
+    let topdictidx_len  = calculate_index_length 1 (calculate_encoded_dict_length true dictmap) in
     let stridx_len      = calculate_index_length_of_array String.length stridx in
     let gsubridx_len    = calculate_subr_index_length gsubridx in
     let fdsel_offset    = header_len + nameidx_len + topdictidx_len + stridx_len + gsubridx_len in
@@ -5943,7 +5950,7 @@ module Encode = struct
                   | None        -> [||]
                   | Some(lsubr) -> [|lsubr|]
                 in
-                let priv_len           = calculate_encoded_dict_length priv in
+                let priv_len           = calculate_encoded_dict_length true priv in
                 let priv_start_offset  = fdidx_offset + 0 in
                 let lsubr_start_offset = priv_start_offset + priv_len in
                 let newdictmap         = fix_private_offset priv_len priv_start_offset dictmap in
@@ -5971,8 +5978,8 @@ module Encode = struct
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
           let (fdarray, privarray, _) = extract_pairarray pairarray in
 
-          let fdidx_len          = calculate_index_length_of_array calculate_encoded_dict_length fdarray in
-          let priv_len           = sum_of_array calculate_encoded_dict_length privarray in
+          let fdidx_len          = calculate_index_length_of_array (calculate_encoded_dict_length true) fdarray in
+          let priv_len           = sum_of_array (calculate_encoded_dict_length true) privarray in
           let priv_start_offset  = fdidx_offset + fdidx_len in
           let lsubr_start_offset = priv_start_offset + priv_len in
           Format.printf "priv:%x lsubr:%x\n%!" priv_start_offset lsubr_start_offset;
@@ -5980,7 +5987,7 @@ module Encode = struct
           ignore (pairarray |> Array.fold_left (fun (i, priv_next_offset, lsubr_next_offset) pairopt ->
             match pairopt with
             | (fd, Some(priv, lsubropt)) ->
-                let thispriv_len = calculate_encoded_dict_length priv in
+                let thispriv_len = (calculate_encoded_dict_length true) priv in
                 let newfd = fix_private_offset thispriv_len priv_next_offset fd in
                 let (newpriv, thislsubr_len) =
                   match lsubropt with
@@ -6001,14 +6008,12 @@ module Encode = struct
 
     ) >>= fun (dictmap, fdarray, privarray, lsubrarray) ->
 
-    let dictmap = DictMap.remove (ShortKey(15)) dictmap in (* remove charset *)
-
     (* Header *)
     enc_copy_direct     d enc offset_CFF header_len >>= fun () ->
     (* Name INDEX *)
     enc_index_singleton enc enc_direct (String.length name) name >>= fun () ->
     (* Top DICT INDEX *)
-    enc_index_singleton enc enc_dict (calculate_encoded_dict_length dictmap) dictmap >>= fun () ->
+    enc_index_singleton enc (enc_dict true) (calculate_encoded_dict_length true dictmap) dictmap >>= fun () ->
     (* String INDEX *)
     enc_index           enc enc_direct (make_elem_len_pair_of_array String.length stridx) >>= fun () ->
     (* Global Subr INDEX *)
@@ -6021,9 +6026,9 @@ module Encode = struct
     (* CharStrings INDEX *)
     enc_index enc enc_direct charstrings >>= fun () ->
     (* Font DICT INDEX (CIDFonts only) *)
-    enc_index enc enc_dict (make_elem_len_pair_of_array calculate_encoded_dict_length fdarray) >>= fun () ->
+    enc_index enc (enc_dict true) (make_elem_len_pair_of_array (calculate_encoded_dict_length true) fdarray) >>= fun () ->
     (* Private DICT *)
-    enc_array enc enc_dict privarray >>= fun () ->
+    enc_array enc (enc_dict true) privarray >>= fun () ->
     (* Local Subr INDEX *)
     enc_array enc (fun enc idx -> enc_index enc (enc_charstring_data d offset_CFF)
                     (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray
