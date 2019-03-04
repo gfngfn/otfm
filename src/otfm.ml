@@ -5846,6 +5846,10 @@ module Encode = struct
     calculate_index_length_of_array get_charstring_length
 
 
+  let fix_charstrings_offset offset dictmap =
+    DictMap.update (ShortKey(17)) (function None -> None | Some(_) -> Some([Integer(offset)])) dictmap
+
+
   let fix_private_offset len offset dictmap =
     DictMap.update (ShortKey(18)) (function None -> None | Some(_) -> Some([Integer(len); Integer(offset)])) dictmap
 
@@ -5896,7 +5900,7 @@ module Encode = struct
             d_private_lsubr_pair_opt offset_CFF font_dictmap d
           in
           match res with
-          | Error(e)        -> raise (Internal(e))
+          | Error(e)                -> raise (Internal(e))
           | Ok(priv_lsubr_pair_opt) -> (font_dictmap, priv_lsubr_pair_opt)
         )
       in
@@ -5934,6 +5938,8 @@ module Encode = struct
       0 (header_len) (header_len+nameidx_len) (header_len+nameidx_len+topdictidx_len)
       (header_len+nameidx_len+topdictidx_len+stridx_len)
       fdsel_offset csidx_offset fdidx_offset;
+
+    let dictmap = dictmap |> fix_charstrings_offset csidx_offset in
 
     (* layout remaining data, and fix offsets in DICTs *)
     ( match fdselect with
@@ -6026,6 +6032,8 @@ module Encode = struct
     (* CharStrings INDEX *)
     enc_index enc enc_direct charstrings >>= fun () ->
     (* Font DICT INDEX (CIDFonts only) *)
+      (fdarray.(0)) |> DictMap.iter (fun k vlst -> Format.printf "key %a : \n" pp_element (Key(k));
+                                      vlst |> List.iter (fun v -> Format.printf "value : %a\n" pp_element (Value(v))));
     enc_index enc (enc_dict true) (make_elem_len_pair_of_array (calculate_encoded_dict_length true) fdarray) >>= fun () ->
     (* Private DICT *)
     enc_array enc (enc_dict true) privarray >>= fun () ->
