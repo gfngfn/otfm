@@ -1298,7 +1298,7 @@ let maxp d =
   init_decoder d >>=
   seek_required_table Tag.maxp d >>= fun () ->
   d_uint32 d >>= fun version ->
-    confirm (version = !%% 0x00005000L || version = !%% 0x00010000L) (e_version d version) >>= fun () ->
+  confirm (version = !%% 0x00005000L || version = !%% 0x00010000L) (e_version d version) >>= fun () ->
   d_uint16 d >>= fun maxp_num_glyphs ->
   if version = !%% 0x00005000L then
     (* Fonts with CFF Data *)
@@ -5172,8 +5172,7 @@ module Encode = struct
 
   let enc_uint8 enc (ui : int) =
     if not (0 <= ui && ui < 256) then
-      failwith "enc fail uint8"
-      (*err (`Not_encodable_as_uint8(ui))*)
+      err (`Not_encodable_as_uint8(ui))
     else
       begin
         enc_byte enc (Char.chr ui);
@@ -5948,10 +5947,6 @@ module Encode = struct
     let csidx_offset    = fdsel_offset + fdsel_len in
     let csidx_len       = calculate_index_length_of_array snd charstrings in
     let fdidx_offset    = csidx_offset + csidx_len in
-    Format.printf "header:%x name:%x top:%x str:%x gsubr:%x fdsel:%x cs:%x fdidx:%x\n%!"
-      0 (header_len) (header_len+nameidx_len) (header_len+nameidx_len+topdictidx_len)
-      (header_len+nameidx_len+topdictidx_len+stridx_len)
-      fdsel_offset csidx_offset fdidx_offset;
 
     let dictmap = dictmap |> fix_charstrings_offset csidx_offset in
 
@@ -5975,7 +5970,6 @@ module Encode = struct
                 let lsubr_start_offset = priv_start_offset + priv_len in
                 let newdictmap         = fix_private_offset priv_len priv_start_offset dictmap in
                 let newpriv            = fix_lsubr_offset (lsubr_start_offset - priv_start_offset) priv in
-                Format.printf "priv:%x lsubr:%x\n%!" priv_start_offset lsubr_start_offset;
                 return (newdictmap, None, [||], [|newpriv|], lsubrarray)
 
           end
@@ -6016,14 +6010,12 @@ module Encode = struct
 
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
           let (newfdmapping, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
-          let (fdarray, privarray, lsubrarray) = extract_pairarray pairarray in
+          let (fdarray, privarray, _) = extract_pairarray pairarray in
 
           let fdidx_len          = calculate_index_length_of_array (calculate_encoded_dict_length true) fdarray in
           let priv_len           = sum_of_array (calculate_encoded_dict_length true) privarray in
-          let lsubr_len          = sum_of_array calculate_subr_index_length lsubrarray in
           let priv_start_offset  = fdidx_offset + fdidx_len in
           let lsubr_start_offset = priv_start_offset + priv_len in
-          Format.printf "priv:%x lsubr:%x end:%x\n%!" priv_start_offset lsubr_start_offset (lsubr_start_offset + lsubr_len);
 
           ignore (pairarray |> Array.fold_left (fun (i, priv_next_offset, lsubr_next_offset) pairopt ->
             match pairopt with
@@ -6049,9 +6041,6 @@ module Encode = struct
 
     ) >>= fun (dictmap, fdselect, fdarray, privarray, lsubrarray) ->
 
-    Format.printf "length of fdarray:%d privarray:%d lsubrarray:%d\n%!"
-      (Array.length fdarray) (Array.length privarray) (Array.length lsubrarray);
-
     (* Header *)
     enc_copy_direct     d enc offset_CFF header_len >>= fun () ->
     (* Name INDEX *)
@@ -6070,9 +6059,9 @@ module Encode = struct
     (* CharStrings INDEX *)
     enc_index enc enc_direct charstrings >>= fun () ->
     (* Font DICT INDEX (CIDFonts only) *)
-    (*  (fdarray.(0)) |> DictMap.iter (fun k vlst -> Format.printf "key %a : \n" pp_element (Key(k));
-                                      vlst |> List.iter (fun v -> Format.printf "value : %a\n" pp_element (Value(v))));*)
-    enc_index enc (enc_dict true) (make_elem_len_pair_of_array (calculate_encoded_dict_length true) fdarray) >>= fun () ->
+    ( match fdselect with
+      | None      -> return ()
+      | Some(_)   -> enc_index enc (enc_dict true) (make_elem_len_pair_of_array (calculate_encoded_dict_length true) fdarray)) >>= fun () ->
     (* Private DICT *)
     enc_array enc (enc_dict true) privarray >>= fun () ->
     (* Local Subr INDEX *)
@@ -6143,7 +6132,6 @@ module Encode = struct
         res >>= fun newgid ->
         let data = g.glyph_data in
         let len = g.glyph_data_length in
-        Format.printf "glyph: #%d -> #%d len=%d(%d)\n%!" g.old_glyph_id newgid len (String.length data);
         charstrings.(newgid) <- (data, len);
         regf newgid g.old_glyph_id >>= fun () ->
         return (newgid + 1)
