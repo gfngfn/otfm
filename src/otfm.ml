@@ -5960,7 +5960,7 @@ module Encode = struct
                 let priv_start_offset  = fdidx_offset + 0 in
                 let lsubr_start_offset = priv_start_offset + priv_len in
                 let newdictmap         = fix_private_offset priv_len priv_start_offset dictmap in
-                let newpriv            = fix_lsubr_offset (priv_start_offset - lsubr_start_offset) priv in
+                let newpriv            = fix_lsubr_offset (lsubr_start_offset - priv_start_offset) priv in
                 Format.printf "priv:%x lsubr:%x\n%!" priv_start_offset lsubr_start_offset;
                 return (newdictmap, [||], [|newpriv|], lsubrarray)
 
@@ -5997,7 +5997,7 @@ module Encode = struct
                 let newfd = fix_private_offset thispriv_len priv_next_offset fd in
                 let (newpriv, thislsubr_len) =
                   match lsubropt with
-                  | Some(lsubr) -> (fix_lsubr_offset (priv_next_offset - lsubr_next_offset) priv, calculate_subr_index_length lsubr)
+                  | Some(lsubr) -> (fix_lsubr_offset (lsubr_next_offset - priv_next_offset) priv, calculate_subr_index_length lsubr)
                   | None        -> (priv, 0)
                 in
                 let newpair = (newfd, Some(newpriv, lsubropt)) in
