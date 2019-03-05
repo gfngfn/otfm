@@ -4887,7 +4887,7 @@ type raw_glyph = {
   glyph_bbox              : int * int * int * int;
   glyph_data              : string;
   glyph_data_length       : int;
-  glyph_data_offset       : int;
+  glyph_data_offset       : int option;
   glyph_composite_offsets : (glyph_id * int) list;
 }
 
@@ -4955,7 +4955,7 @@ let get_ttf_raw_glyph d gid =
           glyph_bbox = (0, 0, 0, 0);
           glyph_data = "";
           glyph_data_length = 0;
-          glyph_data_offset = 0;
+          glyph_data_offset = None;
           glyph_composite_offsets = [];
         }
       in
@@ -4987,7 +4987,7 @@ let get_ttf_raw_glyph d gid =
               glyph_bbox = (xmin, ymin, xmax, ymax);
               glyph_data = data;
               glyph_data_length = len;
-              glyph_data_offset = pos;
+              glyph_data_offset = Some(pos);
               glyph_composite_offsets = pairlst;
             }
           in
@@ -5008,7 +5008,7 @@ let get_cff_raw_glyph d cffinfo gid =
           glyph_bbox = (0, 0, 0, 0);
           glyph_data = "";
           glyph_data_length = 0;
-          glyph_data_offset = 0;
+          glyph_data_offset = None;
           glyph_composite_offsets = [];
         }
       in
@@ -5027,7 +5027,7 @@ let get_cff_raw_glyph d cffinfo gid =
                 glyph_bbox = (0, 0, 0, 0);
                 glyph_data = "";
                 glyph_data_length = 0;
-                glyph_data_offset = 0;
+                glyph_data_offset = None;
                 glyph_composite_offsets = [];
               }
             in
@@ -5053,7 +5053,7 @@ let get_cff_raw_glyph d cffinfo gid =
                     glyph_bbox = (xmin_raw, ymin_raw, xmax_raw, ymax_raw);
                     glyph_data = data;
                     glyph_data_length = len;
-                    glyph_data_offset = offset;
+                    glyph_data_offset = Some(offset);
                     glyph_composite_offsets = [];
                   }
                 in
@@ -5949,27 +5949,33 @@ module Encode = struct
 
     glypharr |> Array.fold_left (fun acc rg ->
       acc >>= fun usmap ->
-      let cstate = { numarg = 0; numstem = 0; used_gsubr_set = IntSet.empty; used_lsubr_set = IntSet.empty; } in
-      let stk : int Stack.t = Stack.create () in
-      seek_pos rg.glyph_data_offset d                  >>= fun () ->
-      let (_, _, privinfo, _) = cffinfo.charstring_info in
-      select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
-      parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= fun (_, cstate, _) ->
-      return (usmap |> SubrIndexMap.update gsubridx (function None -> Some(cstate.used_gsubr_set) | Some(s) -> Some(IntSet.union s cstate.used_gsubr_set))
-                    |> SubrIndexMap.update lsubridx (function None -> Some(cstate.used_lsubr_set) | Some(s) -> Some(IntSet.union s cstate.used_lsubr_set)))
+      match rg.glyph_data_offset with
+      | None -> return usmap
+
+      | Some(glyph_offset) ->
+          let cstate = { numarg = 0; numstem = 0; used_gsubr_set = IntSet.empty; used_lsubr_set = IntSet.empty; } in
+          let stk : int Stack.t = Stack.create () in
+          let (_, _, privinfo, _) = cffinfo.charstring_info in
+          let add_set s = (function None -> Some(s) | Some(s0) -> Some(IntSet.union s0 s)) in
+          select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
+          seek_pos glyph_offset d >>= fun () ->
+          parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= function
+          | (_, cstate, _) -> return (usmap |> SubrIndexMap.update gsubridx (add_set cstate.used_gsubr_set)
+                                            |> SubrIndexMap.update lsubridx (add_set cstate.used_lsubr_set))
+
     ) (return SubrIndexMap.empty) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
 
     let remove_unused_subrs subridx =
       match SubrIndexMap.find_opt subridx used_subrs_map with
-      | None -> subridx
+      | None -> Format.printf "not registered\n%!"; subridx
 
-      | Some(used_set) -> subridx
-          (*subridx |> Array.mapi (fun i (CharStringData(offset, len)) ->
+      | Some(used_set) ->
+          subridx |> Array.mapi (fun i (CharStringData(offset, len)) ->
             if IntSet.mem i used_set then
               (CharStringData(offset, len))
             else
               (CharStringData(offset, 0))
-          )*)
+          )
     in
     let gsubridx = remove_unused_subrs gsubridx in
 
@@ -6107,7 +6113,7 @@ module Encode = struct
     (* Private DICT *)
     enc_array enc (enc_dict true) privarray >>= fun () ->
     (* Local Subr INDEX *)
-    enc_array enc (fun enc idx -> enc_index enc (enc_charstring_data d)
+      enc_array enc (fun enc idx -> Format.printf "lsubr: %d\n%!" (Array.length idx); enc_index enc (enc_charstring_data d)
                     (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray >>= fun () ->
     return ()
 
