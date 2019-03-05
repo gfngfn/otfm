@@ -4329,7 +4329,6 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        Format.printf "callgsubr: %d\n%!" (convert_subroutine_number gsubridx i);
         return (lenrest, woptoptsubr,
           { cstate with used_gsubr_set = (IntSet.add (convert_subroutine_number gsubridx i) cstate.used_gsubr_set) }, Alist.to_list accsubr)
 
@@ -5945,12 +5944,7 @@ module Encode = struct
   module SubrIndexMap = Map.Make
     (struct
       type t = subrindex_location
-      let compare i j =
-        match (i, j) with
-        | (Global, Global)                           -> 0
-        | (LocalInTopDict, LocalInTopDict)           -> 0
-        | (LocalInFontDict(i1), LocalInFontDict(i2)) -> Pervasives.compare i1 i2
-        | _                                          -> 1
+      let compare i j = Pervasives.compare i j
     end)
 
 
@@ -5959,7 +5953,6 @@ module Encode = struct
 
     let dictmap = dictmap |> DictMap.remove (ShortKey(15)) in (* remove charset *)
 
-    Format.printf "enc_cff_table begin\n%!";
     glypharr |> Array.fold_left (fun acc rg ->
       acc >>= fun usmap ->
       match rg.glyph_data_offset with
@@ -5981,12 +5974,10 @@ module Encode = struct
           seek_pos glyph_offset d >>= fun () ->
           parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= function
           | (_, cstate, _) ->
-              IntSet.iter (fun i -> Format.printf "used: %d\n%!" i) (SubrIndexMap.find Global usmap);
-              IntSet.iter (fun i -> Format.printf "  returned: %d\n%!" i) cstate.used_gsubr_set;
               return (usmap |> SubrIndexMap.update Global   (add_set cstate.used_gsubr_set)
                             |> SubrIndexMap.update lsubrloc (add_set cstate.used_lsubr_set))
 
-    ) (return (SubrIndexMap.singleton Global IntSet.empty)) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
+    ) (return (SubrIndexMap.empty)) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
 
     let reduced_len = ref 0 in
     let remove_unused_subrs subrloc subridx =
@@ -6001,7 +5992,6 @@ module Encode = struct
               (reduced_len := !reduced_len + len; (CharStringData(offset, 0)))
           )
     in
-    Format.printf "global total:%d used:%d\n%!" (Array.length gsubridx) (IntSet.cardinal (SubrIndexMap.find Global used_subrs_map));
     let gsubridx = remove_unused_subrs Global gsubridx in
 
     let header_len      = header.hdrSize in
