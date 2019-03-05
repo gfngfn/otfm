@@ -5979,7 +5979,6 @@ module Encode = struct
 
     ) (return (SubrIndexMap.empty)) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
 
-    let reduced_len = ref 0 in
     let remove_unused_subrs subrloc subridx =
       match SubrIndexMap.find_opt subrloc used_subrs_map with
       | None -> subridx
@@ -5989,7 +5988,7 @@ module Encode = struct
             if IntSet.mem i used_set then
               (CharStringData(offset, len))
             else
-              (reduced_len := !reduced_len + len; (CharStringData(offset, 0)))
+              (CharStringData(offset, 0))
           )
     in
     let gsubridx = remove_unused_subrs Global gsubridx in
