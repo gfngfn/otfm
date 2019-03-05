@@ -3512,8 +3512,8 @@ let d_stem_argument (numstem : int) (d : decoder) : (int * stem_argument) ok =
 type charstring_state = {
   numarg        : int;
   numstem       : int;
-  gsubr_ref_set : IntSet.t;
-  lsubr_ref_set : IntSet.t;
+  used_gsubr_set : IntSet.t;
+  used_lsubr_set : IntSet.t;
 }
 
 
@@ -4208,7 +4208,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        return (lenrest, woptoptsubr, { cstate with lsubr_ref_set = (IntSet.add i cstate.lsubr_ref_set) }, Alist.to_list accsubr)
+        return (lenrest, woptoptsubr, { cstate with used_lsubr_set = (IntSet.add i cstate.used_lsubr_set) }, Alist.to_list accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -4327,7 +4327,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        return (lenrest, woptoptsubr, { cstate with gsubr_ref_set = (IntSet.add i cstate.gsubr_ref_set) }, Alist.to_list accsubr)
+        return (lenrest, woptoptsubr, { cstate with used_gsubr_set = (IntSet.add i cstate.used_gsubr_set) }, Alist.to_list accsubr)
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -4472,7 +4472,7 @@ let select_local_subr_index (privinfo : private_info) (gid : glyph_id) : subrout
 
 
 let charstring ((d, gsubridx, privinfo, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
-  let cstate = { numarg = 0; numstem = 0; gsubr_ref_set = IntSet.empty; lsubr_ref_set = IntSet.empty; } in
+  let cstate = { numarg = 0; numstem = 0; used_gsubr_set = IntSet.empty; used_lsubr_set = IntSet.empty; } in
   seek_pos offset_CharString_INDEX d >>= fun () ->
   d_index_access d_charstring_data gid d >>= function
   | None ->
@@ -5947,25 +5947,25 @@ module Encode = struct
 
     glypharr |> Array.fold_left (fun acc rg ->
       acc >>= fun usmap ->
-      let cstate = { numarg = 0; numstem = 0; gsubr_ref_set = IntSet.empty; lsubr_ref_set = IntSet.empty; } in
+      let cstate = { numarg = 0; numstem = 0; used_gsubr_set = IntSet.empty; used_lsubr_set = IntSet.empty; } in
       let stk : int Stack.t = Stack.create () in
       seek_pos rg.glyph_data_offset d                  >>= fun () ->
       select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
       parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= fun (_, cstate, _) ->
-      return (usmap |> SubrIndexMap.update gsubridx (function None -> Some(cstate.gsubr_ref_set) | Some(s) -> Some(IntSet.union s cstate.gsubr_ref_set))
-                    |> SubrIndexMap.update lsubridx (function None -> Some(cstate.lsubr_ref_set) | Some(s) -> Some(IntSet.union s cstate.lsubr_ref_set)))
-    ) (return SubrIndexMap.empty) >>= fun (unused_subrs_map : IntSet.t SubrIndexMap.t) ->
+      return (usmap |> SubrIndexMap.update gsubridx (function None -> Some(cstate.used_gsubr_set) | Some(s) -> Some(IntSet.union s cstate.used_gsubr_set))
+                    |> SubrIndexMap.update lsubridx (function None -> Some(cstate.used_lsubr_set) | Some(s) -> Some(IntSet.union s cstate.used_lsubr_set)))
+    ) (return SubrIndexMap.empty) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
 
     let remove_unused_subrs subridx =
-      match SubrIndexMap.find_opt subridx unused_subrs_map with
+      match SubrIndexMap.find_opt subridx used_subrs_map with
       | None -> subridx
 
-      | Some(unused_set) ->
+      | Some(used_set) ->
           subridx |> Array.mapi (fun i (CharStringData(offset, len)) ->
-            if IntSet.mem i unused_set then
-              (CharStringData(offset, 0))
-            else
+            if IntSet.mem i used_set then
               (CharStringData(offset, len))
+            else
+              (CharStringData(offset, 0))
           )
     in
     let gsubridx = remove_unused_subrs gsubridx in
