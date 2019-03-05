@@ -4329,6 +4329,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
+        Format.printf "callgsubr: %d\n%!" (convert_subroutine_number gsubridx i);
         return (lenrest, woptoptsubr,
           { cstate with used_gsubr_set = (IntSet.add (convert_subroutine_number gsubridx i) cstate.used_gsubr_set) }, Alist.to_list accsubr)
 
@@ -5958,6 +5959,7 @@ module Encode = struct
 
     let dictmap = dictmap |> DictMap.remove (ShortKey(15)) in (* remove charset *)
 
+    Format.printf "enc_cff_table begin\n%!";
     glypharr |> Array.fold_left (fun acc rg ->
       acc >>= fun usmap ->
       match rg.glyph_data_offset with
@@ -5978,15 +5980,18 @@ module Encode = struct
           select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
           seek_pos glyph_offset d >>= fun () ->
           parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= function
-          | (_, cstate, _) -> return (usmap |> SubrIndexMap.update Global   (add_set cstate.used_gsubr_set)
-                                            |> SubrIndexMap.update lsubrloc (add_set cstate.used_lsubr_set))
+          | (_, cstate, _) ->
+              IntSet.iter (fun i -> Format.printf "used: %d\n%!" i) (SubrIndexMap.find Global usmap);
+              IntSet.iter (fun i -> Format.printf "  returned: %d\n%!" i) cstate.used_gsubr_set;
+              return (usmap |> SubrIndexMap.update Global   (add_set cstate.used_gsubr_set)
+                            |> SubrIndexMap.update lsubrloc (add_set cstate.used_lsubr_set))
 
-    ) (return SubrIndexMap.empty) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
+    ) (return (SubrIndexMap.singleton Global IntSet.empty)) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
 
     let reduced_len = ref 0 in
     let remove_unused_subrs subrloc subridx =
       match SubrIndexMap.find_opt subrloc used_subrs_map with
-      | None -> Format.printf "not registered\n%!"; subridx
+      | None -> subridx
 
       | Some(used_set) ->
           subridx |> Array.mapi (fun i (CharStringData(offset, len)) ->
@@ -5994,8 +5999,9 @@ module Encode = struct
               (CharStringData(offset, len))
             else
               (reduced_len := !reduced_len + len; (CharStringData(offset, 0)))
-          );subridx
+          )
     in
+    Format.printf "global total:%d used:%d\n%!" (Array.length gsubridx) (IntSet.cardinal (SubrIndexMap.find Global used_subrs_map));
     let gsubridx = remove_unused_subrs Global gsubridx in
 
     let header_len      = header.hdrSize in
@@ -6087,14 +6093,14 @@ module Encode = struct
             | (fd, Some(priv, lsubropt)) ->
                 let thispriv_len = (calculate_encoded_dict_length true) priv in
                 let newfd = fix_private_offset thispriv_len priv_next_offset fd in
-                let (newpriv, thislsubr_len) =
+                let (newpriv, thislsubr_len, reduced_lsubropt) =
                   match lsubropt with
                   | Some(lsubr) ->
                       let lsubr = remove_unused_subrs (LocalInFontDict(fdnew2oldmap |> IntMap.find i)) lsubr in
-                      (fix_lsubr_offset (lsubr_next_offset - priv_next_offset) priv, calculate_subr_index_length lsubr)
-                  | None        -> (priv, 0)
+                      (fix_lsubr_offset (lsubr_next_offset - priv_next_offset) priv, calculate_subr_index_length lsubr, Some(lsubr))
+                  | None        -> (priv, 0, None)
                 in
-                let newpair = (newfd, Some(newpriv, lsubropt)) in
+                let newpair = (newfd, Some(newpriv, reduced_lsubropt)) in
                 pairarray.(i) <- newpair;
                 (i + 1, priv_next_offset + thispriv_len, lsubr_next_offset + thislsubr_len)
 
@@ -6132,7 +6138,6 @@ module Encode = struct
     (* Private DICT *)
     enc_array enc (enc_dict true) privarray >>= fun () ->
     (* Local Subr INDEX *)
-    Format.printf "reduced %d byte\n%!" !reduced_len;
     enc_array enc (fun enc idx -> enc_index enc (enc_charstring_data d)
                     (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray
 
