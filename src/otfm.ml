@@ -4108,18 +4108,19 @@ let pp_parsed_charstring fmt = function
   | Flex1(p1, p2, p3, p4, p5, d6)      -> pp fmt "Flex1(%a, %a, %a, %a, %a, %d)" pp_cspoint p1 pp_cspoint p2 pp_cspoint p3 pp_cspoint p4 pp_cspoint p5 d6
 
 
-let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
+let convert_subroutine_number (idx : subroutine_index) (i : int) =
   let arrlen = Array.length idx in
   let bias =
     if arrlen < 1240 then 107 else
       if arrlen < 33900 then 1131 else
         32768
   in
-(*
-  Format.fprintf fmtCFF "  # [G/L SUBR] arrlen = %d, bias = %d, i = %d, ---> %d@," arrlen bias i (bias + i);  (* for debug *)
-*)
+    bias + i
+
+
+let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
   try
-    let CharStringData(offset, len) = idx.(bias + i) in
+    let CharStringData(offset, len) = idx.(convert_subroutine_number idx i) in
     return (offset, len)
   with
   | Invalid_argument(_) -> err `Invalid_charstring
@@ -4208,7 +4209,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        return (lenrest, woptoptsubr, { cstate with used_lsubr_set = (IntSet.add i cstate.used_lsubr_set) }, Alist.to_list accsubr)
+        return (lenrest, woptoptsubr,
+          { cstate with used_lsubr_set = (IntSet.add (convert_subroutine_number lsubridx i) cstate.used_lsubr_set) }, Alist.to_list accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -4327,7 +4329,8 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        return (lenrest, woptoptsubr, { cstate with used_gsubr_set = (IntSet.add i cstate.used_gsubr_set) }, Alist.to_list accsubr)
+        return (lenrest, woptoptsubr,
+          { cstate with used_gsubr_set = (IntSet.add (convert_subroutine_number gsubridx i) cstate.used_gsubr_set) }, Alist.to_list accsubr)
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -5941,7 +5944,6 @@ module Encode = struct
 
   let enc_cff_table (d : decoder) (enc : encoder) (cffinfo : cff_info) (glypharr : raw_glyph array) (fdselect : (int array) option) =
     let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cffinfo.cff_first in
-    let (_, _, privinfo, _) = cffinfo.charstring_info in
 
     let dictmap = dictmap |> DictMap.remove (ShortKey(15)) in (* remove charset *)
 
@@ -5950,6 +5952,7 @@ module Encode = struct
       let cstate = { numarg = 0; numstem = 0; used_gsubr_set = IntSet.empty; used_lsubr_set = IntSet.empty; } in
       let stk : int Stack.t = Stack.create () in
       seek_pos rg.glyph_data_offset d                  >>= fun () ->
+      let (_, _, privinfo, _) = cffinfo.charstring_info in
       select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
       parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= fun (_, cstate, _) ->
       return (usmap |> SubrIndexMap.update gsubridx (function None -> Some(cstate.used_gsubr_set) | Some(s) -> Some(IntSet.union s cstate.used_gsubr_set))
@@ -5960,13 +5963,13 @@ module Encode = struct
       match SubrIndexMap.find_opt subridx used_subrs_map with
       | None -> subridx
 
-      | Some(used_set) ->
-          subridx |> Array.mapi (fun i (CharStringData(offset, len)) ->
+      | Some(used_set) -> subridx
+          (*subridx |> Array.mapi (fun i (CharStringData(offset, len)) ->
             if IntSet.mem i used_set then
               (CharStringData(offset, len))
             else
               (CharStringData(offset, 0))
-          )
+          )*)
     in
     let gsubridx = remove_unused_subrs gsubridx in
 
@@ -6105,7 +6108,8 @@ module Encode = struct
     enc_array enc (enc_dict true) privarray >>= fun () ->
     (* Local Subr INDEX *)
     enc_array enc (fun enc idx -> enc_index enc (enc_charstring_data d)
-                    (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray
+                    (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray >>= fun () ->
+    return ()
 
 
   let cff_outline_tables d cffinfo (glyphlst : raw_glyph list) =
