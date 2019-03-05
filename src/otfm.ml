@@ -5935,10 +5935,21 @@ module Encode = struct
         enc_copy_direct d enc offset len
 
 
+  type subrindex_location =
+    | Global
+    | LocalInTopDict
+    | LocalInFontDict of int
+
+
   module SubrIndexMap = Map.Make
     (struct
-      type t = subroutine_index
-      let compare i j = if (i == j) then 0 else 1
+      type t = subrindex_location
+      let compare i j =
+        match (i, j) with
+        | (Global, Global)                           -> 0
+        | (LocalInTopDict, LocalInTopDict)           -> 0
+        | (LocalInFontDict(i1), LocalInFontDict(i2)) -> Pervasives.compare i1 i2
+        | _                                          -> 1
     end)
 
 
@@ -5957,16 +5968,24 @@ module Encode = struct
           let stk : int Stack.t = Stack.create () in
           let (_, _, privinfo, _) = cffinfo.charstring_info in
           let add_set s = (function None -> Some(s) | Some(s0) -> Some(IntSet.union s0 s)) in
+          ( match privinfo with
+            | SinglePrivate(_)      ->
+                return LocalInTopDict
+            | FontDicts(_, fdselect) ->
+                select_fd_index fdselect rg.old_glyph_id >>= fun i ->
+                return (LocalInFontDict(i))
+          ) >>= fun lsubrloc ->
           select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
           seek_pos glyph_offset d >>= fun () ->
           parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= function
-          | (_, cstate, _) -> return (usmap |> SubrIndexMap.update gsubridx (add_set cstate.used_gsubr_set)
-                                            |> SubrIndexMap.update lsubridx (add_set cstate.used_lsubr_set))
+          | (_, cstate, _) -> return (usmap |> SubrIndexMap.update Global   (add_set cstate.used_gsubr_set)
+                                            |> SubrIndexMap.update lsubrloc (add_set cstate.used_lsubr_set))
 
     ) (return SubrIndexMap.empty) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
 
-    let remove_unused_subrs subridx =
-      match SubrIndexMap.find_opt subridx used_subrs_map with
+    let reduced_len = ref 0 in
+    let remove_unused_subrs subrloc subridx =
+      match SubrIndexMap.find_opt subrloc used_subrs_map with
       | None -> Format.printf "not registered\n%!"; subridx
 
       | Some(used_set) ->
@@ -5974,10 +5993,10 @@ module Encode = struct
             if IntSet.mem i used_set then
               (CharStringData(offset, len))
             else
-              (CharStringData(offset, 0))
-          )
+              (reduced_len := !reduced_len + len; (CharStringData(offset, 0)))
+          );subridx
     in
-    let gsubridx = remove_unused_subrs gsubridx in
+    let gsubridx = remove_unused_subrs Global gsubridx in
 
     let header_len      = header.hdrSize in
     let nameidx_len     = calculate_index_length 1 (String.length name) in
@@ -6009,7 +6028,7 @@ module Encode = struct
                 let lsubrarray =
                   match lsubropt with
                   | None        -> [||]
-                  | Some(lsubr) -> [| remove_unused_subrs lsubr |]
+                  | Some(lsubr) -> [| remove_unused_subrs LocalInTopDict lsubr |]
                 in
                 let priv_len           = calculate_encoded_dict_length true priv in
                 let priv_start_offset  = fdidx_offset + 0 in
@@ -6036,13 +6055,13 @@ module Encode = struct
           in
           let remove_unused_fontdict fdmapping fdarr =
             let usedset = fdmapping |> Array.fold_left (fun set id -> IntSet.add id set) IntSet.empty in
-            let (_, _, newidmap, fdrevlst) =
-              fdarr |> Array.fold_left (fun (id, newid, map, fdlst) fd ->
+            let (_, _, newidmap, newidrevmap, fdrevlst) =
+              fdarr |> Array.fold_left (fun (id, newid, map, revmap, fdlst) fd ->
                 if IntSet.mem id usedset then
-                  (id + 1, newid + 1, IntMap.add id newid map, fd :: fdlst)
+                  (id + 1, newid + 1, IntMap.add id newid map, IntMap.add newid id revmap, fd :: fdlst)
                 else
-                  (id + 1, newid, map, fdlst)
-              ) (0, 0, IntMap.empty, [])
+                  (id + 1, newid, map, revmap, fdlst)
+              ) (0, 0, IntMap.empty, IntMap.empty, [])
             in
             let newfdmapping = fdmapping |> Array.map (fun id ->
               match IntMap.find_opt id newidmap with
@@ -6051,11 +6070,11 @@ module Encode = struct
             )
             in
             let newfdarr = fdrevlst |> List.rev |> Array.of_list in
-            (newfdmapping, newfdarr)
+            (newfdmapping, newidrevmap, newfdarr)
           in
 
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
-          let (newfdmapping, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
+          let (newfdmapping, fdnew2oldmap, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
           let (fdarray, privarray, _) = extract_pairarray pairarray in
 
           let fdidx_len          = calculate_index_length_of_array (calculate_encoded_dict_length true) fdarray in
@@ -6071,7 +6090,7 @@ module Encode = struct
                 let (newpriv, thislsubr_len) =
                   match lsubropt with
                   | Some(lsubr) ->
-                      let lsubr = remove_unused_subrs lsubr in
+                      let lsubr = remove_unused_subrs (LocalInFontDict(fdnew2oldmap |> IntMap.find i)) lsubr in
                       (fix_lsubr_offset (lsubr_next_offset - priv_next_offset) priv, calculate_subr_index_length lsubr)
                   | None        -> (priv, 0)
                 in
@@ -6113,9 +6132,9 @@ module Encode = struct
     (* Private DICT *)
     enc_array enc (enc_dict true) privarray >>= fun () ->
     (* Local Subr INDEX *)
-      enc_array enc (fun enc idx -> Format.printf "lsubr: %d\n%!" (Array.length idx); enc_index enc (enc_charstring_data d)
-                    (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray >>= fun () ->
-    return ()
+    Format.printf "reduced %d byte\n%!" !reduced_len;
+    enc_array enc (fun enc idx -> enc_index enc (enc_charstring_data d)
+                    (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray
 
 
   let cff_outline_tables d cffinfo (glyphlst : raw_glyph list) =
