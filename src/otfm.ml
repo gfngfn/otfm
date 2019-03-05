@@ -9,6 +9,19 @@ open OtfUtils
 
 module WideInt = WideInt
 
+module IntSet = Set.Make
+  (struct
+    type t = int
+    let compare i j = i - j
+  end)
+
+module IntMap = Map.Make
+  (struct
+    type t = int
+    let compare i j = i - j
+  end)
+
+
 (* -- OpenType tags -- *)
 
 type tag = wint
@@ -3497,8 +3510,10 @@ let d_stem_argument (numstem : int) (d : decoder) : (int * stem_argument) ok =
 
 
 type charstring_state = {
-  numarg : int;
-  numstem : int;
+  numarg        : int;
+  numstem       : int;
+  gsubr_ref_set : IntSet.t;
+  lsubr_ref_set : IntSet.t;
 }
 
 
@@ -3510,20 +3525,20 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "\n  # numarg = %d ---> %d@," numarg (numarg + 1);  (* for debug *)
 *)
-    return (step, { numarg = numarg + 1; numstem = numstem }, cselem)
+    return (step, { cstate with numarg = numarg + 1; }, cselem)
   in
   let return_flushing_operator (step, cselem) =
 (*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
 *)
-    return (step, { numarg = 0; numstem = numstem }, cselem)
+    return (step, { cstate with numarg = 0; }, cselem)
   in
   let return_subroutine_operator cselem =
 (*
     Format.fprintf fmtCFF "%a" pp_charstring_element cselem;  (* for debug *)
     Format.fprintf fmtCFF "  # numarg = %d ---> %d@," numarg (numarg - 1);  (* for debug *)
 *)
-    return (1, { numarg = numarg - 1; numstem = numstem }, cselem)
+    return (1, { cstate with numarg = numarg - 1; }, cselem)
 
   in
   let return_stem (step, cselem) =
@@ -3532,7 +3547,7 @@ let d_charstring_element (cstate : charstring_state) (d : decoder) : (int * char
     Format.fprintf fmtCFF "  # step = %d, numarg = %d@," step numarg;  (* for debug *)
     Format.fprintf fmtCFF "  # stem = %d ----> %d@," numstem (numstem + numarg / 2);  (* for debug *)
 *)
-    return (step, { numarg = 0; numstem = numstem + numarg / 2 }, cselem)
+    return (step, { cstate with numarg = 0; numstem = numstem + numarg / 2 }, cselem)
   in
     (* -- 'numarg' may be an odd number, but it is due to the width value -- *)
   d_uint8 d >>= function
@@ -4193,7 +4208,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        return (lenrest, woptoptsubr, cstate, Alist.to_list accsubr)
+        return (lenrest, woptoptsubr, { cstate with lsubr_ref_set = (IntSet.add i cstate.lsubr_ref_set) }, Alist.to_list accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -4312,7 +4327,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        return (lenrest, woptoptsubr, cstate, Alist.to_list accsubr)
+        return (lenrest, woptoptsubr, { cstate with gsubr_ref_set = (IntSet.add i cstate.gsubr_ref_set) }, Alist.to_list accsubr)
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -4457,7 +4472,7 @@ let select_local_subr_index (privinfo : private_info) (gid : glyph_id) : subrout
 
 
 let charstring ((d, gsubridx, privinfo, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
-  let cstate = { numarg = 0; numstem = 0 } in
+  let cstate = { numarg = 0; numstem = 0; gsubr_ref_set = IntSet.empty; lsubr_ref_set = IntSet.empty; } in
   seek_pos offset_CharString_INDEX d >>= fun () ->
   d_index_access d_charstring_data gid d >>= function
   | None ->
@@ -4869,6 +4884,7 @@ type raw_glyph = {
   glyph_bbox              : int * int * int * int;
   glyph_data              : string;
   glyph_data_length       : int;
+  glyph_data_offset       : int;
   glyph_composite_offsets : (glyph_id * int) list;
 }
 
@@ -4936,6 +4952,7 @@ let get_ttf_raw_glyph d gid =
           glyph_bbox = (0, 0, 0, 0);
           glyph_data = "";
           glyph_data_length = 0;
+          glyph_data_offset = 0;
           glyph_composite_offsets = [];
         }
       in
@@ -4967,6 +4984,7 @@ let get_ttf_raw_glyph d gid =
               glyph_bbox = (xmin, ymin, xmax, ymax);
               glyph_data = data;
               glyph_data_length = len;
+              glyph_data_offset = pos;
               glyph_composite_offsets = pairlst;
             }
           in
@@ -4987,6 +5005,7 @@ let get_cff_raw_glyph d cffinfo gid =
           glyph_bbox = (0, 0, 0, 0);
           glyph_data = "";
           glyph_data_length = 0;
+          glyph_data_offset = 0;
           glyph_composite_offsets = [];
         }
       in
@@ -5005,6 +5024,7 @@ let get_cff_raw_glyph d cffinfo gid =
                 glyph_bbox = (0, 0, 0, 0);
                 glyph_data = "";
                 glyph_data_length = 0;
+                glyph_data_offset = 0;
                 glyph_composite_offsets = [];
               }
             in
@@ -5030,6 +5050,7 @@ let get_cff_raw_glyph d cffinfo gid =
                     glyph_bbox = (xmin_raw, ymin_raw, xmax_raw, ymax_raw);
                     glyph_data = data;
                     glyph_data_length = len;
+                    glyph_data_offset = offset;
                     glyph_composite_offsets = [];
                   }
                 in
@@ -5834,9 +5855,6 @@ module Encode = struct
       return (out_info, glyph_data)
 
 
-  type charstring_raw = (string * int)
-
-
   let get_charstring_length = function
     CharStringData(_, len) -> len
 
@@ -5914,24 +5932,43 @@ module Encode = struct
         enc_copy_direct d enc offset len
 
 
-  module IntSet = Set.Make
+  module SubrIndexMap = Map.Make
     (struct
-      type t = int
-      let compare i j = i - j
+      type t = subroutine_index
+      let compare i j = if (i == j) then 0 else 1
     end)
 
 
-  module IntMap = Map.Make
-    (struct
-      type t = int
-      let compare i j = i - j
-    end)
-
-
-  let enc_cff_table (d : decoder) (enc : encoder) (cfffirst : cff_first) (charstrings : charstring_raw array) (fdselect : (int array) option) =
-    let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cfffirst in
+  let enc_cff_table (d : decoder) (enc : encoder) (cffinfo : cff_info) (glypharr : raw_glyph array) (fdselect : (int array) option) =
+    let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cffinfo.cff_first in
+    let (_, _, privinfo, _) = cffinfo.charstring_info in
 
     let dictmap = dictmap |> DictMap.remove (ShortKey(15)) in (* remove charset *)
+
+    glypharr |> Array.fold_left (fun acc rg ->
+      acc >>= fun usmap ->
+      let cstate = { numarg = 0; numstem = 0; gsubr_ref_set = IntSet.empty; lsubr_ref_set = IntSet.empty; } in
+      let stk : int Stack.t = Stack.create () in
+      seek_pos rg.glyph_data_offset d                  >>= fun () ->
+      select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
+      parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= fun (_, cstate, _) ->
+      return (usmap |> SubrIndexMap.update gsubridx (function None -> Some(cstate.gsubr_ref_set) | Some(s) -> Some(IntSet.union s cstate.gsubr_ref_set))
+                    |> SubrIndexMap.update lsubridx (function None -> Some(cstate.lsubr_ref_set) | Some(s) -> Some(IntSet.union s cstate.lsubr_ref_set)))
+    ) (return SubrIndexMap.empty) >>= fun (unused_subrs_map : IntSet.t SubrIndexMap.t) ->
+
+    let remove_unused_subrs subridx =
+      match SubrIndexMap.find_opt subridx unused_subrs_map with
+      | None -> subridx
+
+      | Some(unused_set) ->
+          subridx |> Array.mapi (fun i (CharStringData(offset, len)) ->
+            if IntSet.mem i unused_set then
+              (CharStringData(offset, 0))
+            else
+              (CharStringData(offset, len))
+          )
+    in
+    let gsubridx = remove_unused_subrs gsubridx in
 
     let header_len      = header.hdrSize in
     let nameidx_len     = calculate_index_length 1 (String.length name) in
@@ -5945,7 +5982,7 @@ module Encode = struct
       | Some(arr) -> 1 + Array.length arr (* Format0 *)
     in
     let csidx_offset    = fdsel_offset + fdsel_len in
-    let csidx_len       = calculate_index_length_of_array snd charstrings in
+    let csidx_len       = calculate_index_length_of_array (fun rg -> rg.glyph_data_length) glypharr in
     let fdidx_offset    = csidx_offset + csidx_len in
 
     let dictmap = dictmap |> fix_charstrings_offset csidx_offset in
@@ -5963,7 +6000,7 @@ module Encode = struct
                 let lsubrarray =
                   match lsubropt with
                   | None        -> [||]
-                  | Some(lsubr) -> [|lsubr|]
+                  | Some(lsubr) -> [| remove_unused_subrs lsubr |]
                 in
                 let priv_len           = calculate_encoded_dict_length true priv in
                 let priv_start_offset  = fdidx_offset + 0 in
@@ -6024,7 +6061,9 @@ module Encode = struct
                 let newfd = fix_private_offset thispriv_len priv_next_offset fd in
                 let (newpriv, thislsubr_len) =
                   match lsubropt with
-                  | Some(lsubr) -> (fix_lsubr_offset (lsubr_next_offset - priv_next_offset) priv, calculate_subr_index_length lsubr)
+                  | Some(lsubr) ->
+                      let lsubr = remove_unused_subrs lsubr in
+                      (fix_lsubr_offset (lsubr_next_offset - priv_next_offset) priv, calculate_subr_index_length lsubr)
                   | None        -> (priv, 0)
                 in
                 let newpair = (newfd, Some(newpriv, lsubropt)) in
@@ -6057,7 +6096,7 @@ module Encode = struct
       | None      -> return ()
       | Some(arr) -> enc_fdselect_format0 enc arr ) >>= fun () ->
     (* CharStrings INDEX *)
-    enc_index enc enc_direct charstrings >>= fun () ->
+    enc_index enc enc_direct (Array.map (fun rg -> (rg.glyph_data, rg.glyph_data_length)) glypharr) >>= fun () ->
     (* Font DICT INDEX (CIDFonts only) *)
     ( match fdselect with
       | None      -> return ()
@@ -6111,7 +6150,6 @@ module Encode = struct
 
     (* -- outputs 'cff' table -- *)
       let enc_cff = create_encoder () in
-      let charstrings = Array.make numGlyphs ("", 0) in
       let (_, _, privinfo, _) = cffinfo.charstring_info in
       let (fdselect, regf) =
         match privinfo with
@@ -6130,13 +6168,10 @@ module Encode = struct
       in
       glyphlst |> List.fold_left (fun res g ->
         res >>= fun newgid ->
-        let data = g.glyph_data in
-        let len = g.glyph_data_length in
-        charstrings.(newgid) <- (data, len);
         regf newgid g.old_glyph_id >>= fun () ->
         return (newgid + 1)
       ) (return 0) >>= fun _ ->
-      enc_cff_table d enc_cff cffinfo.cff_first charstrings fdselect >>= fun () ->
+      enc_cff_table d enc_cff cffinfo (Array.of_list glyphlst) fdselect >>= fun () ->
       let rawtbl_cff = to_raw_table Tag.cff enc_cff in
 
       let out_info =
