@@ -5365,6 +5365,12 @@ module Encode = struct
     arr |> Array.fold_left (fun res x -> res >>= fun () -> ef enc x) (return ())
 
 
+  let enc_charset_identity enc nGlyphs =
+    enc_uint8  enc 2 (* Format 2 *) >>= fun () ->
+    enc_uint16 enc 1                >>= fun () ->
+    enc_uint16 enc (nGlyphs - 1)
+
+
   let enc_fdselect_format0 enc fdselect =
     enc_uint8 enc 0 >>= fun () ->
     fdselect |> Array.fold_left (fun res sel ->
@@ -5867,20 +5873,24 @@ module Encode = struct
 
 
   let fix_charstrings_offset offset dictmap =
-    DictMap.update (ShortKey(17)) (function None -> None | Some(_) -> Some([Integer(offset)])) dictmap
+    DictMap.update (ShortKey(17)) (function _ -> Some([Integer(offset)])) dictmap
 
 
   let fix_private_offset len offset dictmap =
-    DictMap.update (ShortKey(18)) (function None -> None | Some(_) -> Some([Integer(len); Integer(offset)])) dictmap
+    DictMap.update (ShortKey(18)) (function _ -> Some([Integer(len); Integer(offset)])) dictmap
 
 
   let fix_lsubr_offset offset dictmap =
-    DictMap.update (ShortKey(19)) (function None -> None | Some(_) -> Some([Integer(offset)])) dictmap
+    DictMap.update (ShortKey(19)) (function _ -> Some([Integer(offset)])) dictmap
+
+
+  let fix_charset_offset offset dictmap =
+    DictMap.update (ShortKey(15)) (function _ -> Some([Integer(offset)])) dictmap
 
 
   let fix_fd_related_offset fdidx_offset fdsel_offset dictmap =
-    dictmap |> DictMap.update (LongKey(36)) (function None -> None | Some(_) -> Some([Integer(fdidx_offset)]))
-            |> DictMap.update (LongKey(37)) (function None -> None | Some(_) -> Some([Integer(fdsel_offset)]))
+    dictmap |> DictMap.update (LongKey(36)) (function _ -> Some([Integer(fdidx_offset)]))
+            |> DictMap.update (LongKey(37)) (function _ -> Some([Integer(fdsel_offset)]))
 
 
   let make_elem_len_pair_of_array f arr =
@@ -5951,7 +5961,7 @@ module Encode = struct
   let enc_cff_table (d : decoder) (enc : encoder) (cffinfo : cff_info) (glypharr : raw_glyph array) (fdselect : (int array) option) =
     let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cffinfo.cff_first in
 
-    let dictmap = dictmap |> DictMap.remove (ShortKey(15)) in (* remove charset *)
+    let dictmap = dictmap |> fix_charset_offset 0 (* dummy *) in (* allocate charset entry *)
 
     glypharr |> Array.fold_left (fun acc rg ->
       acc >>= fun usmap ->
@@ -5998,7 +6008,9 @@ module Encode = struct
     let topdictidx_len  = calculate_index_length 1 (calculate_encoded_dict_length true dictmap) in
     let stridx_len      = calculate_index_length_of_array String.length stridx in
     let gsubridx_len    = calculate_subr_index_length gsubridx in
-    let fdsel_offset    = header_len + nameidx_len + topdictidx_len + stridx_len + gsubridx_len in
+    let charset_offset  = header_len + nameidx_len + topdictidx_len + stridx_len + gsubridx_len in
+    let charset_len     = 0 in(*1 + 2 + 2 (* Format 2 *) in*)
+    let fdsel_offset    = charset_offset + charset_len in
     let fdsel_len       =
       match fdselect with
       | None      -> 0
@@ -6008,7 +6020,9 @@ module Encode = struct
     let csidx_len       = calculate_index_length_of_array (fun rg -> rg.glyph_data_length) glypharr in
     let fdidx_offset    = csidx_offset + csidx_len in
 
-    let dictmap = dictmap |> fix_charstrings_offset csidx_offset in
+    let dictmap = dictmap |> fix_charstrings_offset csidx_offset
+                          |> fix_charset_offset charset_offset
+    in
 
     (* layout remaining data, and fix offsets in DICTs *)
     ( match fdselect with
@@ -6114,6 +6128,8 @@ module Encode = struct
     (* Global Subr INDEX *)
     enc_index           enc (enc_charstring_data d)
                           (make_elem_len_pair_of_array get_charstring_length gsubridx) >>= fun () ->
+    (* Charsets *)
+    (*enc_charset_identity enc (Array.length glypharr) >>= fun () ->*)
     (* FDSelect (CIDFonts only) *)
     ( match fdselect with
       | None      -> return ()
