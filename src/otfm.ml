@@ -5368,7 +5368,7 @@ module Encode = struct
   let enc_charset_identity enc nGlyphs =
     enc_uint8  enc 2 (* Format 2 *) >>= fun () ->
     enc_uint16 enc 1                >>= fun () ->
-    enc_uint16 enc (nGlyphs - 1)
+    enc_uint16 enc (nGlyphs - 2)
 
 
   let enc_fdselect_format0 enc fdselect =
