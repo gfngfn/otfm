@@ -6009,7 +6009,7 @@ module Encode = struct
     let stridx_len      = calculate_index_length_of_array String.length stridx in
     let gsubridx_len    = calculate_subr_index_length gsubridx in
     let charset_offset  = header_len + nameidx_len + topdictidx_len + stridx_len + gsubridx_len in
-    let charset_len     = 0 in(*1 + 2 + 2 (* Format 2 *) in*)
+    let charset_len     = 1 + 2 + 2 (* Format 2 *) in
     let fdsel_offset    = charset_offset + charset_len in
     let fdsel_len       =
       match fdselect with
@@ -6129,7 +6129,7 @@ module Encode = struct
     enc_index           enc (enc_charstring_data d)
                           (make_elem_len_pair_of_array get_charstring_length gsubridx) >>= fun () ->
     (* Charsets *)
-    (*enc_charset_identity enc (Array.length glypharr) >>= fun () ->*)
+    enc_charset_identity enc (Array.length glypharr) >>= fun () ->
     (* FDSelect (CIDFonts only) *)
     ( match fdselect with
       | None      -> return ()
