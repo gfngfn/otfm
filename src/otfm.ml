@@ -3152,7 +3152,14 @@ type cff_header =
     offSize  : offsize;
   }
 
-type cff_first = cff_header * string * dict * string_index * subroutine_index * int
+type cff_first = {
+  cff_header   : cff_header;
+  cff_name     : string;
+  top_dict     : dict;
+  string_index : string_index;
+  gsubr_index  : subroutine_index;
+  offset_CFF   : int;
+}
 
 type cff_cid_info =
   {
@@ -3679,7 +3686,16 @@ let cff_first (d : decoder) : (cff_first option) ok =
       d_index (CharStringData(0, 0)) d_charstring_data d >>= fun gsubridx ->
         (* temporary; should be decoded *)
 
-      let cff_first = (header, name, dictmap, stridx, gsubridx, offset_CFF) in
+      let cff_first =
+        {
+          cff_header   = header;
+          cff_name     = name;
+          top_dict     = dictmap;
+          string_index = stridx;
+          gsubr_index  = gsubridx;
+          offset_CFF   = offset_CFF;
+        }
+      in
       return (Some(cff_first))
 
 
@@ -3865,7 +3881,12 @@ let cff d : (cff_info option) ok =
   | None ->
       return None
 
-  | Some((header, font_name, dictmap, stridx, gsubridx, offset_CFF) as cff_first) ->
+  | Some(cff_first) ->
+      let font_name = cff_first.cff_name in
+      let dictmap = cff_first.top_dict in
+      let stridx = cff_first.string_index in
+      let gsubridx = cff_first.gsubr_index in
+      let offset_CFF = cff_first.offset_CFF in
 (*
       get_sid         dictmap (ShortKey(0))              >>= fun sid_version ->
       get_sid         dictmap (ShortKey(1))              >>= fun sid_notice ->
@@ -5959,7 +5980,13 @@ module Encode = struct
 
 
   let enc_cff_table (d : decoder) (enc : encoder) (cffinfo : cff_info) (glypharr : raw_glyph array) (fdselect : (int array) option) =
-    let (header, name, dictmap, stridx, gsubridx, offset_CFF) = cffinfo.cff_first in
+    let cff_first = cffinfo.cff_first in
+    let header = cff_first.cff_header in
+    let name = cff_first.cff_name in
+    let dictmap = cff_first.top_dict in
+    let stridx = cff_first.string_index in
+    let gsubridx = cff_first.gsubr_index in
+    let offset_CFF = cff_first.offset_CFF in
 
     let dictmap = dictmap |> fix_charset_offset 0 (* dummy *) in (* allocate charset entry *)
 
