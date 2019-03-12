@@ -3141,6 +3141,10 @@ type charstring_element =
 
 type charstring_data =
   | CharStringData of int * int
+      (* --
+         (1) the (absolute) offset to the charstring data
+         (2) the length of the charstring data
+         -- *)
 
 type subroutine_index = charstring_data array
 
@@ -4230,8 +4234,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        return (lenrest, woptoptsubr,
-          { cstate with used_lsubr_set = (IntSet.add (convert_subroutine_number lsubridx i) cstate.used_lsubr_set) }, Alist.to_list accsubr)
+        let cstatenew =
+          { cstate with
+            used_lsubr_set = cstate.used_lsubr_set |> IntSet.add (convert_subroutine_number lsubridx i);
+          }
+        in
+        return (lenrest, woptoptsubr, cstatenew, Alist.to_list accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -4350,8 +4358,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         seek_pos offset d >>= fun () ->
         parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
-        return (lenrest, woptoptsubr,
-          { cstate with used_gsubr_set = (IntSet.add (convert_subroutine_number gsubridx i) cstate.used_gsubr_set) }, Alist.to_list accsubr)
+        let cstatenew =
+          { cstate with
+            used_gsubr_set = cstate.used_gsubr_set |> IntSet.add (convert_subroutine_number gsubridx i);
+          }
+        in
+        return (lenrest, woptoptsubr, cstatenew, Alist.to_list accsubr)
 
     | Operator(ShortKey(30)) ->  (* -- vhcurveto (30) -- *)
         begin
@@ -4361,10 +4373,9 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
           else
             return None
         end >>= fun lastopt ->
-      let tuplelst = pop_iter pop_4_opt stk in
-      let retlst = tuplelst |> List.map (fun (d1, d2, d3, d4) -> (d1, (d2, d3), d4)) in
-      return_cleared [VHCurveTo(retlst, lastopt)]
-
+        let tuplelst = pop_iter pop_4_opt stk in
+        let retlst = tuplelst |> List.map (fun (d1, d2, d3, d4) -> (d1, (d2, d3), d4)) in
+        return_cleared [VHCurveTo(retlst, lastopt)]
 
     | Operator(ShortKey(31)) ->  (* -- hvcurveto (31) -- *)
         begin
@@ -4447,11 +4458,12 @@ and parse_charstring (len : int) (cstate : charstring_state) (d : decoder) (stk 
     let accnew = Alist.append acc parsed in
     if lenrest = 0 then
       return (woptopt, cstate, accnew)
+    else if lenrest < 0 then
+      err `Invalid_charstring
     else
-      if lenrest < 0 then err `Invalid_charstring else
-        match woptopt with
-        | None    -> aux lenrest (woptoptprev, cstate, accnew)
-        | Some(_) -> aux lenrest (woptopt, cstate, accnew)
+      match woptopt with
+      | None    -> aux lenrest (woptoptprev, cstate, accnew)
+      | Some(_) -> aux lenrest (woptopt, cstate, accnew)
   in
     aux len (woptoptinit, cstate, Alist.empty)
 
@@ -5751,10 +5763,8 @@ module Encode = struct
 
 
   type glyph_data =
-    | TrueTypeGlyph of raw_table * raw_table
-        (* glyf, loca *)
-    | CFFGlyph      of raw_table
-        (* CFF *)
+    | TrueTypeGlyph of raw_table * raw_table  (* -- glyf, loca -- *)
+    | CFFGlyph      of raw_table              (* -- CFF -- *)
 
 
   let update_bbox (xMin0, yMin0, xMax0, yMax0) (xMin1, yMin1, xMax1, yMax1) =
@@ -5791,7 +5801,7 @@ module Encode = struct
 
 
 
-  let truetype_outline_tables (glyphlst : raw_glyph list) =
+  let truetype_outline_tables (glyphlst : raw_glyph list) : (glyph_output_info * glyph_data) ok =
 (*
     Printf.printf "# 'hmtx', 'glyf', and 'loca' table@,";
 *)
@@ -6000,13 +6010,15 @@ module Encode = struct
           let stk : int Stack.t = Stack.create () in
           let (_, _, privinfo, _) = cffinfo.charstring_info in
           let add_set s = (function None -> Some(s) | Some(s0) -> Some(IntSet.union s0 s)) in
-          ( match privinfo with
-            | SinglePrivate(_)      ->
+          begin
+            match privinfo with
+            | SinglePrivate(_) ->
                 return LocalInTopDict
+
             | FontDicts(_, fdselect) ->
                 select_fd_index fdselect rg.old_glyph_id >>= fun i ->
                 return (LocalInFontDict(i))
-          ) >>= fun lsubrloc ->
+          end >>= fun lsubrloc ->
           select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
           seek_pos glyph_offset d >>= fun () ->
           parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= function
