@@ -6116,26 +6116,27 @@ module Encode = struct
       | Some(fdmapping) ->
           let extract_pairarray pairarray =
             let fdarray = pairarray |> Array.map fst in
-            let (privrevlst, lsubrrevlst) = pairarray |> Array.fold_left (fun (plst, llst) (_, pairopt) ->
-              match pairopt with
-              | None             -> (plst, llst)
-              | Some(p, None)    -> (p :: plst, llst)
-              | Some(p, Some(l)) -> (p :: plst, l :: llst)
-            ) ([], [])
+            let (privacc, lsubracc) =
+              pairarray |> Array.fold_left (fun (pacc, lacc) (_, pairopt) ->
+                match pairopt with
+                | None             -> (pacc, lacc)
+                | Some(p, None)    -> (Alist.extend pacc p, lacc)
+                | Some(p, Some(l)) -> (Alist.extend pacc p, Alist.extend lacc l)
+              ) (Alist.empty, Alist.empty)
             in
-            let privarray  = privrevlst |> List.rev |> Array.of_list in
-            let lsubrarray = lsubrrevlst |> List.rev |> Array.of_list in
+            let privarray  = privacc |> Alist.to_list |> Array.of_list in
+            let lsubrarray = lsubracc |> Alist.to_list |> Array.of_list in
             (fdarray, privarray, lsubrarray)
           in
           let remove_unused_fontdict fdmapping fdarr =
             let usedset = fdmapping |> Array.fold_left (fun set id -> IntSet.add id set) IntSet.empty in
-            let (_, _, idmapnew, idrevmapnew, fdrevlst) =
-              fdarr |> Array.fold_left (fun (id, newid, map, revmap, fdlst) fd ->
+            let (_, _, idmapnew, idrevmapnew, fdacc) =
+              fdarr |> Array.fold_left (fun (id, idnew, map, revmap, fdacc) fd ->
                 if IntSet.mem id usedset then
-                  (id + 1, newid + 1, IntMap.add id newid map, IntMap.add newid id revmap, fd :: fdlst)
+                  (id + 1, idnew + 1, IntMap.add id idnew map, IntMap.add idnew id revmap, Alist.extend fdacc fd)
                 else
-                  (id + 1, newid, map, revmap, fdlst)
-              ) (0, 0, IntMap.empty, IntMap.empty, [])
+                  (id + 1, idnew, map, revmap, fdacc)
+              ) (0, 0, IntMap.empty, IntMap.empty, Alist.empty)
             in
             let fdmappingnew =
               fdmapping |> Array.map (fun id ->
@@ -6144,7 +6145,7 @@ module Encode = struct
                 | Some(idnew) -> idnew
               )
             in
-            let fdarrnew = fdrevlst |> List.rev |> Array.of_list in
+            let fdarrnew = fdacc |> Alist.to_list |> Array.of_list in
             (fdmappingnew, idrevmapnew, fdarrnew)
           in
 
@@ -6171,8 +6172,8 @@ module Encode = struct
                   | None ->
                       (priv, 0, None)
                 in
-                let newpair = (fdnew, Some(privnew, lsubropt_reduced)) in
-                pairarray.(i) <- newpair;
+                let pairnew = (fdnew, Some(privnew, lsubropt_reduced)) in
+                pairarray.(i) <- pairnew;
                 (i + 1, offset_priv_next + len_thispriv, offset_lsubr_next + len_thislsubr)
 
             | (_, None) ->
