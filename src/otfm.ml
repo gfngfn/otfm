@@ -4151,24 +4151,29 @@ let access_subroutine (idx : subroutine_index) (i : int) : (int * int) ok =
   | Invalid_argument(_) -> err `Invalid_charstring
 
 
-let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptprev : (int option) option) (lenrest : int) (cstate : charstring_state) (stk : int Stack.t) (d : decoder) : (int * (int option) option * charstring_state * parsed_charstring list) ok =
+type width_state =
+  | WidthLookedFor
+  | WidthFound of int option
+
+
+let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_index) (widstate : width_state) (lenrest : int) (cstate : charstring_state) (stk : int Stack.t) (d : decoder) : (int * width_state * charstring_state * parsed_charstring list) ok =
   d_charstring_element cstate d >>= fun (step, cstate, cselem) ->
   let lenrest = lenrest - step in
 (*
   let () =  (* for debug *)
-    match woptoptprev with
-    | None    -> Format.fprintf fmtCFF "# X %a@," pp_charstring_element cselem;  (* for debug *)
-    | Some(_) -> Format.fprintf fmtCFF "# O %a@," pp_charstring_element cselem;  (* for debug *)
+    match widstate with
+    | WidthLookedFor -> Format.fprintf fmtCFF "# X %a@," pp_charstring_element cselem;  (* for debug *)
+    | WidthFound(_)  -> Format.fprintf fmtCFF "# O %a@," pp_charstring_element cselem;  (* for debug *)
   in  (* for debug *)
 *)
   let return_with_width ret =
-    match woptoptprev with
-    | None    -> let wopt = pop_opt stk in return (lenrest, Some(wopt), cstate, ret)
-    | Some(_) -> return (lenrest, woptoptprev, cstate, ret)
+    match widstate with
+    | WidthLookedFor -> let wopt = pop_opt stk in return (lenrest, WidthFound(wopt), cstate, ret)
+    | WidthFound(_)  -> return (lenrest, widstate, cstate, ret)
   in
 
   let return_cleared ret =
-    return (lenrest, woptoptprev, cstate, ret)
+    return (lenrest, widstate, cstate, ret)
   in
 
     match cselem with
@@ -4232,14 +4237,14 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         access_subroutine lsubridx i >>= fun (offset, len) ->
         let offset_init = cur_pos d in
         seek_pos offset d >>= fun () ->
-        parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
+        parse_charstring len cstate d stk gsubridx lsubridx widstate >>= fun (widstatesubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
         let cstatenew =
           { cstate with
             used_lsubr_set = cstate.used_lsubr_set |> IntSet.add (convert_subroutine_number lsubridx i);
           }
         in
-        return (lenrest, woptoptsubr, cstatenew, Alist.to_list accsubr)
+        return (lenrest, widstatesubr, cstatenew, Alist.to_list accsubr)
 
     | Operator(ShortKey(11)) ->  (* -- return (11) -- *)
         return_cleared []
@@ -4247,12 +4252,12 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
     | Operator(ShortKey(14)) ->  (* -- endchar (14) -- *)
         let lst = pop_all stk in
         begin
-          match woptoptprev with
-          | None ->
+          match widstate with
+          | WidthLookedFor ->
               begin
                 match lst with
-                | w :: [] -> return (lenrest, Some(Some(w)), cstate, [])
-                | []      -> return (lenrest, Some(None), cstate, [])
+                | w :: [] -> return (lenrest, WidthFound(Some(w)), cstate, [])
+                | []      -> return (lenrest, WidthFound(None), cstate, [])
                 | _       ->
 (*
                     Format.fprintf fmtCFF "!!endchar1@,";
@@ -4261,7 +4266,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
                     err `Invalid_charstring
               end
 
-          | Some(_) ->
+          | WidthFound(_) ->
               begin
                 match lst with
                 | [] -> return_cleared []
@@ -4356,7 +4361,7 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         access_subroutine gsubridx i >>= fun (offset, len) ->
         let offset_init = cur_pos d in
         seek_pos offset d >>= fun () ->
-        parse_charstring len cstate d stk gsubridx lsubridx woptoptprev >>= fun (woptoptsubr, cstate, accsubr) ->
+        parse_charstring len cstate d stk gsubridx lsubridx widstate >>= fun (woptoptsubr, cstate, accsubr) ->
         seek_pos offset_init d >>= fun () ->
         let cstatenew =
           { cstate with
@@ -4452,20 +4457,20 @@ let rec parse_progress (gsubridx : subroutine_index) (lsubridx : subroutine_inde
         err `Invalid_charstring
 
 
-and parse_charstring (len : int) (cstate : charstring_state) (d : decoder) (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (woptoptinit : (int option) option) : ((int option) option * charstring_state * parsed_charstring Alist.t) ok =
-  let rec aux lenrest (woptoptprev, cstate, acc) =
-    parse_progress gsubridx lsubridx woptoptprev lenrest cstate stk d >>= fun (lenrest, woptopt, cstate, parsed) ->
+and parse_charstring (len : int) (cstate : charstring_state) (d : decoder) (stk : int Stack.t) (gsubridx : subroutine_index) (lsubridx : subroutine_index) (widstateinit : width_state) : (width_state * charstring_state * parsed_charstring Alist.t) ok =
+  let rec aux lenrest (widstateprev, cstate, acc) =
+    parse_progress gsubridx lsubridx widstateprev lenrest cstate stk d >>= fun (lenrest, widstate, cstate, parsed) ->
     let accnew = Alist.append acc parsed in
     if lenrest = 0 then
-      return (woptopt, cstate, accnew)
+      return (widstate, cstate, accnew)
     else if lenrest < 0 then
       err `Invalid_charstring
     else
-      match woptopt with
-      | None    -> aux lenrest (woptoptprev, cstate, accnew)
-      | Some(_) -> aux lenrest (woptopt, cstate, accnew)
+      match widstate with
+      | WidthLookedFor -> aux lenrest (widstateprev, cstate, accnew)
+      | WidthFound(_)  -> aux lenrest (widstate, cstate, accnew)
   in
-    aux len (woptoptinit, cstate, Alist.empty)
+  aux len (widstateinit, cstate, Alist.empty)
 
 
 let select_fd_index (fdselect : fdselect) (gid : glyph_id) : fdindex ok =
@@ -4518,9 +4523,9 @@ let charstring ((d, gsubridx, privinfo, offset_CharString_INDEX) : charstring_in
       let stk : int Stack.t = Stack.create () in
       seek_pos offset d >>= fun () ->
       select_local_subr_index privinfo gid >>= fun lsubridx ->
-      parse_charstring len cstate d stk gsubridx lsubridx None >>= function
-      | (None, _, acc)       -> err `Invalid_charstring
-      | (Some(wopt), _, acc) -> return (Some((wopt, Alist.to_list acc)))
+      parse_charstring len cstate d stk gsubridx lsubridx WidthLookedFor >>= function
+      | (WidthLookedFor, _, acc)   -> err `Invalid_charstring
+      | (WidthFound(wopt), _, acc) -> return (Some((wopt, Alist.to_list acc)))
 
 
 type path_element =
@@ -6021,7 +6026,7 @@ module Encode = struct
           end >>= fun lsubrloc ->
           select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
           seek_pos glyph_offset d >>= fun () ->
-          parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx None >>= function
+          parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx WidthLookedFor >>= function
           | (_, cstate, _) ->
               return (usmap |> SubrIndexMap.update Global   (add_set cstate.used_gsubr_set)
                             |> SubrIndexMap.update lsubrloc (add_set cstate.used_lsubr_set))
