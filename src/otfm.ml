@@ -6081,7 +6081,7 @@ module Encode = struct
     in
     let offset_csidx   = offset_fdsel + len_fdsel in
     let len_csidx      = calculate_index_length_of_array (fun rg -> rg.glyph_data_length) glypharr in
-    let fdidx_offset   = offset_csidx + len_csidx in
+    let offset_fdidx   = offset_csidx + len_csidx in
 
     let dictmap = dictmap |> fix_charstrings_offset offset_csidx
                           |> fix_charset_offset offset_charset
@@ -6096,20 +6096,20 @@ module Encode = struct
             match pairopt with
             | None ->
               (* -- if the Top DICT does NOT have `Private` entry -- *)
-                return (dictmap, None, [||], [||], [||])
+                return (dictmap, None, [| |], [| |], [| |])
 
             | Some(priv, lsubropt) ->
                 let lsubrarray =
                   match lsubropt with
-                  | None        -> [||]
+                  | None        -> [| |]
                   | Some(lsubr) -> [| remove_unused_subrs LocalInTopDict lsubr |]
                 in
                 let len_priv           = calculate_encoded_dict_length true priv in
-                let offset_priv_start  = fdidx_offset + 0 in
+                let offset_priv_start  = offset_fdidx + 0 in
                 let offset_lsubr_start = offset_priv_start + len_priv in
-                let newdictmap         = fix_private_offset len_priv offset_priv_start dictmap in
-                let newpriv            = fix_lsubr_offset (offset_lsubr_start - offset_priv_start) priv in
-                return (newdictmap, None, [||], [|newpriv|], lsubrarray)
+                let dictmapnew         = fix_private_offset len_priv offset_priv_start dictmap in
+                let privnew            = fix_lsubr_offset (offset_lsubr_start - offset_priv_start) priv in
+                return (dictmapnew, None, [| |], [| privnew |], lsubrarray)
 
           end
 
@@ -6129,7 +6129,7 @@ module Encode = struct
           in
           let remove_unused_fontdict fdmapping fdarr =
             let usedset = fdmapping |> Array.fold_left (fun set id -> IntSet.add id set) IntSet.empty in
-            let (_, _, newidmap, newidrevmap, fdrevlst) =
+            let (_, _, idmapnew, idrevmapnew, fdrevlst) =
               fdarr |> Array.fold_left (fun (id, newid, map, revmap, fdlst) fd ->
                 if IntSet.mem id usedset then
                   (id + 1, newid + 1, IntMap.add id newid map, IntMap.add newid id revmap, fd :: fdlst)
@@ -6137,48 +6137,52 @@ module Encode = struct
                   (id + 1, newid, map, revmap, fdlst)
               ) (0, 0, IntMap.empty, IntMap.empty, [])
             in
-            let newfdmapping = fdmapping |> Array.map (fun id ->
-              match IntMap.find_opt id newidmap with
-              | None        -> id
-              | Some(newid) -> newid
-            )
+            let fdmappingnew =
+              fdmapping |> Array.map (fun id ->
+                match IntMap.find_opt id idmapnew with
+                | None        -> id
+                | Some(idnew) -> idnew
+              )
             in
-            let newfdarr = fdrevlst |> List.rev |> Array.of_list in
-            (newfdmapping, newidrevmap, newfdarr)
+            let fdarrnew = fdrevlst |> List.rev |> Array.of_list in
+            (fdmappingnew, idrevmapnew, fdarrnew)
           in
 
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
-          let (newfdmapping, fdnew2oldmap, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
+          let (fdmappingnew, fdnew2oldmap, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
           let (fdarray, privarray, _) = extract_pairarray pairarray in
 
-          let fdidx_len          = calculate_index_length_of_array (calculate_encoded_dict_length true) fdarray in
-          let priv_len           = sum_of_array (calculate_encoded_dict_length true) privarray in
-          let priv_start_offset  = fdidx_offset + fdidx_len in
-          let lsubr_start_offset = priv_start_offset + priv_len in
+          let len_fdidx          = calculate_index_length_of_array (calculate_encoded_dict_length true) fdarray in
+          let len_priv           = sum_of_array (calculate_encoded_dict_length true) privarray in
+          let offset_priv_start  = offset_fdidx + len_fdidx in
+          let offset_lsubr_start = offset_priv_start + len_priv in
 
-          pairarray |> Array.fold_left (fun (i, priv_next_offset, lsubr_next_offset) pairopt ->
-            match pairopt with
+          pairarray |> Array.fold_left (fun (i, offset_priv_next, offset_lsubr_next) pair ->
+            match pair with
             | (fd, Some(priv, lsubropt)) ->
-                let thispriv_len = (calculate_encoded_dict_length true) priv in
-                let newfd = fix_private_offset thispriv_len priv_next_offset fd in
-                let (newpriv, thislsubr_len, reduced_lsubropt) =
+                let len_thispriv = (calculate_encoded_dict_length true) priv in
+                let fdnew = fix_private_offset len_thispriv offset_priv_next fd in
+                let (privnew, len_thislsubr, lsubropt_reduced) =
                   match lsubropt with
                   | Some(lsubr) ->
                       let lsubr = remove_unused_subrs (LocalInFontDict(fdnew2oldmap |> IntMap.find i)) lsubr in
-                      (fix_lsubr_offset (lsubr_next_offset - priv_next_offset) priv, calculate_subr_index_length lsubr, Some(lsubr))
-                  | None        -> (priv, 0, None)
+                      (fix_lsubr_offset (offset_lsubr_next - offset_priv_next) priv, calculate_subr_index_length lsubr, Some(lsubr))
+
+                  | None ->
+                      (priv, 0, None)
                 in
-                let newpair = (newfd, Some(newpriv, reduced_lsubropt)) in
+                let newpair = (fdnew, Some(privnew, lsubropt_reduced)) in
                 pairarray.(i) <- newpair;
-                (i + 1, priv_next_offset + thispriv_len, lsubr_next_offset + thislsubr_len)
+                (i + 1, offset_priv_next + len_thispriv, offset_lsubr_next + len_thislsubr)
 
-            | _ -> (i + 1, priv_next_offset, lsubr_next_offset)
+            | (_, None) ->
+                (i + 1, offset_priv_next, offset_lsubr_next)
 
-          ) (0, priv_start_offset, lsubr_start_offset) |> ignore;
+          ) (0, offset_priv_start, offset_lsubr_start) |> ignore;
 
-          let (newfdarray, newprivarray, newlsubrarray) = extract_pairarray pairarray in
-          let newdictmap = dictmap |> fix_fd_related_offset fdidx_offset offset_fdsel in
-          return (newdictmap, Some(newfdmapping), newfdarray, newprivarray, newlsubrarray)
+          let (fdarraynew, privarraynew, lsubrarraynew) = extract_pairarray pairarray in
+          let dictmapnew = dictmap |> fix_fd_related_offset offset_fdidx offset_fdsel in
+          return (dictmapnew, Some(fdmappingnew), fdarraynew, privarraynew, lsubrarraynew)
 
     end >>= fun (dictmap, fdselect, fdarray, privarray, lsubrarray) ->
 
