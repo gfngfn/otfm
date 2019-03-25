@@ -3127,10 +3127,12 @@ module DictMap = Map.Make
 
 
 type dict = (cff_value list) DictMap.t
+  (* -- the type for DICT data [CFF p.9, Section 4] -- *)
 
 type string_index = string array
+  (* -- the type for String INDEXes [CFF p.17, Section 10] -- *)
 
-type stem_argument = string  (* temporary *)
+type stem_argument = string  (* temporary; represents a bit vector of arbitrary finite length *)
 
 type charstring_element =
   | ArgumentInteger  of int
@@ -3147,6 +3149,7 @@ type charstring_data =
          -- *)
 
 type subroutine_index = charstring_data array
+  (* -- the type for Local/Global Subrs INDEXes [CFF p.25, Section 16] -- *)
 
 type cff_header =
   {
@@ -3155,12 +3158,13 @@ type cff_header =
     hdrSize  : int;
     offSize  : offsize;
   }
+  (* -- the type for CFF headers [CFF p.13, Section 6] -- *)
 
 type cff_first = {
   cff_header   : cff_header;
-  cff_name     : string;
-  top_dict     : dict;
-  string_index : string_index;
+  cff_name     : string;            (* -- singleton Name INDEX -- *)
+  top_dict     : dict;              (* -- singleton Top DICT INDEX -- *)
+  string_index : string_index;      (* -- String INDEX [CFF p.17, Section 10] -- *)
   gsubr_index  : subroutine_index;
   offset_CFF   : int;
 }
@@ -3175,12 +3179,14 @@ type cff_cid_info =
     cid_font_type     : int;
     cid_count         : int;
   }
+  (* -- the type for CIDFont-specific data in Top DICT [CFF p.16, Table 10] -- *)
 
 type single_private = {
   default_width_x  : int;
   nominal_width_x  : int;
   local_subr_index : subroutine_index;
 }
+  (* -- the type for Private DICT [CFF p.23, Section 15] -- *)
 
 type fdarray = single_private array
 
@@ -3189,6 +3195,7 @@ type fdindex = int
 type fdselect =
   | FDSelectFormat0 of fdindex array
   | FDSelectFormat3 of (glyph_id * fdindex) list * glyph_id
+  (* -- the type for FDSelect [CFF p.28, Section 19] -- *)
 
 type private_info =
   | SinglePrivate of single_private
@@ -3212,6 +3219,7 @@ type cff_info =
     number_of_glyphs    : int;
     charstring_info     : charstring_info;
   }
+    (* -- the type for data basically corresponding to Top DICTs [CFF p.15, Table 9] -- *)
 
 
 let is_in_range a b x = (a <= x && x <= b)
@@ -3294,7 +3302,6 @@ let d_index (type a) (dummy : a) (dl : int -> decoder -> a ok) (d : decoder) : (
     d_cff_length_list offSize count d >>= fun lenlst ->
     loop_data arr 0 lenlst >>= fun () ->
     return arr
-
 
 
 let d_charstring_data (len : int) (d : decoder) : charstring_data ok =
@@ -3445,6 +3452,13 @@ let pp_element ppf = function
   | Key(ShortKey(x))  -> Format.fprintf ppf "ShortKey(%d)" x
 
 
+(* -- `d_dict_keyval d` returns `(steps, vals, key)` where:
+
+   * `steps`: how many steps the decoder ran to read the single key-value pair,
+   * `vals`: the list of operands, and
+   * `key`: the operator.
+
+   -- *)
 let d_dict_keyval d : (int * cff_value list * cff_key) ok =
   let rec aux stepsum vacc =
     d_dict_element d >>= fun (step, elem) ->
@@ -3455,10 +3469,10 @@ let d_dict_keyval d : (int * cff_value list * cff_key) ok =
       | Value(v) -> aux (stepsum + step) (Alist.extend vacc v)
       | Key(k)   -> return (stepsum + step, Alist.to_list vacc, k)
   in
-    aux 0 Alist.empty
+  aux 0 Alist.empty
 
 
-let d_dict len d : ((cff_value list) DictMap.t) ok =
+let d_dict len d : dict ok =
   let rec loop_keyval mapacc len d =
     if len = 0 then return mapacc else
     if len < 0 then err `Invalid_cff_inconsistent_length else
@@ -5998,15 +6012,15 @@ module Encode = struct
         enc_copy_direct d enc offset len
 
 
-  type subrindex_location =
-    | Global
-    | LocalInTopDict
-    | LocalInFontDict of int
+  type subrs_index_location =
+    | Global                  (* -- Global Subrs -- *)
+    | LocalInTopDict          (* -- in the Local Subrs in the Private DICT -- *)
+    | LocalInFontDict of int  (* -- in a Local Subrs in an element of FDArray -- *)
 
 
-  module SubrIndexMap = Map.Make
+  module SubrsIndexMap = Map.Make
     (struct
-      type t = subrindex_location
+      type t = subrs_index_location
       let compare i j = Pervasives.compare i j
     end)
 
@@ -6017,7 +6031,7 @@ module Encode = struct
     let name = cff_first.cff_name in
     let dictmap = cff_first.top_dict in
     let stridx = cff_first.string_index in
-    let gsubridx = cff_first.gsubr_index in
+    let gsubridx_org = cff_first.gsubr_index in
     let offset_CFF = cff_first.offset_CFF in
 
     let dictmap = dictmap |> fix_charset_offset 0 (* dummy *) in (* allocate charset entry *)
@@ -6032,7 +6046,7 @@ module Encode = struct
           let cstate = { numarg = 0; numstem = 0; used_gsubr_set = IntSet.empty; used_lsubr_set = IntSet.empty; } in
           let stk : int Stack.t = Stack.create () in
           let (_, _, privinfo, _) = cffinfo.charstring_info in
-          let add_set s = (function None -> Some(s) | Some(s0) -> Some(IntSet.union s0 s)) in
+          let extend_set s = (function None -> Some(s) | Some(s0) -> Some(IntSet.union s0 s)) in
           begin
             match privinfo with
             | SinglePrivate(_) ->
@@ -6044,15 +6058,15 @@ module Encode = struct
           end >>= fun lsubrloc ->
           select_local_subr_index privinfo rg.old_glyph_id >>= fun lsubridx ->
           seek_pos glyph_offset d >>= fun () ->
-          parse_charstring rg.glyph_data_length cstate d stk gsubridx lsubridx WidthLookedFor >>= function
+          parse_charstring rg.glyph_data_length cstate d stk gsubridx_org lsubridx WidthLookedFor >>= function
           | (_, cstate, _) ->
-              return (usmap |> SubrIndexMap.update Global   (add_set cstate.used_gsubr_set)
-                            |> SubrIndexMap.update lsubrloc (add_set cstate.used_lsubr_set))
+              return (usmap |> SubrsIndexMap.update Global   (extend_set cstate.used_gsubr_set)
+                            |> SubrsIndexMap.update lsubrloc (extend_set cstate.used_lsubr_set))
 
-    ) (return (SubrIndexMap.empty)) >>= fun (used_subrs_map : IntSet.t SubrIndexMap.t) ->
+    ) (return (SubrsIndexMap.empty)) >>= fun (used_subrs_map : IntSet.t SubrsIndexMap.t) ->
 
     let remove_unused_subrs subrloc subridx =
-      match SubrIndexMap.find_opt subrloc used_subrs_map with
+      match used_subrs_map |> SubrsIndexMap.find_opt subrloc with
       | None ->
           subridx
 
@@ -6062,15 +6076,16 @@ module Encode = struct
               (CharStringData(offset, len))
             else
               (CharStringData(offset, 0))
+                (* DOUBTFUL: just sets the designation of the data length to 0 and does not modify the Subrs INDEX itself *)
           )
     in
-    let gsubridx = remove_unused_subrs Global gsubridx in
+    let gsubridx_sub = remove_unused_subrs Global gsubridx_org in
 
     let len_header     = header.hdrSize in
     let len_nameidx    = calculate_index_length 1 (String.length name) in
     let len_topdictidx = calculate_index_length 1 (calculate_encoded_dict_length true dictmap) in
     let len_stridx     = calculate_index_length_of_array String.length stridx in
-    let len_gsubridx   = calculate_subr_index_length gsubridx in
+    let len_gsubridx   = calculate_subr_index_length gsubridx_sub in
     let offset_charset = len_header + len_nameidx + len_topdictidx + len_stridx + len_gsubridx in
     let len_charset    = 1 + 2 + 2 (* Format 2 *) in
     let offset_fdsel   = offset_charset + len_charset in
@@ -6197,7 +6212,7 @@ module Encode = struct
     enc_index           enc enc_direct (make_elem_len_pair_of_array String.length stridx) >>= fun () ->
     (* -- Global Subr INDEX: -- *)
     enc_index           enc (enc_charstring_data d)
-                          (make_elem_len_pair_of_array get_charstring_length gsubridx) >>= fun () ->
+                          (make_elem_len_pair_of_array get_charstring_length gsubridx_sub) >>= fun () ->
     (* -- Charsets: -- *)
     enc_charset_identity enc (Array.length glypharr) >>= fun () ->
     (* -- FDSelect (CIDFonts only): -- *)
