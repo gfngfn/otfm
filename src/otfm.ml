@@ -6026,7 +6026,7 @@ module Encode = struct
     end)
 
 
-  let enc_cff_table (d : decoder) (enc : encoder) (cffinfo : cff_info) (glypharr : raw_glyph array) (fdselect : (int array) option) =
+  let enc_cff_table (d : decoder) (enc : encoder) (cffinfo : cff_info) (glyphlst : raw_glyph list) =
     let cff_first = cffinfo.cff_first in
     let header = cff_first.cff_header in
     let name = cff_first.cff_name in
@@ -6034,6 +6034,30 @@ module Encode = struct
     let stridx = cff_first.string_index in
     let gsubridx_org = cff_first.gsubr_index in
     let offset_CFF = cff_first.offset_CFF in
+
+    let numGlyphs = List.length glyphlst in
+    let glypharr = Array.of_list glyphlst in
+    let (_, _, privinfo, _) = cffinfo.charstring_info in
+    let (fdselect, regf) =
+      match privinfo with
+      | SinglePrivate(singlepriv) ->
+          (None, (fun _ _ -> return ()))
+
+      | FontDicts(_, fdselect) ->
+          let fdmapping = Array.make numGlyphs 0 in
+          let regf = (fun gidnew gidold ->
+            select_fd_index fdselect gidold >>= fun fdindex ->
+            fdmapping.(gidnew) <- fdindex;
+            return ()
+          )
+          in
+          (Some(fdmapping), regf)
+    in
+    glyphlst |> List.fold_left (fun res g ->
+      res >>= fun gidnew ->
+      regf gidnew g.old_glyph_id >>= fun () ->
+      return (gidnew + 1)
+    ) (return 0) >>= fun _ ->
 
     let dictmap = dictmap |> fix_charset_offset 0 (* dummy *) in (* allocate charset entry *)
 
@@ -6285,28 +6309,7 @@ module Encode = struct
 
     (* -- outputs 'cff' table -- *)
       let enc_cff = create_encoder () in
-      let (_, _, privinfo, _) = cffinfo.charstring_info in
-      let (fdselect, regf) =
-        match privinfo with
-        | SinglePrivate(singlepriv) ->
-            (None, (fun _ _ -> return ()))
-
-        | FontDicts(_, fdselect) ->
-            let fdmapping = Array.make numGlyphs 0 in
-            let regf = (fun gidnew gidold ->
-              select_fd_index fdselect gidold >>= fun fdindex ->
-              fdmapping.(gidnew) <- fdindex;
-              return ()
-            )
-            in
-            (Some(fdmapping), regf)
-      in
-      glyphlst |> List.fold_left (fun res g ->
-        res >>= fun gidnew ->
-        regf gidnew g.old_glyph_id >>= fun () ->
-        return (gidnew + 1)
-      ) (return 0) >>= fun _ ->
-      enc_cff_table d enc_cff cffinfo (Array.of_list glyphlst) fdselect >>= fun () ->
+      enc_cff_table d enc_cff cffinfo glyphlst >>= fun () ->
       let rawtbl_cff = to_raw_table Tag.cff enc_cff in
 
       let out_info =
