@@ -4516,7 +4516,9 @@ let select_fd_index (fdselect : fdselect) (gid : glyph_id) : fdindex ok =
 
 let select_local_subr_index (privinfo : private_info) (gid : glyph_id) : subroutine_index ok =
   match privinfo with
-  | SinglePrivate(singlepriv) -> return singlepriv.local_subr_index
+  | SinglePrivate(singlepriv) ->
+      return singlepriv.local_subr_index
+
   | FontDicts(fdarray, fdselect) ->
       select_fd_index fdselect gid >>= fun fdindex ->
       try
@@ -5427,7 +5429,9 @@ module Encode = struct
   let enc_fdselect_format0 enc fdselect =
     enc_uint8 enc 0 >>= fun () ->
     fdselect |> Array.fold_left (fun res sel ->
-      res >>= fun () -> enc_uint8 enc sel) (return ())
+      res >>= fun () ->
+      enc_uint8 enc sel
+    ) (return ())
 
 
   let nibbles_of_float fl =
@@ -5533,8 +5537,10 @@ module Encode = struct
 
   let calculate_encoded_dict_length ~is_fixed_int dictmap =
     DictMap.fold (fun k vlst sum ->
-      let sum = vlst |> List.fold_left (fun acc v ->
-        acc + calculate_encoded_dict_element_length ~is_fixed_int (Value(v))) sum
+      let sum =
+        vlst |> List.fold_left (fun acc v ->
+          acc + calculate_encoded_dict_element_length ~is_fixed_int (Value(v))
+        ) sum
       in
       sum + calculate_encoded_dict_element_length ~is_fixed_int (Key(k))
     ) dictmap 0
@@ -5986,20 +5992,25 @@ module Encode = struct
             return (Some(dictmap_private, Some(lsubridx)))
 
 
-  let d_fontdict_private_pair_array offset_CFF dictmap_top d =
-    get_integer dictmap_top (LongKey(36)) >>= fun offset_FDArray ->
+  (* --
+     `d_fontdict_private_pair_array`: returns an array
+     in which every element is a pair of Font DICT
+     and the pair of its Private DICT and its Local Subrs INDEX
+     --*)
+  let d_fontdict_private_pair_array offset_CFF dict_Top d : ((dict * (dict * subroutine_index option) option) array) ok =
+    get_integer dict_Top (LongKey(36)) >>= fun zoffset_FDArray ->
       (* -- accesses `FDArray` entry in the Top DICT [CFF p.16] -- *)
-    seek_pos (offset_CFF + offset_FDArray) d >>= fun () ->
+    seek_pos (offset_CFF + zoffset_FDArray) d >>= fun () ->
     d_index DictMap.empty d_dict d >>= fun arrraw ->
     try
       let arr =
-        arrraw |> Array.map (fun font_dictmap ->
+        arrraw |> Array.map (fun dict_Font ->
           let res =
-            d_private_lsubr_pair_opt offset_CFF font_dictmap d
+            d_private_lsubr_pair_opt offset_CFF dict_Font d
           in
           match res with
           | Error(e)                -> raise (Internal(e))
-          | Ok(priv_lsubr_pair_opt) -> (font_dictmap, priv_lsubr_pair_opt)
+          | Ok(priv_lsubr_pair_opt) -> (dict_Font, priv_lsubr_pair_opt)
         )
       in
       return arr
@@ -6037,26 +6048,25 @@ module Encode = struct
 
     let numGlyphs = List.length glyphlst in
     let glypharr = Array.of_list glyphlst in
-    let (_, _, privinfo, _) = cffinfo.charstring_info in
-    let (fdselect, regf) =
+    let (fdmappingopt, regf) =
+      let (_, _, privinfo, _) = cffinfo.charstring_info in
       match privinfo with
       | SinglePrivate(singlepriv) ->
           (None, (fun _ _ -> return ()))
 
       | FontDicts(_, fdselect) ->
           let fdmapping = Array.make numGlyphs 0 in
-          let regf = (fun gidnew gidold ->
-            select_fd_index fdselect gidold >>= fun fdindex ->
-            fdmapping.(gidnew) <- fdindex;
+          let regf gid_sub gid_org =
+            select_fd_index fdselect gid_org >>= fun fdindex ->
+            fdmapping.(gid_sub) <- fdindex;
             return ()
-          )
           in
           (Some(fdmapping), regf)
     in
     glyphlst |> List.fold_left (fun res g ->
-      res >>= fun gidnew ->
-      regf gidnew g.old_glyph_id >>= fun () ->
-      return (gidnew + 1)
+      res >>= fun gid_sub ->
+      regf gid_sub g.old_glyph_id >>= fun () ->
+      return (gid_sub + 1)
     ) (return 0) >>= fun _ ->
 
     let dictmap = dictmap |> fix_charset_offset 0 (* dummy *) in (* allocate charset entry *)
@@ -6088,7 +6098,7 @@ module Encode = struct
               return (usmap |> SubrsIndexMap.update Global   (extend_set cstate.used_gsubr_set)
                             |> SubrsIndexMap.update lsubrloc (extend_set cstate.used_lsubr_set))
 
-    ) (return (SubrsIndexMap.empty)) >>= fun (used_subrs_map : IntSet.t SubrsIndexMap.t) ->
+    ) (return SubrsIndexMap.empty) >>= fun (used_subrs_map : IntSet.t SubrsIndexMap.t) ->
 
     let remove_unused_subrs subrloc subridx =
       match used_subrs_map |> SubrsIndexMap.find_opt subrloc with
@@ -6120,9 +6130,9 @@ module Encode = struct
     let len_charset    = 1 + 2 + 2 (* Format 2 *) in
     let zoffset_fdsel   = zoffset_charset + len_charset in
     let len_fdsel =
-      match fdselect with
-      | None      -> 0
-      | Some(arr) -> 1 + Array.length arr (* Format0 *)
+      match fdmappingopt with
+      | None            -> 0
+      | Some(fdmapping) -> 1 + Array.length fdmapping (* Format0 *)
     in
     let zoffset_csidx   = zoffset_fdsel + len_fdsel in
     let len_csidx      = calculate_index_length_of_array (fun rg -> rg.glyph_data_length) glypharr in
@@ -6134,7 +6144,7 @@ module Encode = struct
 
     (* layout remaining data, and fix offsets in DICTs *)
     begin
-      match fdselect with
+      match fdmappingopt with
       | None ->
           d_private_lsubr_pair_opt offset_CFF dictmap d >>= fun pairopt ->
           begin
@@ -6149,10 +6159,10 @@ module Encode = struct
                   | None        -> [| |]
                   | Some(lsubr) -> [| remove_unused_subrs LocalInTopDict lsubr |]
                 in
-                let len_priv           = calculate_encoded_dict_length ~is_fixed_int:true priv in
-                let zoffset_priv_start  = zoffset_fdidx + 0 in
+                let len_priv = calculate_encoded_dict_length ~is_fixed_int:true priv in
+                let zoffset_priv_start = zoffset_fdidx + 0 in
                 let zoffset_lsubr_start = zoffset_priv_start + len_priv in
-                let dictmapnew         = dictmap |> fix_private_offset len_priv zoffset_priv_start in
+                let dictmapnew = dictmap |> fix_private_offset len_priv zoffset_priv_start in
                 let selfoffset_lsubr = zoffset_lsubr_start - zoffset_priv_start in
                 let privnew            = priv |> fix_lsubr_offset selfoffset_lsubr in
                 return (dictmapnew, None, [| |], [| privnew |], lsubrarray)
@@ -6160,7 +6170,8 @@ module Encode = struct
           end
 
       | Some(fdmapping) ->
-          let extract_pairarray pairarray =
+
+          let extract_pairarray (pairarray : (dict * (dict * subroutine_index option) option) array) : dict array * dict array * subroutine_index array =
             let fdarray = pairarray |> Array.map fst in
             let (privacc, lsubracc) =
               pairarray |> Array.fold_left (fun (pacc, lacc) (_, pairopt) ->
@@ -6174,25 +6185,38 @@ module Encode = struct
             let lsubrarray = lsubracc |> Alist.to_list |> Array.of_list in
             (fdarray, privarray, lsubrarray)
           in
-          let remove_unused_fontdict fdmapping fdarr =
-            let usedset = fdmapping |> Array.fold_left (fun set id -> IntSet.add id set) IntSet.empty in
-            let (_, _, idmapnew, idrevmapnew, fdacc) =
-              fdarr |> Array.fold_left (fun (id, idnew, map, revmap, fdacc) fd ->
-                if IntSet.mem id usedset then
-                  (id + 1, idnew + 1, IntMap.add id idnew map, IntMap.add idnew id revmap, Alist.extend fdacc fd)
+
+          (* --
+             `remove_unused_fontdict`: receives
+
+             * `fdmapping`: the original FD index array indexed by subset GIDs, and
+             * `fdarr_org`: the original Font DICTs and their corresponding Private DICTs and Local Subrs INDEXes,
+
+             and then returns `(fdmappingnew, revmap, fdarrnew)` where:
+
+             * `fdmapping_sub`: the renumbered version of `fdmapping_org`,
+             * `revmap`: a mapping from subset FD indices to original ones, and
+             * `fdarr_sub`: necessary subset of `fdarr`.
+             -- *)
+          let remove_unused_fontdict (fdmapping : fdindex array) (fdarr_org : (dict * (dict * subroutine_index option) option) array) : fdindex array * fdindex IntMap.t * (dict * (dict * subroutine_index option) option) array =
+            let usedset = fdmapping |> Array.fold_left (fun set fdi -> IntSet.add fdi set) IntSet.empty in
+            let (_, _, map, revmap, fdacc) =
+              fdarr_org |> Array.fold_left (fun (fdi_org, fdi_sub, map, revmap, fdacc) fd ->
+                if IntSet.mem fdi_org usedset then
+                  (fdi_org + 1, fdi_sub + 1, map |> IntMap.add fdi_org fdi_sub, revmap |> IntMap.add fdi_sub fdi_org, Alist.extend fdacc fd)
                 else
-                  (id + 1, idnew, map, revmap, fdacc)
+                  (fdi_org + 1, fdi_sub, map, revmap, fdacc)
               ) (0, 0, IntMap.empty, IntMap.empty, Alist.empty)
             in
-            let fdmappingnew =
-              fdmapping |> Array.map (fun id ->
-                match IntMap.find_opt id idmapnew with
-                | None        -> id
-                | Some(idnew) -> idnew
+            let fdmapping_sub =
+              fdmapping |> Array.map (fun fdi_org ->
+                match map |> IntMap.find_opt fdi_org with
+                | None          -> fdi_org
+                | Some(fdi_sub) -> fdi_sub
               )
             in
-            let fdarrnew = fdacc |> Alist.to_list |> Array.of_list in
-            (fdmappingnew, idrevmapnew, fdarrnew)
+            let fdarr_sub = fdacc |> Alist.to_list |> Array.of_list in
+            (fdmapping_sub, revmap, fdarr_sub)
           in
 
           d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
@@ -6245,7 +6269,7 @@ module Encode = struct
     enc_index           enc (enc_charstring_data d)
                           (make_elem_len_pair_of_array get_charstring_length gsubridx_sub) >>= fun () ->
     (* -- Charsets: -- *)
-    enc_charset_identity enc (Array.length glypharr) >>= fun () ->
+    enc_charset_identity enc numGlyphs >>= fun () ->
     (* -- FDSelect (CIDFonts only): -- *)
     begin
       match fdselect with
@@ -6269,12 +6293,6 @@ module Encode = struct
 
   let cff_outline_tables d cffinfo (glyphlst : raw_glyph list) =
     let numGlyphs = List.length glyphlst in
-
-    let ht = OldToNewGlyphID.create (numGlyphs * 2) in
-    glyphlst |> List.iteri (fun gidnew rg ->
-      OldToNewGlyphID.add ht rg.old_glyph_id gidnew
-    );
-
     if numGlyphs > 65536 then
       err (`Too_many_glyphs_for_encoding(numGlyphs))
     else
