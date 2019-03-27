@@ -6248,7 +6248,7 @@ module Encode = struct
                       (priv, 0, None)
                 in
                 let pairnew = (fdnew, Some(privnew, lsubropt_reduced)) in
-                pairarray.(i) <- pairnew;
+                fdpairs_sub.(i) <- pairnew;
                 (i + 1, offset_priv_next + len_thispriv, offset_lsubr_next + len_thislsubr)
 
             | (_, None) ->
@@ -6256,7 +6256,7 @@ module Encode = struct
 
           ) (0, zoffset_Private, zoffset_LSubrs_INDEX) |> ignore;
 
-          let (fdarraynew, privarraynew, lsubrarraynew) = extract_pairarray pairarray in
+          let (fdarraynew, privarraynew, lsubrarraynew) = extract_pairarray fdpairs_sub in
           let dict_Top = dict_Top |> fix_fd_related_offset zoffset_Font_DICT_INDEX zoffset_FDSelect in
           return (dict_Top, Some(fdmapping_sub), fdarraynew, privarraynew, lsubrarraynew)
 
