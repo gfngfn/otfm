@@ -6048,11 +6048,11 @@ module Encode = struct
 
     let numGlyphs = List.length glyphlst in
     let glypharr = Array.of_list glyphlst in
-    let (fdmappingopt, regf) =
+    begin
       let (_, _, privinfo, _) = cffinfo.charstring_info in
       match privinfo with
       | SinglePrivate(singlepriv) ->
-          (None, (fun _ _ -> return ()))
+          return None
 
       | FontDicts(_, fdselect) ->
           let fdmapping = Array.make numGlyphs 0 in
@@ -6061,13 +6061,14 @@ module Encode = struct
             fdmapping.(gid_sub) <- fdindex;
             return ()
           in
-          (Some(fdmapping), regf)
-    in
-    glyphlst |> List.fold_left (fun res g ->
-      res >>= fun gid_sub ->
-      regf gid_sub g.old_glyph_id >>= fun () ->
-      return (gid_sub + 1)
-    ) (return 0) >>= fun _ ->
+          glyphlst |> List.fold_left (fun res g ->
+            res >>= fun gid_sub ->
+            regf gid_sub g.old_glyph_id >>= fun () ->
+            return (gid_sub + 1)
+          ) (return 0) >>= fun _ ->
+          return (Some(fdmapping))
+
+    end >>= fun fdmappingopt ->
 
     let dictmap = dictmap |> fix_charset_offset 0 (* dummy *) in (* allocate charset entry *)
 
