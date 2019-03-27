@@ -5420,6 +5420,11 @@ module Encode = struct
     arr |> Array.fold_left (fun res x -> res >>= fun () -> ef enc x) (return ())
 
 
+  let enc_opt enc encf = function
+    | None    -> return ()
+    | Some(v) -> encf enc v
+
+
   let enc_charset_identity enc nGlyphs =
     enc_uint8  enc 2 (* Format 2 *) >>= fun () ->
     enc_uint16 enc 1                >>= fun () ->
@@ -6041,7 +6046,7 @@ module Encode = struct
     let cff_first = cffinfo.cff_first in
     let header = cff_first.cff_header in
     let name = cff_first.cff_name in
-    let dictmap = cff_first.top_dict in
+    let dict_Top = cff_first.top_dict in
     let stridx = cff_first.string_index in
     let gsubridx_org = cff_first.gsubr_index in
     let offset_CFF = cff_first.offset_CFF in
@@ -6070,7 +6075,7 @@ module Encode = struct
 
     end >>= fun fdmappingopt ->
 
-    let dictmap = dictmap |> fix_charset_offset 0 (* dummy *) in (* allocate charset entry *)
+    let dict_Top = dict_Top |> fix_charset_offset 0 (* dummy *) in (* allocate charset entry *)
 
     glypharr |> Array.fold_left (fun acc rg ->
       acc >>= fun usmap ->
@@ -6122,52 +6127,51 @@ module Encode = struct
     in
     let gsubridx_sub = remove_unused_subrs Global gsubridx_org in
 
-    let len_header     = header.hdrSize in
-    let len_nameidx    = calculate_index_length 1 (String.length name) in
-    let len_topdictidx = calculate_index_length 1 (calculate_encoded_dict_length ~is_fixed_int:true dictmap) in
-    let len_stridx     = calculate_index_length_of_array String.length stridx in
-    let len_gsubridx   = calculate_subr_index_length gsubridx_sub in
-    let zoffset_charset = len_header + len_nameidx + len_topdictidx + len_stridx + len_gsubridx in
-    let len_charset    = 1 + 2 + 2 (* Format 2 *) in
-    let zoffset_fdsel   = zoffset_charset + len_charset in
-    let len_fdsel =
+    let len_Header     = header.hdrSize in
+    let len_Name_INDEX = calculate_index_length 1 (String.length name) in
+    let len_Top_DICT_INDEX = calculate_index_length 1 (calculate_encoded_dict_length ~is_fixed_int:true dict_Top) in
+    let len_String_INDEX = calculate_index_length_of_array String.length stridx in
+    let len_GSubrs_INDEX = calculate_subr_index_length gsubridx_sub in
+    let zoffset_Charset = len_Header + len_Name_INDEX + len_Top_DICT_INDEX + len_String_INDEX + len_GSubrs_INDEX in
+    let len_Charset = 1 + 2 + 2 (* Format 2 *) in
+    let zoffset_FDSelect = zoffset_Charset + len_Charset in
+    let len_FDSelect =
       match fdmappingopt with
       | None            -> 0
       | Some(fdmapping) -> 1 + Array.length fdmapping (* Format0 *)
     in
-    let zoffset_csidx   = zoffset_fdsel + len_fdsel in
-    let len_csidx      = calculate_index_length_of_array (fun rg -> rg.glyph_data_length) glypharr in
-    let zoffset_fdidx   = zoffset_csidx + len_csidx in
+    let zoffset_Charstrings_INDEX = zoffset_FDSelect + len_FDSelect in
+    let len_Charstrings_INDEX = calculate_index_length_of_array (fun rg -> rg.glyph_data_length) glypharr in
+    let zoffset_Font_DICT_INDEX = zoffset_Charstrings_INDEX + len_Charstrings_INDEX in
 
-    let dictmap = dictmap |> fix_charstrings_offset zoffset_csidx
-                          |> fix_charset_offset zoffset_charset
+    let dict_Top = dict_Top |> fix_charstrings_offset zoffset_Charstrings_INDEX
+                            |> fix_charset_offset zoffset_Charset
     in
 
     (* layout remaining data, and fix offsets in DICTs *)
     begin
       match fdmappingopt with
       | None ->
-          d_private_lsubr_pair_opt offset_CFF dictmap d >>= fun pairopt ->
+          d_private_lsubr_pair_opt offset_CFF dict_Top d >>= fun pairopt ->
           begin
             match pairopt with
             | None ->
               (* -- if the original Top DICT does NOT have `Private` entry -- *)
-                return (dictmap, None, [| |], [| |], [| |])
+                return (dict_Top, None, [| |], [| |], [| |])
 
-            | Some(priv, lsubropt) ->
+            | Some(dict_Private, lsubropt) ->
                 let lsubrarray =
                   match lsubropt with
                   | None        -> [| |]
                   | Some(lsubr) -> [| remove_unused_subrs LocalInTopDict lsubr |]
                 in
-                let len_priv = calculate_encoded_dict_length ~is_fixed_int:true priv in
-                let zoffset_priv_start = zoffset_fdidx + 0 in
-                let zoffset_lsubr_start = zoffset_priv_start + len_priv in
-                let dictmapnew = dictmap |> fix_private_offset len_priv zoffset_priv_start in
-                let selfoffset_lsubr = zoffset_lsubr_start - zoffset_priv_start in
-                let privnew            = priv |> fix_lsubr_offset selfoffset_lsubr in
-                return (dictmapnew, None, [| |], [| privnew |], lsubrarray)
-
+                let len_Private = calculate_encoded_dict_length ~is_fixed_int:true dict_Private in
+                let zoffset_Private = zoffset_Font_DICT_INDEX + 0 in
+                let zoffset_lsubr_start = zoffset_Private + len_Private in
+                let dict_Top = dict_Top |> fix_private_offset len_Private zoffset_Private in
+                let selfoffset_lsubr = zoffset_lsubr_start - zoffset_Private in
+                let dict_Private = dict_Private |> fix_lsubr_offset selfoffset_lsubr in
+                return (dict_Top, None, [| |], [| dict_Private |], lsubrarray)
           end
 
       | Some(fdmapping) ->
@@ -6190,23 +6194,23 @@ module Encode = struct
           (* --
              `remove_unused_fontdict`: receives
 
-             * `fdmapping`: the original FD index array indexed by subset GIDs, and
-             * `fdarr_org`: the original Font DICTs and their corresponding Private DICTs and Local Subrs INDEXes,
+             * `fdmapping`: the array of original FD indices indexed by subset GIDs, and
+             * `fdpairs_org`: the original Font DICTs and their corresponding Private DICTs and Local Subrs INDEXes,
 
-             and then returns `(fdmappingnew, revmap, fdarrnew)` where:
+             and then returns `(fdmapping_sub, revmap, fdarr_sub)` where:
 
              * `fdmapping_sub`: the renumbered version of `fdmapping_org`,
              * `revmap`: a mapping from subset FD indices to original ones, and
-             * `fdarr_sub`: necessary subset of `fdarr`.
+             * `fdpairs_sub`: necessary subset of `fdarr`.
              -- *)
-          let remove_unused_fontdict (fdmapping : fdindex array) (fdarr_org : (dict * (dict * subroutine_index option) option) array) : fdindex array * fdindex IntMap.t * (dict * (dict * subroutine_index option) option) array =
+          let remove_unused_fontdict (fdmapping : fdindex array) (fdpairs_org : (dict * (dict * subroutine_index option) option) array) : fdindex array * fdindex IntMap.t * (dict * (dict * subroutine_index option) option) array =
             let usedset = fdmapping |> Array.fold_left (fun set fdi -> IntSet.add fdi set) IntSet.empty in
-            let (_, _, map, revmap, fdacc) =
-              fdarr_org |> Array.fold_left (fun (fdi_org, fdi_sub, map, revmap, fdacc) fd ->
+            let (_, _, map, revmap, fdpairacc) =
+              fdpairs_org |> Array.fold_left (fun (fdi_org, fdi_sub, map, revmap, fdpairacc) fdpair ->
                 if IntSet.mem fdi_org usedset then
-                  (fdi_org + 1, fdi_sub + 1, map |> IntMap.add fdi_org fdi_sub, revmap |> IntMap.add fdi_sub fdi_org, Alist.extend fdacc fd)
+                  (fdi_org + 1, fdi_sub + 1, map |> IntMap.add fdi_org fdi_sub, revmap |> IntMap.add fdi_sub fdi_org, Alist.extend fdpairacc fdpair)
                 else
-                  (fdi_org + 1, fdi_sub, map, revmap, fdacc)
+                  (fdi_org + 1, fdi_sub, map, revmap, fdpairacc)
               ) (0, 0, IntMap.empty, IntMap.empty, Alist.empty)
             in
             let fdmapping_sub =
@@ -6216,21 +6220,21 @@ module Encode = struct
                 | Some(fdi_sub) -> fdi_sub
               )
             in
-            let fdarr_sub = fdacc |> Alist.to_list |> Array.of_list in
-            (fdmapping_sub, revmap, fdarr_sub)
+            let fdpairs_sub = fdpairacc |> Alist.to_list |> Array.of_list in
+            (fdmapping_sub, revmap, fdpairs_sub)
           in
 
-          d_fontdict_private_pair_array offset_CFF dictmap d >>= fun pairarray ->
-          let (fdmappingnew, fdnew2oldmap, pairarray) = pairarray |> remove_unused_fontdict fdmapping in
-          let (fdarray, privarray, _) = extract_pairarray pairarray in
+          d_fontdict_private_pair_array offset_CFF dict_Top d >>= fun fdpairs_org ->
+          let (fdmapping_sub, fdnew2oldmap, fdpairs_sub) = fdpairs_org |> remove_unused_fontdict fdmapping in
+          let (fdarray, privarray, _) = extract_pairarray fdpairs_sub in
 
-          let len_fdidx          = calculate_index_length_of_array (calculate_encoded_dict_length ~is_fixed_int:true) fdarray in
-          let len_priv           = sum_of_array (calculate_encoded_dict_length ~is_fixed_int:true) privarray in
-          let zoffset_priv_start  = zoffset_fdidx + len_fdidx in
-          let zoffset_lsubr_start = zoffset_priv_start + len_priv in
+          let len_Font_DICT_INDEX = calculate_index_length_of_array (calculate_encoded_dict_length ~is_fixed_int:true) fdarray in
+          let len_Private = sum_of_array (calculate_encoded_dict_length ~is_fixed_int:true) privarray in
+          let zoffset_Private  = zoffset_Font_DICT_INDEX + len_Font_DICT_INDEX in
+          let zoffset_LSubrs_INDEX = zoffset_Private + len_Private in
 
-          pairarray |> Array.fold_left (fun (i, offset_priv_next, offset_lsubr_next) pair ->
-            match pair with
+          fdpairs_sub |> Array.fold_left (fun (i, offset_priv_next, offset_lsubr_next) fdpair ->
+            match fdpair with
             | (fd, Some(priv, lsubropt)) ->
                 let len_thispriv = (calculate_encoded_dict_length ~is_fixed_int:true) priv in
                 let fdnew = fix_private_offset len_thispriv offset_priv_next fd in
@@ -6250,16 +6254,16 @@ module Encode = struct
             | (_, None) ->
                 (i + 1, offset_priv_next, offset_lsubr_next)
 
-          ) (0, zoffset_priv_start, zoffset_lsubr_start) |> ignore;
+          ) (0, zoffset_Private, zoffset_LSubrs_INDEX) |> ignore;
 
           let (fdarraynew, privarraynew, lsubrarraynew) = extract_pairarray pairarray in
-          let dictmapnew = dictmap |> fix_fd_related_offset zoffset_fdidx zoffset_fdsel in
-          return (dictmapnew, Some(fdmappingnew), fdarraynew, privarraynew, lsubrarraynew)
+          let dict_Top = dict_Top |> fix_fd_related_offset zoffset_Font_DICT_INDEX zoffset_FDSelect in
+          return (dict_Top, Some(fdmapping_sub), fdarraynew, privarraynew, lsubrarraynew)
 
-    end >>= fun (dictmap, fdselect, fdarray, privarray, lsubrarray) ->
+    end >>= fun (dictmap, fdmappingopt, fdarray, privarray, lsubrarray) ->
 
     (* -- Header: -- *)
-    enc_copy_direct     d enc offset_CFF len_header >>= fun () ->
+    enc_copy_direct     d enc offset_CFF len_Header >>= fun () ->
     (* -- Name INDEX: -- *)
     enc_index_singleton enc enc_direct (String.length name) name >>= fun () ->
     (* -- Top DICT INDEX: -- *)
@@ -6273,15 +6277,15 @@ module Encode = struct
     enc_charset_identity enc numGlyphs >>= fun () ->
     (* -- FDSelect (CIDFonts only): -- *)
     begin
-      match fdselect with
-      | None      -> return ()
-      | Some(arr) -> enc_fdselect_format0 enc arr
+      match fdmappingopt with
+      | None            -> return ()
+      | Some(fdmapping) -> enc_fdselect_format0 enc fdmapping
     end >>= fun () ->
     (* -- CharStrings INDEX: -- *)
     enc_index enc enc_direct (Array.map (fun rg -> (rg.glyph_data, rg.glyph_data_length)) glypharr) >>= fun () ->
     (* -- Font DICT INDEX (CIDFonts only): -- *)
     begin
-      match fdselect with
+      match fdmappingopt with
       | None      -> return ()
       | Some(_)   -> enc_index enc (enc_dict ~is_fixed_int:true) (make_elem_len_pair_of_array (calculate_encoded_dict_length ~is_fixed_int:true) fdarray)
     end >>= fun () ->
