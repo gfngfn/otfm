@@ -5512,13 +5512,39 @@ module Encode = struct
 
 
   let enc_dict ~is_fixed_int enc dictmap =
-    DictMap.fold (fun k vlst res ->
-      res >>= fun () ->
+    let enc_dict_entry k vlst =
       vlst |> List.fold_left (fun res v ->
         res >>= fun () ->
         enc_dict_element ~is_fixed_int enc (Value(v))
       ) (return ()) >>= fun () ->
       enc_dict_element ~is_fixed_int enc (Key(k))
+    in
+
+    (* -- ROS or SyntheticBase operator should be the beginning of the DICT. [CFF p.17] -- *)
+    let ros_key = LongKey(30) in
+    let syntheticbase_key = LongKey(20) in
+    let beginning =
+      if DictMap.mem ros_key dictmap then
+        Some(ros_key)
+      else if DictMap.mem syntheticbase_key dictmap then
+        Some(syntheticbase_key)
+      else
+        None
+    in
+    begin
+      match beginning with
+      | None ->
+          return dictmap
+
+      | Some(key) ->
+          enc_dict_entry key (DictMap.find key dictmap) >>= fun () ->
+          return (DictMap.remove key dictmap)
+
+    end >>= fun dictmap ->
+
+    DictMap.fold (fun k vlst res ->
+      res >>= fun () ->
+      enc_dict_entry k vlst
     ) dictmap (return ())
 
 
