@@ -6142,7 +6142,7 @@ module Encode = struct
             if IntSet.mem i used_set then
               (CharStringData(offset, len))
             else
-              (CharStringData(offset, 0))
+              (CharStringData(offset + len - 1, 1))
                 (* --
                    just sets to 0 the designation of the data length
                    and does not modify the Subrs INDEX data itself;
