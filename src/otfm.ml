@@ -6144,10 +6144,12 @@ module Encode = struct
             else
               (CharStringData(offset + len - 1, 1))
                 (* --
-                   just sets to 0 the designation of the data length
+                   just sets to 1 the designation of the data length
                    and does not modify the Subrs INDEX data itself;
                    the modification of the Subrs INDEX
                    is performed by `enc_charstring_data`.
+                   (NOTE: some applications require that
+                            the data length is more than 0.)
                    -- *)
           )
     in
