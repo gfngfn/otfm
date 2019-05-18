@@ -12,12 +12,12 @@ let reverse_some opts =
   aux [] opts
 
 
-let make d gidlst =
+let make d cffinfo gidlst =
 
 (* -- generates the subset of the glyph table -- *)
   gidlst |> List.fold_left (fun res gid ->
     res >>= fun rgacc ->
-    Otfm.get_raw_glyph d gid >>= fun rg ->
+    Otfm.get_raw_glyph d cffinfo gid >>= fun rg ->
     return (rg :: rgacc)
   ) (return []) >>= fun rgacc ->
   match reverse_some rgacc with
@@ -25,10 +25,21 @@ let make d gidlst =
       return None
 
   | Some(rglst) ->
-      Otfm.Encode.truetype_outline_tables rglst >>= fun info ->
+      let encf =
+        match cffinfo with
+        | None          -> Otfm.Encode.truetype_outline_tables
+        | Some(cffinfo) -> Otfm.Encode.cff_outline_tables d cffinfo
+      in
+      encf rglst >>= fun (info, gdata) ->
       let rawtbl_hmtx = info.Otfm.Encode.hmtx in
-      let rawtbl_glyf = info.Otfm.Encode.glyf in
-      let rawtbl_loca = info.Otfm.Encode.loca in
+      let (glyph_tables, oltype) =
+        match gdata with
+        | TrueTypeGlyph(rawtbl_glyf, rawtbl_loca) ->
+            ([rawtbl_glyf; rawtbl_loca], Otfm.Encode.TrueTypeOutline)
+
+        | CFFGlyph(rawtbl_cff) ->
+            ([rawtbl_cff]              , Otfm.Encode.CFFData)
+      in
 
     (* -- updates the 'maxp' table -- *)
       Otfm.maxp d >>= fun maxp ->
@@ -37,7 +48,7 @@ let make d gidlst =
           Otfm.maxp_num_glyphs = info.Otfm.Encode.number_of_glyphs;
         }
       in
-      Otfm.Encode.maxp maxpnew >>= fun rawtbl_maxp ->
+      Otfm.Encode.maxp oltype maxpnew >>= fun rawtbl_maxp ->
 
     (* -- updates the 'head' table -- *)
       Otfm.head d >>= fun head ->
@@ -67,13 +78,14 @@ let make d gidlst =
     (* -- 'cmap' table -- *)
       Otfm.Encode.empty_cmap () >>= fun rawtbl_cmap ->
 
-      Otfm.Encode.make_font_file [
-        rawtbl_cmap;
-        rawtbl_head;
-        rawtbl_hhea;
-        rawtbl_maxp;
-        rawtbl_hmtx;
-        rawtbl_loca;
-        rawtbl_glyf;
-      ] >>= fun data ->
+      let common_tables =
+        [
+          rawtbl_cmap;
+          rawtbl_head;
+          rawtbl_hhea;
+          rawtbl_maxp;
+          rawtbl_hmtx;
+        ]
+      in
+      Otfm.Encode.make_font_file oltype (common_tables @ glyph_tables) >>= fun data ->
       return (Some(data))

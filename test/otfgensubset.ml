@@ -63,7 +63,7 @@ let main () =
     | Otfm.TrueTypeCollection(_) -> err (`Msg "unsupported TTC")
   end >>= fun d ->
 
-  OtfSubset.make d gidlst >>= function
+  OtfSubset.make d None(* TrueType *) gidlst >>= function
   | None ->
       print_endline "None";
       return ()
