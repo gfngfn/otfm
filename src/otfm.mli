@@ -219,14 +219,9 @@ type error =
   | `Invalid_cp_range                 of int * int
   | `Invalid_postscript_name          of string
   | `Unexpected_eoi                   of error_ctx
-(* added by T. Suwa: *)
+(* The following were added by T. Suwa: *)
   | `Inconsistent_length_of_coverage  of error_ctx
   | `Inconsistent_length_of_class
-(*
-  | `Missing_required_script_tag      of string
-  | `Missing_required_langsys_tag     of string
-  | `Missing_required_feature_tag     of string
-*)
   | `Invalid_lookup_order             of int
   | `Invalid_feature_index            of int
   | `Invalid_feature_params           of int
@@ -403,19 +398,20 @@ type loc_format =
   | ShortLocFormat
   | LongLocFormat
 
-type head =
-  { head_font_revision : WideInt.t;
-    head_flags : int;
-    head_units_per_em : int;
-    head_created : WideInt.t;  (** Unix timestamp. *)
-    head_modified : WideInt.t; (** Unix timestamp. *)
-    head_xmin : int;
-    head_ymin : int;
-    head_xmax : int;
-    head_ymax : int;
-    head_mac_style : int;
-    head_lowest_rec_ppem : int;
-    head_index_to_loc_format : loc_format; }
+type head = {
+  head_font_revision       : WideInt.t;
+  head_flags               : int;
+  head_units_per_em        : int;
+  head_created             : WideInt.t;  (** Unix timestamp. *)
+  head_modified            : WideInt.t;  (** Unix timestamp. *)
+  head_xmin                : int;
+  head_ymin                : int;
+  head_xmax                : int;
+  head_ymax                : int;
+  head_mac_style           : int;
+  head_lowest_rec_ppem     : int;
+  head_index_to_loc_format : loc_format;
+}
 (** The type for representing
     {{:https://www.microsoft.com/typography/otspec/head.htm}head} tables. *)
 
@@ -424,17 +420,18 @@ val head : decoder -> (head, error) result
 
 (** {2:hhea hhea table} *)
 
-type hhea =
-  { hhea_ascender : int;
-    hhea_descender : int;
-    hhea_line_gap : int;
-    hhea_advance_width_max : int;
-    hhea_min_left_side_bearing : int;
-    hhea_min_right_side_bearing : int;
-    hhea_xmax_extent : int;
-    hhea_caret_slope_rise : int;
-    hhea_caret_slope_run : int;
-    hhea_caret_offset : int; }
+type hhea = {
+  hhea_ascender               : int;
+  hhea_descender              : int;
+  hhea_line_gap               : int;
+  hhea_advance_width_max      : int;
+  hhea_min_left_side_bearing  : int;
+  hhea_min_right_side_bearing : int;
+  hhea_xmax_extent            : int;
+  hhea_caret_slope_rise       : int;
+  hhea_caret_slope_run        : int;
+  hhea_caret_offset           : int;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/hhea.htm}hhea} tables. *)
 
@@ -443,8 +440,7 @@ val hhea : decoder -> (hhea, error) result
 
 (** {2:hmtx hmtx table} *)
 
-val hmtx :
-  decoder -> ('a -> glyph_id -> int -> int -> 'a) -> 'a -> ('a, error) result
+val hmtx : decoder -> ('a -> glyph_id -> int -> int -> 'a) -> 'a -> ('a, error) result
 (** [hmtx d f acc] folds over the horizontal metrics of the font by
     reading the
     {{:https://www.microsoft.com/typography/otspec/hmtx.htm}hmtx}
@@ -455,21 +451,22 @@ val hmtx :
 
 (** {2:maxp max table} *)
 
-type maxp =
-  { maxp_num_glyphs : int;
-    maxp_max_points : int;
-    maxp_max_contours : int;
-    maxp_max_composite_points : int;
-    maxp_max_composite_contours : int;
-    maxp_max_zones : int;
-    maxp_max_twilight_points : int;
-    maxp_max_storage : int;
-    maxp_max_function_defs : int;
-    maxp_max_instruction_defs : int;
-    maxp_max_stack_elements : int;
-    maxp_max_size_of_instructions : int;
-    maxp_max_component_elements : int;
-    maxp_max_component_depth : int; }
+type maxp = {
+  maxp_num_glyphs               : int;
+  maxp_max_points               : int;
+  maxp_max_contours             : int;
+  maxp_max_composite_points     : int;
+  maxp_max_composite_contours   : int;
+  maxp_max_zones                : int;
+  maxp_max_twilight_points      : int;
+  maxp_max_storage              : int;
+  maxp_max_function_defs        : int;
+  maxp_max_instruction_defs     : int;
+  maxp_max_stack_elements       : int;
+  maxp_max_size_of_instructions : int;
+  maxp_max_component_elements   : int;
+  maxp_max_component_depth      : int;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/maxp.htm}maxp} tables. *)
 
@@ -481,8 +478,7 @@ val maxp : decoder -> (maxp, error) result
 type lang = string
 (** The type for {{:http://tools.ietf.org/html/bcp47}BCP 47} language tags. *)
 
-val name :
-  decoder -> ('a -> int -> lang -> string -> 'a) -> 'a -> ('a, error) result
+val name : decoder -> ('a -> int -> lang -> string -> 'a) -> 'a -> ('a, error) result
 (** [name d f acc] folds over the name records of the font by
     reading the {{:https://www.microsoft.com/typography/otspec/name.htm}name}
     table. [f] is applied on each name id entry with [f acc' nid lang name]
@@ -502,43 +498,44 @@ val name :
 
 (** {2:os2 OS/2 table} *)
 
-type os2 =
-  { os2_x_avg_char_width : int;
-    os2_us_weight_class : int;
-    os2_us_width_class : int;
-    os2_fs_type : int;
-    os2_y_subscript_x_size : int;
-    os2_y_subscript_y_size : int;
-    os2_y_subscript_x_offset : int;
-    os2_y_subscript_y_offset : int;
-    os2_y_superscript_x_size : int;
-    os2_y_superscript_y_size : int;
-    os2_y_superscript_x_offset : int;
-    os2_y_superscript_y_offset : int;
-    os2_y_strikeout_size : int;
-    os2_y_strikeout_position : int;
-    os2_family_class : int;
-    os2_panose : string; (** 10 bytes *)
-    os2_ul_unicode_range1 : WideInt.t;
-    os2_ul_unicode_range2 : WideInt.t;
-    os2_ul_unicode_range3 : WideInt.t;
-    os2_ul_unicode_range4 : WideInt.t;
-    os2_ach_vend_id : WideInt.t;
-    os2_fs_selection : int;
-    os2_us_first_char_index : int;
-    os2_us_last_char_index : int;
-    os2_s_typo_ascender : int;
-    os2_s_type_descender : int;
-    os2_s_typo_linegap : int;
-    os2_us_win_ascent : int;
-    os2_us_win_descent : int;
-    os2_ul_code_page_range_1 : WideInt.t option;
-    os2_ul_code_page_range_2 : WideInt.t option;
-    os2_s_x_height : int option;
-    os2_s_cap_height : int option;
-    os2_us_default_char : int option;
-    os2_us_break_char : int option;
-    os2_us_max_context : int option; }
+type os2 = {
+  os2_x_avg_char_width       : int;
+  os2_us_weight_class        : int;
+  os2_us_width_class         : int;
+  os2_fs_type                : int;
+  os2_y_subscript_x_size     : int;
+  os2_y_subscript_y_size     : int;
+  os2_y_subscript_x_offset   : int;
+  os2_y_subscript_y_offset   : int;
+  os2_y_superscript_x_size   : int;
+  os2_y_superscript_y_size   : int;
+  os2_y_superscript_x_offset : int;
+  os2_y_superscript_y_offset : int;
+  os2_y_strikeout_size       : int;
+  os2_y_strikeout_position   : int;
+  os2_family_class           : int;
+  os2_panose                 : string;  (** 10 bytes *)
+  os2_ul_unicode_range1      : WideInt.t;
+  os2_ul_unicode_range2      : WideInt.t;
+  os2_ul_unicode_range3      : WideInt.t;
+  os2_ul_unicode_range4      : WideInt.t;
+  os2_ach_vend_id            : WideInt.t;
+  os2_fs_selection           : int;
+  os2_us_first_char_index    : int;
+  os2_us_last_char_index     : int;
+  os2_s_typo_ascender        : int;
+  os2_s_type_descender       : int;
+  os2_s_typo_linegap         : int;
+  os2_us_win_ascent          : int;
+  os2_us_win_descent         : int;
+  os2_ul_code_page_range_1   : WideInt.t option;
+  os2_ul_code_page_range_2   : WideInt.t option;
+  os2_s_x_height             : int option;
+  os2_s_cap_height           : int option;
+  os2_us_default_char        : int option;
+  os2_us_break_char          : int option;
+  os2_us_max_context         : int option;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/os2.htm}OS/2} tables. *)
 
@@ -547,10 +544,11 @@ val os2 : decoder -> (os2, error) result
 
 (** {2:kern kern table} *)
 
-type kern_info =
-  { kern_dir : [ `H | `V ];
-    kern_kind : [ `Min | `Kern ];
-    kern_cross_stream : bool; }
+type kern_info = {
+  kern_dir          : [ `H | `V ];
+  kern_kind         : [ `Min | `Kern ];
+  kern_cross_stream : bool;
+}
 (** The type for kerning (sub)table information. *)
 
 val kern : decoder ->
@@ -832,59 +830,53 @@ type math_kern = math_value_record list * math_value_record list
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/math.htm}MathKern} tables. *)
 
-type math_kern_info_record =
-  {
-    top_right_math_kern    : math_kern option;
-    top_left_math_kern     : math_kern option;
-    bottom_right_math_kern : math_kern option;
-    bottom_left_math_kern  : math_kern option;
-  }
+type math_kern_info_record = {
+  top_right_math_kern    : math_kern option;
+  top_left_math_kern     : math_kern option;
+  bottom_right_math_kern : math_kern option;
+  bottom_left_math_kern  : math_kern option;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/math.htm}MathKernInfoRecord} tables. *)
 
-type math_glyph_info =
-  {
-    math_italics_correction    : (glyph_id * math_value_record) list;
-    math_top_accent_attachment : (glyph_id * math_value_record) list;
-    math_kern_info             : (glyph_id * math_kern_info_record) list;
-  }
+type math_glyph_info = {
+  math_italics_correction    : (glyph_id * math_value_record) list;
+  math_top_accent_attachment : (glyph_id * math_value_record) list;
+  math_kern_info             : (glyph_id * math_kern_info_record) list;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/math.htm}MathGlyphInfo} tables. *)
 
-type glyph_part_record =
-  {
-    glyph_id_for_part      : glyph_id;
-    start_connector_length : int;
-    end_connector_length   : int;
-    full_advance           : int;
-    part_flags             : int;
-  }
+type glyph_part_record = {
+  glyph_id_for_part      : glyph_id;
+  start_connector_length : int;
+  end_connector_length   : int;
+  full_advance           : int;
+  part_flags             : int;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/math.htm}GlyphPartRecord} tables. *)
 
-type math_glyph_construction =
-  {
-    glyph_assembly                 : (math_value_record * glyph_part_record list) option;
-    math_glyph_variant_record_list : (glyph_id * int) list;
-  }
+type math_glyph_construction = {
+  glyph_assembly                 : (math_value_record * glyph_part_record list) option;
+  math_glyph_variant_record_list : (glyph_id * int) list;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/math.htm}MathGlyphConstruction} tables. *)
 
-type math_variants =
-  {
-    min_connector_overlap : int;
-    vert_glyph_assoc      : (glyph_id * math_glyph_construction) list;
-    horiz_glyph_assoc     : (glyph_id * math_glyph_construction) list;
-  }
+type math_variants = {
+  min_connector_overlap : int;
+  vert_glyph_assoc      : (glyph_id * math_glyph_construction) list;
+  horiz_glyph_assoc     : (glyph_id * math_glyph_construction) list;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/math.htm}MathVariants} tables. *)
 
-type math =
-  {
-    math_constants  : math_constants;
-    math_glyph_info : math_glyph_info;
-    math_variants   : math_variants;
-  }
+type math = {
+  math_constants  : math_constants;
+  math_glyph_info : math_glyph_info;
+  math_variants   : math_variants;
+}
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} tables. *)
 
@@ -892,37 +884,35 @@ val math : decoder -> (math option, error) result
 (** [math d] returns the whole information in the
     {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} table of [d]. *)
 
-type cff_cid_info =
-  {
-    registry          : string;
-    ordering          : string;
-    supplement        : int;
-    cid_font_version  : float;
-    cid_font_revision : int;
-    cid_font_type     : int;
-    cid_count         : int;
-  }
+type cff_cid_info = {
+  registry          : string;
+  ordering          : string;
+  supplement        : int;
+  cid_font_version  : float;
+  cid_font_revision : int;
+  cid_font_type     : int;
+  cid_count         : int;
+}
 
 type charstring_info
 
 type cff_first
 
-type cff_info =
-  {
-    cff_first           : cff_first;
-    font_name           : string;
-    is_fixed_pitch      : bool;
-    italic_angle        : int;
-    underline_position  : int;
-    underline_thickness : int;
-    paint_type          : int;
-    (* font_matrix : float * float * float * float; *)
-    font_bbox           : int * int * int * int;
-    stroke_width        : int;
-    cid_info            : cff_cid_info option;
-    number_of_glyphs    : int;
-    charstring_info     : charstring_info;
-  }
+type cff_info = {
+  cff_first           : cff_first;
+  font_name           : string;
+  is_fixed_pitch      : bool;
+  italic_angle        : int;
+  underline_position  : int;
+  underline_thickness : int;
+  paint_type          : int;
+  (* font_matrix : float * float * float * float; *)
+  font_bbox           : int * int * int * int;
+  stroke_width        : int;
+  cid_info            : cff_cid_info option;
+  number_of_glyphs    : int;
+  charstring_info     : charstring_info;
+}
 
 val cff : decoder -> (cff_info option, error) result
 
@@ -937,54 +927,30 @@ type cspoint = csx * csy
 type stem_argument = string  (* temporary *)
 
 type parsed_charstring =
-  | HStem of int * int * cspoint list
-      (* -- hstem (1) -- *)
-  | VStem of int * int * cspoint list
-      (* -- vstem (3) -- *)
-  | VMoveTo of int
-      (* -- vmoveto (4) -- *)
-  | RLineTo of cspoint list
-      (* -- rlineto (5) -- *)
-  | HLineTo of int list
-      (* -- hlineto (6) -- *)
-  | VLineTo of int list
-      (* -- vlineto (7) -- *)
-  | RRCurveTo of (cspoint * cspoint * cspoint) list
-      (* -- rrcurveto (8) *)
-  | HStemHM of int * int * cspoint list
-      (* -- hstemhm (18) -- *)
-  | HintMask of stem_argument
-      (* -- hintmask (19) -- *)
-  | CntrMask of stem_argument
-      (* -- cntrmask (20) -- *)
-  | RMoveTo of cspoint
-      (* -- rmoveto (21) -- *)
-  | HMoveTo of int
-      (* -- hmoveto (22) -- )*)
-  | VStemHM of int * int * cspoint list
-      (* -- vstemhm (23) -- *)
-  | VVCurveTo of csx option * (csy * cspoint * csy) list
-      (* -- vvcurveto (26) -- *)
-  | HHCurveTo of csy option * (csx * cspoint * csx) list
-      (* -- hhcurveto (27) -- *)
-  | VHCurveTo of (int * cspoint * int) list * int option
-      (* -- vhcurveto (30) -- *)
-  | HVCurveTo of (int * cspoint * int) list * int option
-      (* -- hvcurveto (31) -- *)
-  | Flex of cspoint * cspoint * cspoint * cspoint * cspoint * cspoint * int
-      (* -- flex (12 35) -- *)
-  | HFlex of int * cspoint * int * int * int * int
-      (* -- hflex (12 34) -- *)
-  | HFlex1 of cspoint * cspoint * int * int * cspoint * int
-      (* -- hflex1 (12 36) -- *)
-  | Flex1 of cspoint * cspoint * cspoint * cspoint * cspoint * int
-      (* -- flex1 (12 37) -- *)
-
+  | HStem     of int * int * cspoint list                                         (** hstem (1) *)
+  | VStem     of int * int * cspoint list                                         (** vstem (3) *)
+  | VMoveTo   of int                                                              (** vmoveto (4) *)
+  | RLineTo   of cspoint list                                                     (** rlineto (5) *)
+  | HLineTo   of int list                                                         (** hlineto (6) *)
+  | VLineTo   of int list                                                         (** vlineto (7) *)
+  | RRCurveTo of (cspoint * cspoint * cspoint) list                               (** rrcurveto (8) *)
+  | HStemHM   of int * int * cspoint list                                         (** hstemhm (18) *)
+  | HintMask  of stem_argument                                                    (** hintmask (19) *)
+  | CntrMask  of stem_argument                                                    (** cntrmask (20) *)
+  | RMoveTo   of cspoint                                                          (** rmoveto (21) *)
+  | HMoveTo   of int                                                              (** hmoveto (22) *)
+  | VStemHM   of int * int * cspoint list                                         (** vstemhm (23) *)
+  | VVCurveTo of csx option * (csy * cspoint * csy) list                          (** vvcurveto (26) *)
+  | HHCurveTo of csy option * (csx * cspoint * csx) list                          (** hhcurveto (27) *)
+  | VHCurveTo of (int * cspoint * int) list * int option                          (** vhcurveto (30) *)
+  | HVCurveTo of (int * cspoint * int) list * int option                          (** hvcurveto (31) *)
+  | Flex      of cspoint * cspoint * cspoint * cspoint * cspoint * cspoint * int  (** flex (12 35) *)
+  | HFlex     of int * cspoint * int * int * int * int                            (** hflex (12 34) *)
+  | HFlex1    of cspoint * cspoint * int * int * cspoint * int                    (** hflex1 (12 36) *)
+  | Flex1     of cspoint * cspoint * cspoint * cspoint * cspoint * int            (** flex1 (12 37) *)
 
 val pp_parsed_charstring : Format.formatter -> parsed_charstring -> unit
-(*
-val pp_charstring_element : Format.formatter -> charstring_element -> unit  (* temporary *)
-*)
+
 val charstring : charstring_info -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
 
 type path_element =
@@ -1051,7 +1017,7 @@ module Encode : sig
 
   val truetype_outline_tables : raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
-  val cff_outline_tables      : decoder -> cff_info -> raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+  val cff_outline_tables : decoder -> cff_info -> raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
 end
 
