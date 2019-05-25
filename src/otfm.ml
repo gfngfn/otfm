@@ -314,10 +314,10 @@ type decoder_state =
   | Start
   | Ready
 
-type glyf_pos =
+type 'a cache =
   | Untouched
-  | Nonexistent
-  | AlreadyGot of int
+  | AlreadyGot of 'a
+
 
 type decoder =
   {
@@ -329,7 +329,7 @@ type decoder =
     mutable flavour             : flavour;                    (* decoded flavour.           *)
     mutable tables              : (tag * int * int) list;     (* decoded table records.     *)
     mutable loca_pos_and_format : (int * loc_format) option;  (* for TTF fonts, lazy init.  *)
-    mutable glyf_pos            : glyf_pos;                 (* for TTF fonts, lazy init.  *)
+    mutable glyf_pos            : (int option) cache;         (* for TTF fonts, lazy init.  *)
     mutable buf                 : Buffer.t;                   (* internal buffer.           *)
   }
 
@@ -964,23 +964,19 @@ type glyph_descr =
 
 let init_glyf d () : (int option) ok =
   match d.glyf_pos with
-  | AlreadyGot(pos) ->
-      return (Some(pos))
-
-  | Nonexistent ->
-      return None
+  | AlreadyGot(posopt) ->
+      return posopt
 
   | Untouched ->
       begin
-        seek_table Tag.glyf d () >>= function
-        | None ->
-            d.glyf_pos <- Nonexistent;
-            return None
-
-        | Some(_) ->
-            let pos = d.i_pos in
-            d.glyf_pos <- AlreadyGot(pos);
-            return (Some(pos))
+        seek_table Tag.glyf d () >>= fun lenopt ->
+        let posopt =
+          match lenopt with
+          | None    -> None
+          | Some(_) -> Some(d.i_pos)
+        in
+        d.glyf_pos <- AlreadyGot(posopt);
+        return posopt
       end
 
 
