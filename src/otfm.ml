@@ -318,7 +318,6 @@ type 'a cache =
   | Untouched
   | AlreadyGot of 'a
 
-
 type decoder =
   {
     i                           : string;                     (* input data.                *)
@@ -327,7 +326,7 @@ type decoder =
     mutable state               : decoder_state;              (* decoder state.             *)
     mutable ctx                 : error_ctx;                  (* the current error context. *)
     mutable flavour             : flavour;                    (* decoded flavour.           *)
-    mutable tables              : (tag * int * int) list;     (* decoded table records.     *)
+    mutable tables              : ((tag * int * int) list) cache;     (* decoded table records.     *)
     mutable loca_pos_and_format : (int * loc_format) option;  (* for TTF fonts, lazy init.  *)
     mutable glyf_pos            : (int option) cache;         (* for TTF fonts, lazy init.  *)
     mutable buf                 : Buffer.t;                   (* internal buffer.           *)
@@ -357,8 +356,15 @@ let seek_pos pos d =
     begin d.i_pos <- pos; return () end
 
 
+let get_table_list d =
+  match d.tables with
+  | Untouched          -> assert false  (* -- must be initialized first -- *)
+  | AlreadyGot(tables) -> tables
+
+
 let seek_table tag d () =
-  match List.find_opt (fun (t, _, _) -> tag = t) d.tables with
+  let tables = get_table_list d in
+  match List.find_opt (fun (t, _, _) -> tag = t) tables with
   | Some((_, pos, len)) ->
       if pos > d.i_max then
         err (`Invalid_offset(`Table(tag), pos))
@@ -369,7 +375,8 @@ let seek_table tag d () =
           return (Some(len))
         end
 
-  | None -> return None
+  | None ->
+      return None
 
 
 let seek_required_table tag d () =
@@ -626,14 +633,25 @@ let d_fetch_long offset_origin df d =
   return (offset, res)
 
 
+(* --
+   Assuming that the current position is immediately before the table records,
+   `d_table_records` reads all of them and caches them in `d.tables`.
+   -- *)
 let rec d_table_records d count =
-  if count = 0 then begin d.state <- Ready; return () end else
-    d_uint32     d >>= fun tag ->
-    d_skip 4     d >>= fun () ->
-    d_uint32_int d >>= fun off ->
-    d_uint32_int d >>= fun len ->
-    d.tables <- (tag, off, len) :: d.tables;
-    d_table_records d (count - 1)
+  let rec aux tableacc count =
+    if count = 0 then begin
+      d.state <- Ready;
+      d.tables <- AlreadyGot(Alist.to_list tableacc);
+      return ()
+    end else
+      d_uint32     d >>= fun tag ->
+      d_skip 4     d >>= fun () ->
+      d_uint32_int d >>= fun off ->
+      d_uint32_int d >>= fun len ->
+      let table = (tag, off, len) in
+      aux (Alist.extend tableacc table) (count - 1)
+  in
+  aux Alist.empty count
 
 
 let d_version is_ttc_element d =
@@ -671,7 +689,7 @@ let decoder src =
       state = Start;
       ctx = `Offset_table;
       flavour = TTF_OT;    (* dummy initial value *)
-      tables = [];         (* dummy initial value *)
+      tables = Untouched;         (* dummy initial value *)
       loca_pos_and_format = None; glyf_pos = Untouched;
       buf = Buffer.create 253; }
   in
@@ -723,12 +741,14 @@ let flavour d =
 
 
 let table_list d =
-  let tags d = List.rev_map (fun (t, _, _) -> t) d.tables in
+  let tables = get_table_list d in
+  let tags d = List.rev_map (fun (t, _, _) -> t) tables in
   init_decoder d >>= fun () -> return (tags d)
 
 
 let table_mem d tag =
-  let exists_tag tag d = List.exists (fun (t, _, _) -> tag = t) d.tables in
+  let tables = get_table_list d in
+  let exists_tag tag d = List.exists (fun (t, _, _) -> tag = t) tables in
   init_decoder d >>= fun () -> return (exists_tag tag d)
 
 
