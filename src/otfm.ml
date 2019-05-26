@@ -315,8 +315,8 @@ type decoder_state =
   | Ready
 
 type 'a cache =
-  | Untouched
-  | AlreadyGot of 'a
+  | Uncached
+  | Cached of 'a
 
 type decoder =
   {
@@ -358,8 +358,8 @@ let seek_pos pos d =
 
 let get_table_list d =
   match d.tables with
-  | Untouched          -> assert false  (* -- must be initialized first -- *)
-  | AlreadyGot(tables) -> tables
+  | Uncached       -> assert false  (* -- must be initialized first -- *)
+  | Cached(tables) -> tables
 
 
 let seek_table tag d () =
@@ -641,7 +641,7 @@ let rec d_table_records d count =
   let rec aux tableacc count =
     if count = 0 then begin
       d.state <- Ready;
-      d.tables <- AlreadyGot(Alist.to_list tableacc);
+      d.tables <- Cached(Alist.to_list tableacc);
       return ()
     end else
       d_uint32     d >>= fun tag ->
@@ -689,8 +689,8 @@ let decoder src =
       state = Start;
       ctx = `Offset_table;
       flavour = TTF_OT;    (* dummy initial value *)
-      tables = Untouched;         (* dummy initial value *)
-      loca_pos_and_format = None; glyf_pos = Untouched;
+      tables = Uncached;
+      loca_pos_and_format = None; glyf_pos = Uncached;
       buf = Buffer.create 253; }
   in
   d_version false d >>= fun is_single ->
@@ -984,10 +984,10 @@ type glyph_descr =
 
 let init_glyf d () : (int option) ok =
   match d.glyf_pos with
-  | AlreadyGot(posopt) ->
+  | Cached(posopt) ->
       return posopt
 
-  | Untouched ->
+  | Uncached ->
       begin
         seek_table Tag.glyf d () >>= fun lenopt ->
         let posopt =
@@ -995,7 +995,7 @@ let init_glyf d () : (int option) ok =
           | None    -> None
           | Some(_) -> Some(d.i_pos)
         in
-        d.glyf_pos <- AlreadyGot(posopt);
+        d.glyf_pos <- Cached(posopt);
         return posopt
       end
 
