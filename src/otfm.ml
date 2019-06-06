@@ -327,7 +327,7 @@ type decoder =
     mutable ctx                 : error_ctx;                  (* the current error context. *)
     mutable flavour             : flavour;                    (* decoded flavour.           *)
     mutable tables              : ((tag * int * int) list) cache;     (* decoded table records.     *)
-    mutable loca_pos_and_format : (int * loc_format) option;  (* for TTF fonts, lazy init.  *)
+    mutable loca_pos_and_format : ((int * loc_format) option) cache;  (* for TTF fonts, lazy init.  *)
     mutable glyf_pos            : (int option) cache;         (* for TTF fonts, lazy init.  *)
     mutable buf                 : Buffer.t;                   (* internal buffer.           *)
   }
@@ -690,7 +690,7 @@ let decoder src =
       ctx = `Offset_table;
       flavour = TTF_OT;    (* dummy initial value *)
       tables = Uncached;
-      loca_pos_and_format = None; glyf_pos = Uncached;
+      loca_pos_and_format = Uncached; glyf_pos = Uncached;
       buf = Buffer.create 253; }
   in
   d_version false d >>= fun is_single ->
@@ -1686,20 +1686,20 @@ let d_loca_format d () =
   | i -> err_loca_format d i
 
 
-let init_loca d () =
+let init_loca d () : ((int * loc_format) option) ok =
   match d.loca_pos_and_format with
-  | Some(pair) ->
-      return pair
+  | Cached(locaopt) ->
+      return locaopt
 
-  | None ->
+  | Uncached ->
       seek_required_table Tag.head d () >>= fun () ->
       d_skip 50 d >>=
       d_loca_format d >>= fun locfmt ->
       seek_required_table Tag.loca d () >>= fun () ->
       let pos = d.i_pos in
       let pair = (pos, locfmt) in
-      d.loca_pos_and_format <- Some(pair);
-      return pair
+      d.loca_pos_and_format <- Cached(Some(pair));
+      return (Some(pair))
 
 
 let loca_short pos_loca d gid =
@@ -1720,10 +1720,16 @@ let loca_long pos_loca d gid =
 
 let loca_with_length d gid =
   init_decoder d >>=
-  init_loca d >>= fun (pos_loca, locfmt) ->
-  match locfmt with
-  | ShortLocFormat -> loca_short pos_loca d gid
-  | LongLocFormat  -> loca_long pos_loca d gid
+  init_loca d >>= function
+  | None ->
+      return None
+
+  | Some((pos_loca, locfmt)) ->
+      begin
+        match locfmt with
+        | ShortLocFormat -> loca_short pos_loca d gid
+        | LongLocFormat  -> loca_long pos_loca d gid
+      end
 
 
 let loca d gid =
