@@ -634,8 +634,8 @@ let d_fetch_long offset_origin df d =
 
 
 (* --
-   Assuming that the current position is immediately before the table records,
-   `d_table_records` reads all of them and caches them in `d.tables`.
+   Assuming that the current position is immediately before the first table record,
+   `d_table_records` reads all of the table records and caches them in `d.tables`.
    -- *)
 let rec d_table_records d count =
   let rec aux tableacc count =
