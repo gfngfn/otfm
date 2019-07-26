@@ -33,6 +33,10 @@ end = struct
 
 end
 
+(* -- Unicode code points -- *)
+
+let is_cp i = 0x0000 <= i && i <= 0x10FFFF
+let pp_cp ppf cp = Format.fprintf ppf "U+%04X" cp
 
 (* Error strings *)
 

@@ -16,6 +16,14 @@ module Alist :
     val to_list : 'a t -> 'a list
   end
 
+val is_cp : int -> bool
+(** [is_cp i] is [true] if [i] is an
+    Unicode {{:http://unicode.org/glossary/#code_point}code point}. *)
+
+val pp_cp : Format.formatter -> int -> unit
+(** [pp_cp ppf cp] prints an unspecified representation of [cp] on [ppf]. *)
+
+
 val err_invalid_tag : string -> string
 
 val unsafe_chr : int -> char
