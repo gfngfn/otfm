@@ -352,8 +352,12 @@ let set_ctx d ctx            = begin d.ctx <- ctx; end
 let miss d count = d.i_max - d.i_pos + 1 < count
 let cur_pos d = d.i_pos
 let seek_pos pos d =
-  if pos > d.i_max then err (`Invalid_offset(d.ctx, pos)) else
-    begin d.i_pos <- pos; return () end
+  if pos > d.i_max then
+    err (`Invalid_offset(d.ctx, pos))
+  else begin
+    d.i_pos <- pos;
+    return ()
+  end
 
 
 let get_table_list d =
@@ -368,12 +372,11 @@ let seek_table tag d () =
   | Some((_, pos, len)) ->
       if pos > d.i_max then
         err (`Invalid_offset(`Table(tag), pos))
-      else
-        begin
-          set_ctx d (`Table(tag));
-          d.i_pos <- pos;
-          return (Some(len))
-        end
+      else begin
+        set_ctx d (`Table(tag));
+        d.i_pos <- pos;
+        return (Some(len))
+      end
 
   | None ->
       return None
