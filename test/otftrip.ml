@@ -54,7 +54,10 @@ let pp_cmap ppf d =
   | Error(_) as e -> e
   | Ok(subtbllst) ->
       subtbllst |> List.fold_left (fun _ subtbl ->
-        let (pid, eid, fmt) = Otfm.cmap_subtable_ids subtbl in
+        let ids = Otfm.cmap_subtable_ids subtbl in
+        let pid = ids.platform_id in
+        let eid = ids.encoding_id in
+        let fmt = ids.format in
         pp ppf "@,@[<v1>@[<1>(cmap-source@ (platform-id %d)@ (encoding-id %d)\
               @ (format %d)" pid eid fmt;
         let res = Otfm.cmap_subtable subtbl (pp_binding ppf) () in

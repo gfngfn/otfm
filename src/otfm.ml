@@ -140,14 +140,27 @@ let d_cmap_12 d f acc = d_cmap_seg `Glyph_range d f acc
 let d_cmap_13 d f acc = d_cmap_seg `Glyph d f acc
 
 
-type cmap_subtable = (decoder * int) * (int * int * int)
+type cmap_subtable_ids = {
+  platform_id : int;
+  encoding_id : int;
+  format      : int;
+}
+
+type cmap_subtable = (decoder * int) * cmap_subtable_ids
 
 
 let rec d_encoding_record offset_cmap d : cmap_subtable ok =
   d_uint16 d >>= fun platformID ->
   d_uint16 d >>= fun encodingID ->
   d_fetch_long offset_cmap d_uint16 d >>= fun (offset, format) ->
-  return ((d, offset), (platformID, encodingID, format))
+  let ids =
+    {
+      platform_id = platformID;
+      encoding_id = encodingID;
+      format      = format;
+    }
+  in
+  return ((d, offset), ids)
 
 
 let cmap d : (cmap_subtable list) ok =
@@ -158,7 +171,10 @@ let cmap d : (cmap_subtable list) ok =
   confirm (version = 0) (e_version d (!% version)) >>= fun () ->
   d_list (d_encoding_record offset_cmap) d >>= fun rawsubtbllst ->
   let subtbllst =
-    rawsubtbllst |> List.filter (fun (_, (pid, eid, format)) ->
+    rawsubtbllst |> List.filter (fun (_, ids) ->
+      let pid = ids.platform_id in
+      let eid = ids.encoding_id in
+      let format = ids.format in
       Format.fprintf debugfmt "(pid, eid, format = %d, %d, %d)" pid eid format;  (* for debug *)
       match format with
       | (4 | 12 | 13) ->
@@ -179,7 +195,7 @@ let cmap d : (cmap_subtable list) ok =
   return subtbllst
 
 
-let cmap_subtable_ids (subtbl : cmap_subtable) : int * int * int =
+let cmap_subtable_ids (subtbl : cmap_subtable) : cmap_subtable_ids =
   let (_, ids) = subtbl in
   ids
 

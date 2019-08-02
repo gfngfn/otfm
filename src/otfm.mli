@@ -63,6 +63,12 @@ type map_kind = [ `Glyph | `Glyph_range ]
     {- [`Glyph_range], [u0] maps to [gid], [u0 + 1] to [gid + 1], ...
        and [u1] to [gid + (u1 - u0)]}} *)
 
+type cmap_subtable_ids = {
+  platform_id : int;
+  encoding_id : int;
+  format      : int;
+}
+
 type cmap_subtable
 (** The type for cmap subtables. *)
 
@@ -70,8 +76,7 @@ val cmap : decoder -> (cmap_subtable list, error) result
 (** [cmap d] returns the list of all
     {{:https://www.microsoft.com/typography/otspec/cmap.htm}cmap} subtables in the font. *)
 
-val cmap_subtable_ids : cmap_subtable -> int * int * int
-(** [cmap_subtable_ids st] returns the triple (platformID, encodingID, subtable format) of the subtable [st]. *)
+val cmap_subtable_ids : cmap_subtable -> cmap_subtable_ids
 
 val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 'a) -> 'a -> ('a, error) result
 (** [cmap_subtable st f acc] folds over a mapping from unicode
