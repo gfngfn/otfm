@@ -4,8 +4,6 @@
    %%NAME%% %%VERSION%%
   ---------------------------------------------------------------------------*)
 
-open Result
-
 open OtfTypes
 open OtfUtils
 
@@ -123,18 +121,18 @@ let pp_head ppf d =
   match Otfm.head d with
   | Error _ as e -> e
   | Ok h ->
-      pp ppf "@,(font-revision 0x%08LX)" (WideInt.to_int64 h.Otfm.head_font_revision);
-      pp ppf "@,(flags 0x%04X)" h.Otfm.head_flags;
-      pp ppf "@,(units-per-em %d)" h.Otfm.head_units_per_em;
-      pp ppf "@,(created %a)" WideInt.pp h.Otfm.head_created;
-      pp ppf "@,(modified %a)" WideInt.pp h.Otfm.head_modified;
-      pp ppf "@,(xmin %d)" h.Otfm.head_xmin;
-      pp ppf "@,(ymin %d)" h.Otfm.head_ymin;
-      pp ppf "@,(xmax %d)" h.Otfm.head_xmax;
-      pp ppf "@,(ymax %d)" h.Otfm.head_ymax;
-      pp ppf "@,(mac-style 0x%04X)" h.Otfm.head_mac_style;
-      pp ppf "@,(lowest_rec_ppem %d)" h.Otfm.head_lowest_rec_ppem;
-      pp ppf "@,(index_to_loc_format %a)" pp_loc_format h.Otfm.head_index_to_loc_format;
+      pp ppf "@,(font-revision 0x%08LX)" (WideInt.to_int64 h.head_font_revision);
+      pp ppf "@,(flags 0x%04X)" h.head_flags;
+      pp ppf "@,(units-per-em %d)" h.head_units_per_em;
+      pp ppf "@,(created %a)" WideInt.pp h.head_created;
+      pp ppf "@,(modified %a)" WideInt.pp h.head_modified;
+      pp ppf "@,(xmin %d)" h.head_xmin;
+      pp ppf "@,(ymin %d)" h.head_ymin;
+      pp ppf "@,(xmax %d)" h.head_xmax;
+      pp ppf "@,(ymax %d)" h.head_ymax;
+      pp ppf "@,(mac-style 0x%04X)" h.head_mac_style;
+      pp ppf "@,(lowest_rec_ppem %d)" h.head_lowest_rec_ppem;
+      pp ppf "@,(index_to_loc_format %a)" pp_loc_format h.head_index_to_loc_format;
       pp ppf ")@]";
       Ok ()
 
@@ -142,16 +140,16 @@ let pp_hhea ppf d = match Otfm.hhea d with
 | Error _ as e -> e
 | Ok h ->
     pp ppf "@,@[<v1>(hhea";
-    pp ppf "@,(ascender %d)" h.Otfm.hhea_ascender;
-    pp ppf "@,(descender %d)" h.Otfm.hhea_descender;
-    pp ppf "@,(line-gap %d)" h.Otfm.hhea_line_gap;
-    pp ppf "@,(advance-width-max %d)" h.Otfm.hhea_advance_width_max;
-    pp ppf "@,(min-left-side-bearing %d)" h.Otfm.hhea_min_left_side_bearing;
-    pp ppf "@,(min-right-side-bearing %d)" h.Otfm.hhea_min_right_side_bearing;
-    pp ppf "@,(xmax-extent %d)" h.Otfm.hhea_xmax_extent;
-    pp ppf "@,(caret-slope-rise %d)" h.Otfm.hhea_caret_slope_rise;
-    pp ppf "@,(caret-slope-run %d)" h.Otfm.hhea_caret_slope_run;
-    pp ppf "@,(caret-offset %d)" h.Otfm.hhea_caret_offset;
+    pp ppf "@,(ascender %d)" h.hhea_ascender;
+    pp ppf "@,(descender %d)" h.hhea_descender;
+    pp ppf "@,(line-gap %d)" h.hhea_line_gap;
+    pp ppf "@,(advance-width-max %d)" h.hhea_advance_width_max;
+    pp ppf "@,(min-left-side-bearing %d)" h.hhea_min_left_side_bearing;
+    pp ppf "@,(min-right-side-bearing %d)" h.hhea_min_right_side_bearing;
+    pp ppf "@,(xmax-extent %d)" h.hhea_xmax_extent;
+    pp ppf "@,(caret-slope-rise %d)" h.hhea_caret_slope_rise;
+    pp ppf "@,(caret-slope-run %d)" h.hhea_caret_slope_run;
+    pp ppf "@,(caret-offset %d)" h.hhea_caret_offset;
     pp ppf ")@]";
     Ok ()
 

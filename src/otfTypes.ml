@@ -93,6 +93,7 @@ type map_kind = [ `Glyph | `Glyph_range ]
     {- [`Glyph_range], [u0] maps to [gid], [u0 + 1] to [gid + 1], ...
        and [u1] to [gid + (u1 - u0)]}} *)
 
+
 (** {2:glyf glyf table} *)
 
 type glyf_loc = int (* FIXME; should be hidden *)
@@ -114,3 +115,41 @@ type glyph_descr =
   | `Composite of glyph_composite_descr ] * (int * int * int * int)
 (** The type for glyph descriptions. A simple or composite descriptions
     with the glyph's [(minx, miny, maxx, maxy)]'s bounding box. *)
+
+
+(** {2:head head table} *)
+
+type head = {
+  head_font_revision       : WideInt.t;
+  head_flags               : int;
+  head_units_per_em        : int;
+  head_created             : WideInt.t;  (** Unix timestamp. *)
+  head_modified            : WideInt.t;  (** Unix timestamp. *)
+  head_xmin                : int;
+  head_ymin                : int;
+  head_xmax                : int;
+  head_ymax                : int;
+  head_mac_style           : int;
+  head_lowest_rec_ppem     : int;
+  head_index_to_loc_format : loc_format;
+}
+(** The type for representing
+    {{:https://www.microsoft.com/typography/otspec/head.htm}head} tables. *)
+
+
+(** {2:hhea hhea table} *)
+
+type hhea = {
+  hhea_ascender               : int;
+  hhea_descender              : int;
+  hhea_line_gap               : int;
+  hhea_advance_width_max      : int;
+  hhea_min_left_side_bearing  : int;
+  hhea_min_right_side_bearing : int;
+  hhea_xmax_extent            : int;
+  hhea_caret_slope_rise       : int;
+  hhea_caret_slope_run        : int;
+  hhea_caret_offset           : int;
+}
+(** The type for
+    {{:https://www.microsoft.com/typography/otspec/hhea.htm}hhea} tables. *)

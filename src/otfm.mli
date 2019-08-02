@@ -26,8 +26,6 @@
     {e {{:https://www.microsoft.com/typography/otspec/default.htm}
         The OpenType Specification}}, 2009.}} *)
 
-open Result
-
 open OtfTypes
 open OtfUtils
 open OtfDecBasic
@@ -70,8 +68,8 @@ val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 
     scalar values to glyph ids by reading the cmap subtable [st].
 
     {b Limitations.} Only the format 13 (last resort font), format 12
-    (UCS-4) and format 4 (UCS-2) cmap table formats are supported.
-*)
+    (UCS-4) and format 4 (UCS-2) cmap table formats are supported. *)
+
 
 (** {2:glyf glyf table} *)
 
@@ -80,44 +78,14 @@ val glyf : decoder -> glyf_loc -> (glyph_descr option, error) result
     the {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf}
     table. Glyph locations are obtainted via {!loca}. *)
 
-(** {2:head head table} *)
 
-type head = {
-  head_font_revision       : WideInt.t;
-  head_flags               : int;
-  head_units_per_em        : int;
-  head_created             : WideInt.t;  (** Unix timestamp. *)
-  head_modified            : WideInt.t;  (** Unix timestamp. *)
-  head_xmin                : int;
-  head_ymin                : int;
-  head_xmax                : int;
-  head_ymax                : int;
-  head_mac_style           : int;
-  head_lowest_rec_ppem     : int;
-  head_index_to_loc_format : loc_format;
-}
-(** The type for representing
-    {{:https://www.microsoft.com/typography/otspec/head.htm}head} tables. *)
+(** {2:head head table} *)
 
 val head : decoder -> (head, error) result
 (** [head d] is the head table. *)
 
-(** {2:hhea hhea table} *)
 
-type hhea = {
-  hhea_ascender               : int;
-  hhea_descender              : int;
-  hhea_line_gap               : int;
-  hhea_advance_width_max      : int;
-  hhea_min_left_side_bearing  : int;
-  hhea_min_right_side_bearing : int;
-  hhea_xmax_extent            : int;
-  hhea_caret_slope_rise       : int;
-  hhea_caret_slope_run        : int;
-  hhea_caret_offset           : int;
-}
-(** The type for
-    {{:https://www.microsoft.com/typography/otspec/hhea.htm}hhea} tables. *)
+(** {2:hhea hhea table} *)
 
 val hhea : decoder -> (hhea, error) result
 (** [hhea d] is the hhea table. *)

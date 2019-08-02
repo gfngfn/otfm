@@ -376,22 +376,6 @@ let glyf d loc =
 
 (* -- head table -- *)
 
-type head = {
-  head_font_revision       : wint;
-  head_flags               : int;
-  head_units_per_em        : int;
-  head_created             : wint;
-  head_modified            : wint;
-  head_xmin                : int;
-  head_ymin                : int;
-  head_xmax                : int;
-  head_ymax                : int;
-  head_mac_style           : int;
-  head_lowest_rec_ppem     : int;
-  head_index_to_loc_format : loc_format;
-}
-
-
 let head d =
   init_decoder d >>=
   seek_required_table Tag.head d >>= fun () ->
@@ -425,20 +409,6 @@ let head d =
 
 
 (* -- hhea table -- *)
-
-type hhea = {
-  hhea_ascender               : int;
-  hhea_descender              : int;
-  hhea_line_gap               : int;
-  hhea_advance_width_max      : int;
-  hhea_min_left_side_bearing  : int;
-  hhea_min_right_side_bearing : int;
-  hhea_xmax_extent            : int;
-  hhea_caret_slope_rise       : int;
-  hhea_caret_slope_run        : int;
-  hhea_caret_offset           : int;
-}
-
 
 let hhea d =
   init_decoder d >>=
