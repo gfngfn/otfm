@@ -54,10 +54,10 @@ let make d cffinfo gidlst =
       Otfm.head d >>= fun head ->
       let headnew =
         { head with
-          head_xmin = info.Otfm.Encode.xmin;
-          head_ymin = info.Otfm.Encode.ymin;
-          head_xmax = info.Otfm.Encode.xmax;
-          head_ymax = info.Otfm.Encode.ymax;
+          head_xmin                = info.Otfm.Encode.xmin;
+          head_ymin                = info.Otfm.Encode.ymin;
+          head_xmax                = info.Otfm.Encode.xmax;
+          head_ymax                = info.Otfm.Encode.ymax;
           head_index_to_loc_format = info.Otfm.Encode.index_to_loc_format;
         }
       in
@@ -67,10 +67,10 @@ let make d cffinfo gidlst =
       Otfm.hhea d >>= fun hhea ->
       let hheanew =
         { hhea with
-          hhea_advance_width_max = info.Otfm.Encode.advance_width_max;
-          hhea_min_left_side_bearing = info.Otfm.Encode.min_left_side_bearing;
+          hhea_advance_width_max      = info.Otfm.Encode.advance_width_max;
+          hhea_min_left_side_bearing  = info.Otfm.Encode.min_left_side_bearing;
           hhea_min_right_side_bearing = info.Otfm.Encode.min_right_side_bearing;
-          hhea_xmax_extent = info.Otfm.Encode.x_max_extent;
+          hhea_xmax_extent            = info.Otfm.Encode.x_max_extent;
         }
       in
       Otfm.Encode.hhea info.Otfm.Encode.number_of_h_metrics hheanew >>= fun rawtbl_hhea ->
