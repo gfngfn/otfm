@@ -213,17 +213,6 @@ let cmap_subtable (subtbl : cmap_subtable) f acc =
 
 (* -- glyf table -- *)
 
-type glyf_loc = int
-
-type glyph_simple_descr = (bool * int * int) list list
-
-type glyph_composite_descr =
-  (glyph_id * (int * int) * (float * float * float * float) option) list
-
-type glyph_descr =
-  [ `Simple of glyph_simple_descr
-  | `Composite of glyph_composite_descr ] * (int * int * int * int)
-
 
 let d_rev_end_points d ccount =
   let rec loop i acc =

@@ -75,26 +75,6 @@ val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 
 
 (** {2:glyf glyf table} *)
 
-type glyf_loc
-(** The type for glyph locations. See {!loca} table. *)
-
-type glyph_simple_descr = (bool * int * int) list list
-(** The type for simple glyph descriptions. Lists of contours, contours
-    are list of points with a boolean indicating whether the point is
-    on or off curve. *)
-
-type glyph_composite_descr =
-  (glyph_id * (int * int) * (float * float * float * float) option) list
-(** The type for glyph composites. A list of components made of
-    a glyph id, a translation and an optional linear transform [a b c d]
-    (column major). *)
-
-type glyph_descr =
-  [ `Simple of glyph_simple_descr
-  | `Composite of glyph_composite_descr ] * (int * int * int * int)
-(** The type for glyph descriptions. A simple or composite descriptions
-    with the glyph's [(minx, miny, maxx, maxy)]'s bounding box. *)
-
 val glyf : decoder -> glyf_loc -> (glyph_descr option, error) result
 (** [glyf d loc] is the glyph descroption located at [loc] by reading
     the {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf}
