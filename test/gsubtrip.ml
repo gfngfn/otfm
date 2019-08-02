@@ -197,9 +197,9 @@ let () =
     | Invalid_argument(_) -> begin print_endline "illegal argument"; exit 1 end
   in
   match main filename script type3tag type4tag gpostag with
-  | Error(#Otfm.error as e) ->
+  | Error(#OtfError.t as e) ->
       Format.printf "@[<v2>error1@,";
-      Format.printf "@[%a@]@]@," Otfm.pp_error e
+      Format.printf "@[%a@]@]@," OtfError.pp e
 
   | Error(`Msg(msg)) ->
       Format.printf "@[<v2>error2@,";

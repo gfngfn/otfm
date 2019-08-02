@@ -17,7 +17,7 @@ let str = Format.sprintf
 let exec = Filename.basename Sys.executable_name
 let log msg = Format.eprintf ("%s: " ^^ msg ^^ "@.") exec
 let log_err inf e =
-  Format.eprintf "@[<2>%s:%s:@ %a@]@." exec inf Otfm.pp_error e
+  Format.eprintf "@[<2>%s:%s:@ %a@]@." exec inf OtfError.pp e
 
 let string_of_file inf =
   try
@@ -251,7 +251,7 @@ let pp_tables ppf inf ts d =
 let pp_single_font ppf inf d =
     let ( >>= ) x f = match x with
     | Ok v -> f v
-    | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
+    | Error e -> Error (e :> [ OtfError.t | `Reported | `Msg of string ])
     in
       OtfDecBasic.flavour d >>= fun f ->
       let fs =
@@ -279,7 +279,7 @@ let pp_file ppf inf =
   | Ok s ->
     let ( >>= ) x f = match x with
     | Ok v -> f v
-    | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
+    | Error e -> Error (e :> [ OtfError.t | `Reported | `Msg of string ])
     in
     OtfDecBasic.decoder (`String s) >>= function
     | TrueTypeCollection(ttc) ->
@@ -341,7 +341,7 @@ let ps_file inf = match string_of_file inf with
     | Ok(OtfDecBasic.SingleDecoder(d)) ->
         begin
           match OtfDecBasic.postscript_name d with
-          | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
+          | Error e -> Error (e :> [ OtfError.t | `Reported | `Msg of string ])
           | Ok None -> Printf.printf "%s: <none>\n" inf; Ok ()
           | Ok (Some n) -> Printf.printf "%s: %s\n" inf n; Ok ()
         end
@@ -376,7 +376,7 @@ let main () =
   let fold_cmd cmd err fn = match cmd fn with
   | Error `Reported -> true
   | Error (`Msg e) -> log "%s" e; true
-  | Error (#Otfm.error as e) -> log_err fn e; true
+  | Error (#OtfError.t as e) -> log_err fn e; true
   | Ok () -> err
   in
   let err = List.fold_left (fold_cmd cmd) false files in

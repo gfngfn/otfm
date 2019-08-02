@@ -1,14 +1,6 @@
 
 
-let ( >>= ) x f =
-  match x with
-  | Ok(v)    -> f v
-  | Error(e) -> Error(e :> [ Otfm.error | `Msg of string ])
-
-let return v = Ok(v)
-
-let err e = Error(e)
-
+open TestUtil
 
 let string_of_file inf =
   try
@@ -79,5 +71,5 @@ let _ =
   let res = main () in
   match res with
   | Error(`Msg(s))             -> print_endline s; exit 1
-  | Error(#Otfm.error as oerr) -> Format.printf "%a\n" Otfm.pp_error oerr; exit 1
+  | Error(#OtfError.t as oerr) -> Format.printf "%a\n" OtfError.pp oerr; exit 1
   | Ok(())                     -> print_endline "finished"

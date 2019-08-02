@@ -2,10 +2,9 @@
 open OtfTypes
 open OtfUtils
 
+open TestUtil
 
 let pp = Format.fprintf
-
-type error = [ Otfm.error | `Msg of string ]
 
 
 let string_of_file inf =
@@ -170,5 +169,5 @@ let main fmt =
 let () =
   match main Format.std_formatter with
   | Ok()                    -> ()
-  | Error(#Otfm.error as e) -> Format.eprintf "@[%a@]@." Otfm.pp_error e
+  | Error(#OtfError.t as e) -> Format.eprintf "@[%a@]@." OtfError.pp e
   | Error(`Msg msg)         -> Format.eprintf "@[%s@]@." msg

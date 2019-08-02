@@ -1,7 +1,7 @@
 (* This code is in the public domain *)
 
 let otf_postscript_name bytes =
-  let print_error e = Format.eprintf "@[%a@]@." Otfm.pp_error e in
+  let print_error e = Format.eprintf "@[%a@]@." OtfError.pp e in
   let print_name d =
     match OtfDecBasic.postscript_name d with
        | Error e -> print_error e

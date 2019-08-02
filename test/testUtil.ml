@@ -24,7 +24,7 @@ let string_of_file inf =
   | Sys_error e -> (Error (`Msg e))
 
 
-type error = [ Otfm.error | `Msg of string ]
+type error = [ OtfError.t | `Msg of string ]
 
 
 let ( >>= ) x f =
