@@ -1,4 +1,4 @@
-open OtfUtils
+open OtfTypes
 
 type t = WideInt.t
 
@@ -8,6 +8,7 @@ let v_wOFF = !%% 0x774F4646L
 let v_OTTO = !%% 0x4F54544FL
 let v_ttcf = !%% 0x74746366L
 let v_true = !%% 0x74727565L (* -- may happen in the wild. -- *)
+let v_1_0  = !%% 0x00010000L
 
 (* -- Required common tables tags -- *)
 
@@ -67,13 +68,13 @@ let math = !%% 0x4d415448L
 let of_bytes s =
   let open WideInt in
     if String.length s <> 4 then
-      invalid_arg(err_invalid_tag s)
+      None
     else
       let b0 = of_byte (String.get s 0) in
       let b1 = of_byte (String.get s 1) in
       let b2 = of_byte (String.get s 2) in
       let b3 = of_byte (String.get s 3) in
-      (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3
+      Some((b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3)
 
 
 let to_bytes t =
@@ -85,4 +86,4 @@ let to_wide_int x = x
 let of_wide_int x = x
 
 let compare = Pervasives.compare
-let pp ppf t = pp ppf "'%s'" (to_bytes t)
+let pp ppf t = Format.fprintf ppf "'%s'" (to_bytes t)

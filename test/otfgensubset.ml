@@ -58,9 +58,9 @@ let main () =
     | Some(src) -> string_of_file src
   end >>= fun s ->
   begin
-    Otfm.decoder (`String(s)) >>= function
-    | Otfm.SingleDecoder(d)      -> return d
-    | Otfm.TrueTypeCollection(_) -> err (`Msg "unsupported TTC")
+    OtfDecBasic.decoder (`String(s)) >>= function
+    | SingleDecoder(d)      -> return d
+    | TrueTypeCollection(_) -> err (`Msg "unsupported TTC")
   end >>= fun d ->
 
   OtfSubset.make d None(* TrueType *) gidlst >>= function

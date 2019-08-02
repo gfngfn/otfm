@@ -28,150 +28,16 @@
 
 open Result
 
-module WideInt : sig
-  type t
-  val ( lsl ) : t -> int -> t
-  val ( lsr ) : t -> int -> t
-  val ( lor ) : t -> t -> t
-  val ( land ) : t -> t -> t
-  val ( mod ) : t -> t -> t
-  val add : t -> t -> t
-  val sub : t -> t -> t
-  val of_int : int -> t
-  val to_int : t -> int
-  val of_int64 : int64 -> t
-  val to_int64 : t -> int64
-  val of_byte : char -> t
-  val to_byte : t -> char
-  val is_in_int32 : t -> bool
-  val is_in_uint32 : t -> bool
-  val is_in_int64 : t -> bool
-  val is_neg : t -> bool
-  val pp : Format.formatter -> t -> unit
-end
+open OtfTypes
+open OtfUtils
+open OtfDecBasic
+
 
 (** {1 Tags} *)
 
-type tag
+type tag = OtfTag.t
 (** The type for OpenType tags. *)
 
-(** Tags.
-
-    OpenType tags are four bytes identifiers. *)
-module Tag : sig
-
-  (** {1 Tags} *)
-
-  type t = tag
-  (** The type for OpenType tags. *)
-
-  (** {1 Table tags} *)
-
-  (** {2:req Required tables} *)
-
-  val cmap : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/cmap.htm}cmap} table. *)
-  val head : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/head.htm}head} table. *)
-  val hhea : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/hhea.htm}hhea} table. *)
-  val hmtx : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/hmtx.htm}hmtx} table. *)
-  val maxp : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/maxp.htm}maxp} table. *)
-  val name : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/name.htm}name} table. *)
-  val os2 : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/os2.htm}os2} table. *)
-  val post : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/post.htm}post} table. *)
-
-  (** {2 TTF font tables} *)
-
-  val cvt  : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/cvt.htm}cvt} table. *)
-  val fpgm : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/fpgm.htm}fpgm} table. *)
-  val glyf : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf} table. *)
-  val loca : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/loca.htm}loca} table. *)
-  val prep : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/prep.htm}prep} table. *)
-
-  (** {2 CFF font tables} *)
-
-  val cff  : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/cff.htm}CFF} table. *)
-  val vorg : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/vorg.htm}VORG} table. *)
-
-  (** {2 Bitmap glyph tables} *)
-
-  val ebdt : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/ebdt.htm}EBDT} table. *)
-
-  val eblc : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/eblc.htm}EBLC} table. *)
-
-  val ebsc : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/ebsc.htm}EBSC} table. *)
-
-  (** {2 Optional tables} *)
-
-  val dsig : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/dsig.htm}DSIG} table. *)
-  val gasp : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/gasp.htm}gasp} table. *)
-  val hdmx : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/hdmx.htm}hdmx} table. *)
-  val kern : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/kern.htm}kern} table. *)
-  val ltsh : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/ltsh.htm}LTSH} table. *)
-  val pclt : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/pclt.htm}PCLT} table. *)
-  val vdmx : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/vdmx.htm}VDMX} table. *)
-  val vhea : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/vhea.htm}vhea} table. *)
-  val vmtx : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/vmtx.htm}vmtx} table. *)
-
-  (** {2 Advanced typographic tables} *)
-
-  val base : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/base.htm}BASE} table. *)
-  val gdef : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/gdef.htm}GDEF} table. *)
-  val gpos : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/gpos.htm}GPOS} table. *)
-  val gsub : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/gsub.htm}GSUB} table. *)
-  val jstf : tag
-  (** The {{:https://www.microsoft.com/typography/otspec/jstf.htm}JSTF} table. *)
-
-  (** {1 Functions} *)
-
-  val of_bytes : string -> tag
-  (** [of_bytes s] is a tag corresponding to [s].
-      @raise Invalid_argument if [s] is not four byte long. *)
-
-  val to_bytes : tag -> string
-  (** [to_string t] is the tag as a four byte long string. *)
-
-  val to_wide_int : tag -> WideInt.t
-  (** [to_wide_int t] is the tag as a wide-range integer. *)
-
-  val of_wide_int : WideInt.t -> tag
-  (** [of_wide_int wi] is the tag from wide-range integer. *)
-
-  val compare : tag -> tag -> int
-  (** [compare t t'] is [Pervasives.compare t t'] *)
-
-  val pp : Format.formatter -> tag -> unit
-  (** [pp t] prints a textual representation of [t] on [ppf]. *)
-end
 
 (** {1 Unicode code points}
 
@@ -181,23 +47,6 @@ end
     {{:http://unicode.org/glossary/#code_point}code points} not
     {{:http://unicode.org/glossary/#unicode_scalar_value} scalar
     values}. *)
-
-type cp = int
-(** The type for Unicode
-    {{:http://unicode.org/glossary/#code_point}code points}, ranges
-    from [0x0000] to [0x10_FFFF]. Any code point returned by
-    [Otfm] is guaranteed to be in the range. *)
-
-type cp_range = cp * cp
-(** The type for Unicode code point ranges. Any range [(u0, u1)]
-    returned by [Otfm] has [u0 <= u1]. *)
-
-val is_cp : int -> bool
-(** [is_cp i] is [true] if [i] is an
-    Unicode {{:http://unicode.org/glossary/#code_point}code point}. *)
-
-val pp_cp : Format.formatter -> cp -> unit
-(** [pp_cp ppf cp] prints an unspecified representation of [cp] on [ppf]. *)
 
 (** {1 Decode} *)
 
@@ -269,28 +118,6 @@ type error =
 val pp_error : Format.formatter -> [< error] -> unit
 (** [pp_error ppf e] prints an uspecified representation of [e] on [ppf].*)
 
-type src = [ `String of string ]
-(** The type for input sources. *)
-
-type decoder
-(** The type for single OpenType font decoders. *)
-
-type ttc_element
-(** The type for TTC elements. *)
-
-type decoder_scheme =
-  | SingleDecoder      of decoder
-  | TrueTypeCollection of ttc_element list
-(** The type for OpenType font decoders, including those of TrueType Collection. *)
-
-val decoder_of_ttc_element : ttc_element -> (decoder, error) result
-
-val decoder : [< src ] -> (decoder_scheme, error) result
-(** [decoder src] is a decoder decoding from [src]. *)
-
-val decoder_src : decoder -> src
-(** [decoder_src d] is [d]'s input source. *)
-
 (** {1 Table decoding}
 
     These functions can be used in any order and are robust: when they
@@ -301,38 +128,7 @@ val decoder_src : decoder -> src
     {{:https://www.microsoft.com/typography/otspec/default.htm}
     specification} for details. *)
 
-type flavour = TTF_true | TTF_OT | CFF
-(** The type for OpenType flavours. *)
-
-val flavour : decoder -> (flavour, error) result
-(** [decode_flavour d] is the flavour of the font decoded by [d]. *)
-
-val table_list : decoder -> (tag list, error) result
-(** [table_list t] is the list of tables of the font decoded by [d]. *)
-
-val table_mem : decoder -> tag -> (bool, error) result
-(** [table_mem d t] is [true] if table [t] is in the font decoded by [d]. *)
-
-val table_raw : decoder -> tag -> (string option, error) result
-(** [table_raw d t] is the (unpadded) data of the table [t] as a
-    string if the table [t] exists. *)
-
-(** {2:convenience Convenience decodes}
-
-    These functions lookup data in the right table. *)
-
-val glyph_count : decoder -> (int, error) result
-(** [glyph_count d] is the number of glyphs in the font (bounded by [65535]). *)
-
-val postscript_name : decoder -> (string option, error) result
-(** [poscript_name d] is the PostScript name of [d]. Looks up and validates
-    as mandated by the OTF standard, don't rely on {!name} if you really
-    need this information. *)
-
 (** {2:cmap cmap table} *)
-
-type device_table = int * int * int * int
-(** The type for device tables. *)
 
 type glyph_id = int
 (** The type for glyph ids, from [0] to [65534]. *)
@@ -393,10 +189,6 @@ val glyf : decoder -> glyf_loc -> (glyph_descr option, error) result
     table. Glyph locations are obtainted via {!loca}. *)
 
 (** {2:head head table} *)
-
-type loc_format =
-  | ShortLocFormat
-  | LongLocFormat
 
 type head = {
   head_font_revision       : WideInt.t;

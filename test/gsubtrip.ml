@@ -1,5 +1,9 @@
 
+open OtfTypes
+open OtfUtils
+
 open TestUtil
+(* overwrites `>>=`, `return`, etc. *)
 
 
 type position =
@@ -131,8 +135,8 @@ let main filename script type3tag type4tag gpostag =
     | Ok(src)       -> src
     | Error(`Msg e) -> begin print_endline e; exit 1 end
   in
-  Otfm.decoder (`String(src)) >>= function
-  | Otfm.SingleDecoder(d) ->
+  OtfDecBasic.decoder (`String(src)) >>= function
+  | SingleDecoder(d) ->
       begin
         Format.printf "@[<v2>@,";
         Format.printf "finish initializing decoder@,";
@@ -143,7 +147,7 @@ let main filename script type3tag type4tag gpostag =
         return (type3ret, type4ret, gposret)
       end
 
-  | Otfm.TrueTypeCollection(_) ->
+  | TrueTypeCollection(_) ->
       let () = print_endline "TTC file" in
       return ([], [], [])
 

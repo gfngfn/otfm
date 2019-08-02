@@ -1,4 +1,11 @@
-open OtfUtils
+open OtfTypes
+
+(* -- Unicode code points -- *)
+
+let is_cp i = 0x0000 <= i && i <= 0x10FFFF
+let pp_cp ppf cp = Format.fprintf ppf "U+%04X" cp
+
+let pp = Format.fprintf
 
 module Tag = OtfTag
 
@@ -179,3 +186,8 @@ let pp ppf = function
     pp ppf "@[No@ glyph@ for@ encoding@]"
 | `Missing_head_table_for_encoding ->
     pp ppf "@[Missing@ 'head'@ table@ for@ encoding@]"
+
+
+(* Error strings *)
+
+let err_invalid_tag s = Printf.sprintf "invalid OpenType tag (%S)" s

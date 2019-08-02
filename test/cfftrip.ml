@@ -1,5 +1,7 @@
 
-open Result
+open OtfTypes
+open OtfUtils
+
 
 let pp = Format.fprintf
 
@@ -101,8 +103,8 @@ let main fmt =
     | Ok(src)       -> src
     | Error(`Msg e) -> begin print_endline e; exit 1 end
   in
-  Otfm.decoder (`String(src)) >>= function
-  | Otfm.SingleDecoder(d) ->
+  OtfDecBasic.decoder (`String(src)) >>= function
+  | SingleDecoder(d) ->
       begin
         print_endline "finish initializing decoder";
         Otfm.cff d >>= function
@@ -159,7 +161,7 @@ let main fmt =
                 Ok()
       end
 
-  | Otfm.TrueTypeCollection(_) ->
+  | TrueTypeCollection(_) ->
       begin
         print_endline "TrueType Collection";
         Ok()

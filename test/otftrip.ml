@@ -6,6 +6,11 @@
 
 open Result
 
+open OtfTypes
+open OtfUtils
+
+let pp_cp = OtfError.pp_cp
+
 let pp = Format.fprintf
 let str = Format.sprintf
 
@@ -38,7 +43,7 @@ let string_of_file inf =
 (* Table pretty printers *)
 
 let pp_cmap ppf d =
-  let pp_map ppf u gid = pp ppf "@,(%a %d)" Otfm.pp_cp u gid in
+  let pp_map ppf u gid = pp ppf "@,(%a %d)" pp_cp u gid in
   let pp_binding ppf () k (u0, u1) gid =
     match k with
     | `Glyph       -> for u = u0 to u1 do pp_map ppf u gid done
@@ -87,7 +92,7 @@ let pp_glyf ppf has_glyf d =
     List.iter (pp_component ppf) cs;
     pp ppf ")@]"
   in
-  match Otfm.glyph_count d with
+  match OtfDecBasic.glyph_count d with
   | Error _ as e -> e
   | Ok gc ->
       pp ppf "@,@[<v1>(glyf";
@@ -107,19 +112,19 @@ let pp_glyf ppf has_glyf d =
       loop 0
 
 let pp_loc_format ppf = function
-  | Otfm.ShortLocFormat -> pp ppf "SHORT"
-  | Otfm.LongLocFormat  -> pp ppf "LONG"
+  | ShortLocFormat -> pp ppf "SHORT"
+  | LongLocFormat  -> pp ppf "LONG"
 
 let pp_head ppf d =
   pp ppf "@,@[<v1>(head";
   match Otfm.head d with
   | Error _ as e -> e
   | Ok h ->
-      pp ppf "@,(font-revision 0x%08LX)" (Otfm.WideInt.to_int64 h.Otfm.head_font_revision);
+      pp ppf "@,(font-revision 0x%08LX)" (WideInt.to_int64 h.Otfm.head_font_revision);
       pp ppf "@,(flags 0x%04X)" h.Otfm.head_flags;
       pp ppf "@,(units-per-em %d)" h.Otfm.head_units_per_em;
-      pp ppf "@,(created %a)" Otfm.WideInt.pp h.Otfm.head_created;
-      pp ppf "@,(modified %a)" Otfm.WideInt.pp h.Otfm.head_modified;
+      pp ppf "@,(created %a)" WideInt.pp h.Otfm.head_created;
+      pp ppf "@,(modified %a)" WideInt.pp h.Otfm.head_modified;
       pp ppf "@,(xmin %d)" h.Otfm.head_xmin;
       pp ppf "@,(ymin %d)" h.Otfm.head_ymin;
       pp ppf "@,(xmax %d)" h.Otfm.head_xmax;
@@ -184,12 +189,12 @@ let pp_os2 ppf d =
       pp ppf "@,(y-strikeout-position %d)" o.Otfm.os2_y_strikeout_position;
       pp ppf "@,(family-class %d)" o.Otfm.os2_family_class;
       pp ppf "@,(panose \"%s\")" (String.escaped o.Otfm.os2_panose);
-      pp ppf "@,(ul-unicode-range1 %LX)" (Otfm.WideInt.to_int64 o.Otfm.os2_ul_unicode_range1);
-      pp ppf "@,(ul-unicode-range2 %LX)" (Otfm.WideInt.to_int64 o.Otfm.os2_ul_unicode_range2);
-      pp ppf "@,(ul-unicode-range3 %LX)" (Otfm.WideInt.to_int64 o.Otfm.os2_ul_unicode_range3);
-      pp ppf "@,(ul-unicode-range4 %LX)" (Otfm.WideInt.to_int64 o.Otfm.os2_ul_unicode_range4);
+      pp ppf "@,(ul-unicode-range1 %LX)" (WideInt.to_int64 o.Otfm.os2_ul_unicode_range1);
+      pp ppf "@,(ul-unicode-range2 %LX)" (WideInt.to_int64 o.Otfm.os2_ul_unicode_range2);
+      pp ppf "@,(ul-unicode-range3 %LX)" (WideInt.to_int64 o.Otfm.os2_ul_unicode_range3);
+      pp ppf "@,(ul-unicode-range4 %LX)" (WideInt.to_int64 o.Otfm.os2_ul_unicode_range4);
       pp ppf "@,(ach-vend-id %a)"
-        Otfm.Tag.pp (Otfm.Tag.of_wide_int o.Otfm.os2_ach_vend_id);
+        OtfTag.pp (OtfTag.of_wide_int o.Otfm.os2_ach_vend_id);
       pp ppf "@,(fs-selection %X)" o.Otfm.os2_fs_selection;
       pp ppf "@,(us-first-char-index %d)" o.Otfm.os2_us_first_char_index;
       pp ppf "@,(us-last-char-index %d)" o.Otfm.os2_us_last_char_index;
@@ -198,8 +203,8 @@ let pp_os2 ppf d =
       pp ppf "@,(s-typo-linegap %d)" o.Otfm.os2_s_typo_linegap;
       pp ppf "@,(us-win-ascent %d)" o.Otfm.os2_us_win_ascent;
       pp ppf "@,(us-win-descent %d)" o.Otfm.os2_us_win_descent;
-      pp ppf "@,(ul-code-page-range-1 %a)" (pp_opt Otfm.WideInt.pp) o.Otfm.os2_ul_code_page_range_1;
-      pp ppf "@,(ul-code-page-range-2 %a)" (pp_opt Otfm.WideInt.pp) o.Otfm.os2_ul_code_page_range_2;
+      pp ppf "@,(ul-code-page-range-1 %a)" (pp_opt WideInt.pp) o.Otfm.os2_ul_code_page_range_1;
+      pp ppf "@,(ul-code-page-range-2 %a)" (pp_opt WideInt.pp) o.Otfm.os2_ul_code_page_range_2;
       pp ppf "@,(s-x-height %a)" pp_oint o.Otfm.os2_s_x_height;
       pp ppf "@,(s-cap-height %a)" pp_oint o.Otfm.os2_s_cap_height;
       pp ppf "@,(us-default-char %a)" pp_oint o.Otfm.os2_us_default_char;
@@ -237,8 +242,8 @@ let pp_tables ppf inf ts d =
   pp_os2  ppf d >>= fun () ->
   pp_cmap ppf d >>= fun () ->
   pp_hmtx ppf d >>= fun () ->
-  pp_glyf ppf (List.mem Otfm.Tag.glyf ts) d >>= fun () ->
-  pp_kern ppf (List.mem Otfm.Tag.kern ts) d >>= fun () ->
+  pp_glyf ppf (List.mem OtfTag.glyf ts) d >>= fun () ->
+  pp_kern ppf (List.mem OtfTag.kern ts) d >>= fun () ->
   if !err then (Error `Reported) else Ok ()
 
 (* Commands *)
@@ -248,22 +253,22 @@ let pp_single_font ppf inf d =
     | Ok v -> f v
     | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
     in
-      Otfm.flavour d >>= fun f ->
+      OtfDecBasic.flavour d >>= fun f ->
       let fs =
         match f with
-        | Otfm.TTF_OT   -> "TTF-OpenType"
-        | Otfm.TTF_true -> "TTF-TrueType"
-        | Otfm.CFF      -> "CFF"
+        | TTF_OT   -> "TTF-OpenType"
+        | TTF_true -> "TTF-TrueType"
+        | CFF      -> "CFF"
       in
       pp ppf "@,@[<1>(flavor %s)@]" fs;
-      Otfm.postscript_name d >>= fun name ->
+      OtfDecBasic.postscript_name d >>= fun name ->
       let oname = match name with None -> "<none>" | Some n -> n in
       pp ppf "@,@[<1>(postscript-name %s)@]" oname;
-      Otfm.glyph_count d >>= fun glyph_count ->
+      OtfDecBasic.glyph_count d >>= fun glyph_count ->
       pp ppf "@,@[<1>(glyph-count %d)@]" glyph_count;
-      Otfm.table_list d >>= fun ts ->
+      OtfDecBasic.table_list d >>= fun ts ->
       pp ppf "@,@[<1>(tables ";
-      List.iter (fun t -> pp ppf "@ %a" Otfm.Tag.pp t) ts;
+      List.iter (fun t -> pp ppf "@ %a" OtfTag.pp t) ts;
       pp ppf ")@]";
       pp_tables ppf inf ts d
 
@@ -276,15 +281,15 @@ let pp_file ppf inf =
     | Ok v -> f v
     | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
     in
-    Otfm.decoder (`String s) >>= function
-    | Otfm.TrueTypeCollection(ttc) ->
+    OtfDecBasic.decoder (`String s) >>= function
+    | TrueTypeCollection(ttc) ->
         pp ppf "@[<v1>(@[<1>(file %S)@]" inf;
         pp ppf "@,@[<1>(TRUETYPE-COLLECTION %d)@]" (List.length ttc);
         ttc |> List.fold_left (fun res ttcelem ->
           res >>= fun i ->
-          Otfm.decoder_of_ttc_element ttcelem >>= fun d ->
+          OtfDecBasic.decoder_of_ttc_element ttcelem >>= fun d ->
           let name =
-            match Otfm.postscript_name d with
+            match OtfDecBasic.postscript_name d with
             | Error(_)       -> "<error>"
             | Ok(None)       -> "<none>"
             | Ok(Some(name)) -> name
@@ -296,7 +301,7 @@ let pp_file ppf inf =
         ) (Ok(0)) >>= fun _ ->
         pp ppf ")@]@.";
         Ok ()
-    | Otfm.SingleDecoder(d) ->
+    | SingleDecoder(d) ->
         pp ppf "@[<v1>(@[<1>(file %S)@]" inf;
         pp ppf "@,@[<1>(SINGLE-FONT)@]";
         pp_single_font ppf inf d >>= fun () ->
@@ -313,13 +318,13 @@ let dec_file inf = match string_of_file inf with
     in
     let kern_nop () _ = `Fold, () in
     let nop4 _ _ _ _ = () in
-    match Otfm.decoder (`String s) with
+    match OtfDecBasic.decoder (`String s) with
     | Error e -> log_err inf e; err := true; Error (`Msg("dec_file"))
-    | Ok(Otfm.TrueTypeCollection(_)) ->
+    | Ok(TrueTypeCollection(_)) ->
         Ok ()
-    | Ok(Otfm.SingleDecoder(d)) ->
-        Otfm.flavour d      >>= fun () ->
-        Otfm.table_list d   >>= fun () ->
+    | Ok(SingleDecoder(d)) ->
+        OtfDecBasic.flavour d      >>= fun () ->
+        OtfDecBasic.table_list d   >>= fun () ->
         Otfm.cmap d         >>= fun () ->
         Otfm.head d         >>= fun () ->
         Otfm.hhea d         >>= fun () ->
@@ -332,10 +337,10 @@ let dec_file inf = match string_of_file inf with
 let ps_file inf = match string_of_file inf with
 | Error _ as e -> e
 | Ok s ->
-    match Otfm.decoder (`String s) with
-    | Ok(Otfm.SingleDecoder(d)) ->
+    match OtfDecBasic.decoder (`String s) with
+    | Ok(OtfDecBasic.SingleDecoder(d)) ->
         begin
-          match Otfm.postscript_name d with
+          match OtfDecBasic.postscript_name d with
           | Error e -> Error (e :> [ Otfm.error | `Reported | `Msg of string])
           | Ok None -> Printf.printf "%s: <none>\n" inf; Ok ()
           | Ok (Some n) -> Printf.printf "%s: %s\n" inf n; Ok ()
