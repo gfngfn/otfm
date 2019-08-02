@@ -79,3 +79,16 @@ type cp = int
 type cp_range = cp * cp
 (** The type for Unicode code point ranges. Any range [(u0, u1)]
     returned by [Otfm] has [u0 <= u1]. *)
+
+type glyph_id = int
+(** The type for glyph ids, from [0] to [65534]. *)
+
+type map_kind = [ `Glyph | `Glyph_range ]
+(** The type for map kinds.
+
+    Determines how an unicode range [(u0, u1)] and a glyph id [gid]
+    must be interpreted in the folding function of {!cmap}.
+    {ul
+    {- [`Glyph] all characters in the range map to to [gid].}
+    {- [`Glyph_range], [u0] maps to [gid], [u0 + 1] to [gid + 1], ...
+       and [u1] to [gid + (u1 - u0)]}} *)

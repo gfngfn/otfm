@@ -44,9 +44,6 @@ let is_cp = OtfError.is_cp
 
 (* -- cmap table -- *)
 
-type glyph_id = int
-type map_kind = [ `Glyph | `Glyph_range ]
-
 let rec d_array el count i a d =
   if i = count then return a else
   el d >>= fun v ->

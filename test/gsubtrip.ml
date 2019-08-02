@@ -7,11 +7,11 @@ open TestUtil
 
 
 type position =
-  | Single1 of Otfm.glyph_id list * Otfm.value_record
-  | Pair1 of Otfm.glyph_id * (Otfm.glyph_id * Otfm.value_record * Otfm.value_record) list
+  | Single1 of glyph_id list * Otfm.value_record
+  | Pair1 of glyph_id * (glyph_id * Otfm.value_record * Otfm.value_record) list
   | Pair2 of Otfm.class_value * (Otfm.class_value * Otfm.value_record * Otfm.value_record) list
-  | MarkBase1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.base_record) list
-  | MarkMark1 of int * (Otfm.glyph_id * Otfm.mark_record) list * (Otfm.glyph_id * Otfm.mark2_record) list
+  | MarkBase1 of int * (glyph_id * Otfm.mark_record) list * (glyph_id * Otfm.base_record) list
+  | MarkMark1 of int * (glyph_id * Otfm.mark_record) list * (glyph_id * Otfm.mark2_record) list
 
 
 let skip gid _ = gid
