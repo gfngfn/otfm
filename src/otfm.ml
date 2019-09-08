@@ -4234,43 +4234,31 @@ let get_ttf_raw_glyph d gid =
 
 
 let get_cff_raw_glyph d cffinfo gid =
+  let blank_rawg =
+    {
+      old_glyph_id = gid;
+      glyph_aw = 0;
+      glyph_lsb = 0;
+      glyph_bbox = (0, 0, 0, 0);
+      glyph_data = "\014"; (* 14:endchar *)
+      glyph_data_length = 1;
+      glyph_data_offset = None;
+      glyph_composite_offsets = [];
+    }
+  in
   match charstring_absolute cffinfo.charstring_info gid with
   | Error(oerr) ->
      return None
 
   | Ok(None) ->
-      let rawg =
-        {
-          old_glyph_id = gid;
-          glyph_aw = 0;
-          glyph_lsb = 0;
-          glyph_bbox = (0, 0, 0, 0);
-          glyph_data = "";
-          glyph_data_length = 0;
-          glyph_data_offset = None;
-          glyph_composite_offsets = [];
-        }
-      in
-      return (Some(rawg))
+      return (Some(blank_rawg))
         (* needs reconsideration; maybe should emit an error *)
 
   | Ok(Some(pathlst)) ->
       begin
         match charstring_bbox pathlst with
         | None ->
-            let rawg =
-              {
-                old_glyph_id = gid;
-                glyph_aw = 0;
-                glyph_lsb = 0;
-                glyph_bbox = (0, 0, 0, 0);
-                glyph_data = "";
-                glyph_data_length = 0;
-                glyph_data_offset = None;
-                glyph_composite_offsets = [];
-              }
-            in
-            return (Some(rawg))
+            return (Some(blank_rawg))
 
         | Some(bbox_raw) ->
             let (_, _, _, offset_CharString_INDEX) = cffinfo.charstring_info in
