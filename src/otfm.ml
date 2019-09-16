@@ -4226,7 +4226,10 @@ let get_ttf_raw_glyph (dttf : ttf_decoder) (gid : glyph_id) : (ttf_raw_glyph opt
           return (Some(rawg))
 
 
-let get_cff_raw_glyph d cffinfo (gid : glyph_id) : (cff_raw_glyph option) ok =
+let get_cff_raw_glyph (dcff : cff_decoder) (gid : glyph_id) : (cff_raw_glyph option) ok =
+  let d = cff_common dcff in
+
+  cff dcff >>= fun cffinfo ->
   let blank_rawg =
     {
       old_glyph_id = gid;
@@ -5481,7 +5484,10 @@ module Encode = struct
                     (make_elem_len_pair_of_array get_charstring_length idx)) lsubrarray
 
 
-  let cff_outline_tables d cffinfo (glyphlst : raw_glyph list) =
+  let cff_outline_tables (dcff : cff_decoder) (glyphlst : raw_glyph list) =
+    let d = cff_common dcff in
+    cff dcff >>= fun cffinfo ->
+
     let numGlyphs = List.length glyphlst in
     if numGlyphs > 65536 then
       err (`Too_many_glyphs_for_encoding(numGlyphs))

@@ -15,15 +15,12 @@ let reverse_some opts =
 
 
 let make_cff (dcff : cff_decoder) (gidlst : glyph_id list) =
-  let d = cff_common dcff in
   let decoder = CFF(dcff) in
-
-  Otfm.cff dcff >>= fun cffinfo ->
 
 (* -- generates the subset of the glyph table -- *)
   gidlst |> List.fold_left (fun res gid ->
     res >>= fun rgacc ->
-    Otfm.get_cff_raw_glyph d cffinfo gid >>= fun rg ->
+    Otfm.get_cff_raw_glyph dcff gid >>= fun rg ->
     return (rg :: rgacc)
   ) (return []) >>= fun rgacc ->
   match reverse_some rgacc with
@@ -31,7 +28,7 @@ let make_cff (dcff : cff_decoder) (gidlst : glyph_id list) =
       return None
 
   | Some(rglst) ->
-      let encf = Otfm.Encode.cff_outline_tables d cffinfo in
+      let encf = Otfm.Encode.cff_outline_tables dcff in
       encf rglst >>= fun (info, gdata) ->
       let rawtbl_hmtx = info.Otfm.Encode.hmtx in
       let (glyph_tables, oltype) =

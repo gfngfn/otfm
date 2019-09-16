@@ -621,7 +621,7 @@ type cff_raw_glyph
 
 val get_ttf_raw_glyph : ttf_decoder -> glyph_id -> (ttf_raw_glyph option, error) result
 
-val get_cff_raw_glyph : common_decoder -> cff_info -> glyph_id -> (cff_raw_glyph option, error) result
+val get_cff_raw_glyph : cff_decoder -> glyph_id -> (cff_raw_glyph option, error) result
 
 module Encode : sig
 
@@ -672,7 +672,7 @@ module Encode : sig
 
   val truetype_outline_tables : ttf_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
-  val cff_outline_tables : common_decoder -> cff_info -> cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+  val cff_outline_tables : cff_decoder -> cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
 end
 
