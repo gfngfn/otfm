@@ -22,6 +22,12 @@ type 'a cache =
   | Uncached
   | Cached of 'a
 
+type table_record = {
+  table_tag    : tag;
+  table_offset : int;
+  table_length : int;
+}
+
 type common_decoder =
   {
     i                           : string;                     (* input data.                *)
@@ -29,7 +35,7 @@ type common_decoder =
     mutable i_pos               : int;                        (* input current position.    *)
     mutable state               : decoder_state;              (* decoder state.             *)
     mutable ctx                 : error_ctx;                  (* the current error context. *)
-    mutable tables              : ((tag * int * int) list) cache;     (* decoded table records.     *)
+    mutable tables              : (table_record list) cache;     (* decoded table records.     *)
     mutable buf                 : Buffer.t;                   (* internal buffer.           *)
   }
 
@@ -125,14 +131,15 @@ let get_table_list (cd : common_decoder) =
    -- *)
 let seek_table (tag : tag) (cd : common_decoder) : (int option) ok =
   let tables = get_table_list cd in
-  match List.find_opt (fun (t, _, _) -> tag = t) tables with
-  | Some((_, pos, len)) ->
+  match List.find_opt (fun table -> tag = table.table_tag) tables with
+  | Some(table) ->
+      let pos = table.table_offset in
       if pos > cd.i_max then
         err (`Invalid_offset(`Table(tag), pos))
       else begin
         set_ctx cd (`Table(tag));
         cd.i_pos <- pos;
-        return (Some(len))
+        return (Some(table.table_length))
       end
 
   | None ->
@@ -416,7 +423,13 @@ let rec d_table_records (cd : common_decoder) (count : int) : unit ok =
       d_skip 4     cd >>= fun () ->
       d_uint32_int cd >>= fun off ->
       d_uint32_int cd >>= fun len ->
-      let table = (Tag.of_wide_int tagwint, off, len) in
+      let table =
+        {
+          table_tag    = Tag.of_wide_int tagwint;
+          table_offset = off;
+          table_length = len;
+        }
+      in
       aux (Alist.extend tableacc table) (count - 1)
   in
   aux Alist.empty count
@@ -566,13 +579,13 @@ let init_loca (dttf : ttf_decoder) : (int * loc_format) ok =
 let table_list (cd : common_decoder) : (tag list) ok =
   init_decoder cd >>= fun () ->
   let tables = get_table_list cd in
-  return (tables |> List.rev_map (fun (t, _, _) -> t))
+  return (tables |> List.rev_map (fun table -> table.table_tag))
 
 
 let table_mem (cd : common_decoder) (tag : tag) : bool ok =
   init_decoder cd >>= fun () ->
   let tables = get_table_list cd in
-  return (tables |> List.exists (fun (t, _, _) -> tag = t))
+  return (tables |> List.exists (fun table -> tag = table.table_tag))
 
 
 let table_raw (cd : common_decoder) (tag : tag) : (string option) ok =
