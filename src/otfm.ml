@@ -37,6 +37,68 @@ let pp_error = OtfError.pp
 
 let is_cp = OtfError.is_cp
 
+type cff_decoder = OtfDecCFF.cff_decoder
+
+type ttf_decoder = OtfDecTTF.ttf_decoder
+
+type decoder =
+  | CFF of cff_decoder
+  | TTF of ttf_decoder
+
+type ttc_element = int * common_decoder
+
+type decoder_scheme =
+  | SingleDecoder      of decoder
+  | TrueTypeCollection of ttc_element list
+
+
+let common (d : decoder) : common_decoder =
+  match d with
+  | CFF(dcff) -> OtfDecCFF.cff_common dcff
+  | TTF(dttf) -> OtfDecTTF.ttf_common dttf
+
+
+let d_version (type a) (singlef : decoder -> a ok) (ttcf : (unit -> (ttc_element list) ok) -> a ok) (cd : common_decoder) : a ok =
+  d_uint32 cd >>= fun tagwint ->
+    match OtfTag.of_wide_int tagwint with
+    | t  when t = Tag.v_OTTO ->
+        singlef (CFF(OtfDecCFF.make_initial_cff cd))
+
+    | t  when t = Tag.v_true ->
+        singlef (TTF(OtfDecTTF.make_initial_ttf cd))
+
+    | t  when t = Tag.v_1_0 ->
+        singlef (TTF(OtfDecTTF.make_initial_ttf cd))
+
+    | t  when t = Tag.v_ttcf ->
+        ttcf (fun () ->
+          d_ttc_header_offset_list cd >>= fun offsets ->
+          return (offsets |> List.map (fun offset -> (offset, cd)))
+        )
+
+    | t ->
+        err (`Unknown_flavour(t))
+
+
+let decoder (src : source) : decoder_scheme ok =
+  let singlef d = return (SingleDecoder(d)) in
+  let ttcf k =
+    k () >>= fun ttcelems ->
+    return (TrueTypeCollection(ttcelems))
+  in
+  let d = make_initial_decoder src in
+  d_version singlef ttcf d
+
+
+let decoder_of_ttc_element (ttcelem : ttc_element) : decoder ok =
+  let singlef d = return d in
+  let ttcf _ = err `Layered_ttc in
+  let (offset, d) = ttcelem in
+  let delem = copy_and_initialize_decoder d in
+  seek_pos offset delem >>= fun () ->
+  d_version singlef ttcf delem
+
+
 (* TODO maybe it would be better not to maintain t_pos/i_pos,
    but rather pass them as arguments to decoding functions. *)
 
@@ -350,6 +412,7 @@ let d_composite_glyph d =
 
 
 let glyf (dttf : ttf_decoder) (loc : glyf_loc) : glyph_descr ok =
+  let open OtfDecTTF in
   let cd = ttf_common dttf in
   init_decoder cd >>= fun () ->
   init_glyf dttf >>= fun pos ->
@@ -390,7 +453,7 @@ let head (decoder : decoder) : head ok =
   d_uint16 cd >>= fun head_mac_style ->
   d_uint16 cd >>= fun head_lowest_rec_ppem ->
   d_skip 2 cd >>= fun () -> (* -- fontDirectionHint -- *)
-  d_loca_format cd >>= fun head_index_to_loc_format ->
+  OtfDecTTF.d_loca_format cd >>= fun head_index_to_loc_format ->
   return {
     head_font_revision; head_flags; head_units_per_em; head_created;
     head_modified; head_xmin; head_ymin; head_xmax; head_ymax;
@@ -876,6 +939,7 @@ let loca_long pos_loca (cd : common_decoder) (gid : glyph_id) =
 
 
 let loca_with_length (dttf : ttf_decoder) (gid : glyph_id) =
+  let open OtfDecTTF in
   let cd = ttf_common dttf in
   init_decoder cd >>= fun () ->
   init_loca dttf >>= fun (pos_loca, locfmt) ->
@@ -2829,6 +2893,7 @@ let d_charstring_element (cstate : charstring_state) (d : common_decoder) : (int
 
 
 let cff_first (dcff : cff_decoder) : cff_first ok =
+  let open OtfDecCFF in
   let cd = cff_common dcff in
   init_decoder cd >>= fun () ->
   seek_required_table Tag.cff cd >>= fun _ ->
@@ -3071,6 +3136,7 @@ let seek_fdselect nGlyphs offset_FDSelect d : fdselect ok =
 
 
 let cff (dcff : cff_decoder) : cff_info ok =
+  let open OtfDecCFF in
   let cd = cff_common dcff in
   cff_first dcff >>= fun cff_first ->
   let font_name = cff_first.cff_name in
@@ -3704,6 +3770,7 @@ let select_local_subr_index (privinfo : private_info) (gid : glyph_id) : subrout
 
 
 let charstring ((dcff, gsubridx, privinfo, offset_CharString_INDEX) : charstring_info) (gid : glyph_id) : ((int option * parsed_charstring list) option) ok =
+  let open OtfDecCFF in
   let d = cff_common dcff in
   let cstate = { numarg = 0; numstem = 0; used_gsubr_set = IntSet.empty; used_lsubr_set = IntSet.empty; } in
   seek_pos offset_CharString_INDEX d >>= fun () ->
@@ -4179,6 +4246,7 @@ let get_composite_offsets (data : string) : ((glyph_id * int) list, error) resul
 
 
 let get_ttf_raw_glyph (dttf : ttf_decoder) (gid : glyph_id) : (ttf_raw_glyph option) ok =
+  let open OtfDecTTF in
   let d = ttf_common dttf in
   loca_with_length dttf gid >>= function
   | None ->
@@ -4226,6 +4294,7 @@ let get_ttf_raw_glyph (dttf : ttf_decoder) (gid : glyph_id) : (ttf_raw_glyph opt
 
 
 let get_cff_raw_glyph (dcff : cff_decoder) (gid : glyph_id) : (cff_raw_glyph option) ok =
+  let open OtfDecCFF in
   let d = cff_common dcff in
 
   cff dcff >>= fun cffinfo ->
@@ -5484,6 +5553,7 @@ module Encode = struct
 
 
   let cff_outline_tables (dcff : cff_decoder) (glyphlst : raw_glyph list) =
+    let open OtfDecCFF in
     let d = cff_common dcff in
     cff dcff >>= fun cffinfo ->
 

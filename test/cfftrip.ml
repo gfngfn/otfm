@@ -102,7 +102,7 @@ let main fmt =
     | Ok(src)       -> src
     | Error(`Msg e) -> begin print_endline e; exit 1 end
   in
-  OtfDecBasic.decoder (`String(src)) >>= function
+  Otfm.decoder (`String(src)) >>= function
   | SingleDecoder(TTF(_)) ->
       pp fmt "Not a CFF\n";
       Ok()

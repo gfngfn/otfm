@@ -1,4 +1,8 @@
 
+type 'a cache =
+  | Uncached
+  | Cached of 'a
+
 type loc_format =
   | ShortLocFormat
   | LongLocFormat

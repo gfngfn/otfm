@@ -30,6 +30,26 @@ open OtfTypes
 open OtfUtils
 open OtfDecBasic
 
+type decoder =
+  | CFF of OtfDecCFF.cff_decoder
+  | TTF of OtfDecTTF.ttf_decoder
+(** The type for single OpenType font decoders. *)
+
+val common : decoder -> common_decoder
+
+type ttc_element
+(** The type for TTC elements. *)
+
+type decoder_scheme =
+  | SingleDecoder      of decoder
+  | TrueTypeCollection of ttc_element list
+(** The type for OpenType font decoders, including those of TrueType Collection. *)
+
+val decoder : source -> decoder_scheme ok
+(** [decoder src] is a decoder decoding from [src]. *)
+
+val decoder_of_ttc_element : ttc_element -> decoder ok
+
 
 (** {1 Tags} *)
 
@@ -73,7 +93,7 @@ val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 
 
 (** {2:glyf glyf table} *)
 
-val glyf : ttf_decoder -> glyf_loc -> (glyph_descr, error) result
+val glyf : OtfDecTTF.ttf_decoder -> glyf_loc -> (glyph_descr, error) result
 (** [glyf d loc] is the glyph descroption located at [loc] by reading
     the {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf}
     table. Glyph locations are obtainted via {!loca}. *)
@@ -218,7 +238,7 @@ val kern : decoder ->
 
 (** {2:loca loca table} *)
 
-val loca : ttf_decoder -> glyph_id -> (glyf_loc option, error) result
+val loca : OtfDecTTF.ttf_decoder -> glyph_id -> (glyf_loc option, error) result
 (** [loca d gid] looks up the location of the glyph with id [gid] by
     reading the {{:https://www.microsoft.com/typography/otspec/loca.htm}loca}
     table. The result can be used with {!val:glyf} to lookup the glyph. *)
@@ -566,7 +586,7 @@ type cff_info = {
   charstring_info     : charstring_info;
 }
 
-val cff : cff_decoder -> (cff_info, error) result
+val cff : OtfDecCFF.cff_decoder -> (cff_info, error) result
 
 type charstring_element
 
@@ -619,9 +639,9 @@ type ttf_raw_glyph
 
 type cff_raw_glyph
 
-val get_ttf_raw_glyph : ttf_decoder -> glyph_id -> (ttf_raw_glyph option, error) result
+val get_ttf_raw_glyph : OtfDecTTF.ttf_decoder -> glyph_id -> (ttf_raw_glyph option, error) result
 
-val get_cff_raw_glyph : cff_decoder -> glyph_id -> (cff_raw_glyph option, error) result
+val get_cff_raw_glyph : OtfDecCFF.cff_decoder -> glyph_id -> (cff_raw_glyph option, error) result
 
 module Encode : sig
 
@@ -672,7 +692,7 @@ module Encode : sig
 
   val ttf_outline_tables : ttf_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
-  val cff_outline_tables : cff_decoder -> cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+  val cff_outline_tables : OtfDecCFF.cff_decoder -> cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
 end
 

@@ -7,6 +7,7 @@
 open OtfTypes
 open OtfUtils
 open OtfDecBasic
+open OtfDecTTF
 
 
 let pp_cp = OtfError.pp_cp
@@ -261,11 +262,11 @@ let pp_single_font ppf inf d =
     in
       let fs =
         match d with
-        | OtfDecBasic.TTF(_) -> "TTF-OpenType"
+        | Otfm.TTF(_) -> "TTF-OpenType"
 (*        | TTF(_) -> "TTF-TrueType" *)
-        | OtfDecBasic.CFF(_) -> "CFF"
+        | Otfm.CFF(_) -> "CFF"
       in
-      let cd = OtfDecBasic.common d in
+      let cd = Otfm.common d in
       pp ppf "@,@[<1>(flavor %s)@]" fs;
       OtfDecBasic.postscript_name cd >>= fun name ->
       let oname = match name with None -> "<none>" | Some n -> n in
@@ -287,15 +288,15 @@ let pp_file ppf inf =
     | Ok v -> f v
     | Error e -> Error (e :> [ OtfError.t | `Reported | `Msg of string ])
     in
-    OtfDecBasic.decoder (`String s) >>= function
+    Otfm.decoder (`String s) >>= function
     | TrueTypeCollection(ttc) ->
         pp ppf "@[<v1>(@[<1>(file %S)@]" inf;
         pp ppf "@,@[<1>(TRUETYPE-COLLECTION %d)@]" (List.length ttc);
         ttc |> List.fold_left (fun res ttcelem ->
           res >>= fun i ->
-          OtfDecBasic.decoder_of_ttc_element ttcelem >>= fun d ->
+          Otfm.decoder_of_ttc_element ttcelem >>= fun d ->
           let name =
-            match OtfDecBasic.postscript_name (OtfDecBasic.common d) with
+            match OtfDecBasic.postscript_name (Otfm.common d) with
             | Error(_)       -> "<error>"
             | Ok(None)       -> "<none>"
             | Ok(Some(name)) -> name
@@ -324,12 +325,12 @@ let dec_file inf = match string_of_file inf with
     in
     let kern_nop () _ = `Fold, () in
     let nop4 _ _ _ _ = () in
-    match OtfDecBasic.decoder (`String s) with
+    match Otfm.decoder (`String s) with
     | Error e -> log_err inf e; err := true; Error (`Msg("dec_file"))
     | Ok(TrueTypeCollection(_)) ->
         Ok ()
     | Ok(SingleDecoder(d)) ->
-        OtfDecBasic.table_list (OtfDecBasic.common d) >>= fun () ->
+        OtfDecBasic.table_list (Otfm.common d) >>= fun () ->
         Otfm.cmap d         >>= fun () ->
         Otfm.head d         >>= fun () ->
         Otfm.hhea d         >>= fun () ->
@@ -342,10 +343,10 @@ let dec_file inf = match string_of_file inf with
 let ps_file inf = match string_of_file inf with
 | Error _ as e -> e
 | Ok s ->
-    match OtfDecBasic.decoder (`String s) with
-    | Ok(OtfDecBasic.SingleDecoder(d)) ->
+    match Otfm.decoder (`String s) with
+    | Ok(SingleDecoder(d)) ->
         begin
-          match OtfDecBasic.postscript_name (OtfDecBasic.common d) with
+          match OtfDecBasic.postscript_name (Otfm.common d) with
           | Error e -> Error (e :> [ OtfError.t | `Reported | `Msg of string ])
           | Ok None -> Printf.printf "%s: <none>\n" inf; Ok ()
           | Ok (Some n) -> Printf.printf "%s: %s\n" inf n; Ok ()

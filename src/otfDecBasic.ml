@@ -18,10 +18,6 @@ type decoder_state =
   | Start
   | Ready
 
-type 'a cache =
-  | Uncached
-  | Cached of 'a
-
 type table_record = {
   table_tag    : tag;
   table_offset : int;
@@ -39,49 +35,25 @@ type common_decoder =
     mutable buf                 : Buffer.t;                   (* internal buffer.           *)
   }
 
-type cff_specific = unit (* FIXME *)
 
-type cff_decoder = {
-  cff_common   : common_decoder;
-  cff_specific : cff_specific;
-}
-
-type ttf_specific = {
-  mutable loca_pos_and_format : (int * loc_format) cache;  (* for TTF fonts, lazy init.  *)
-  mutable glyf_pos            : int cache;                 (* for TTF fonts, lazy init.  *)
-}
-
-type ttf_decoder = {
-  ttf_common   : common_decoder;
-  ttf_specific : ttf_specific;
-}
-
-type decoder =
-  | CFF of cff_decoder
-  | TTF of ttf_decoder
-
-type ttc_element = int * common_decoder
-
-type decoder_scheme =
-  | SingleDecoder      of decoder
-  | TrueTypeCollection of ttc_element list
+let make_initial_decoder (src : source) : common_decoder =
+  let (i, i_pos, i_max) =
+    match src with
+    | `String(s) -> (s, 0, String.length s - 1)
+  in
+  { i; i_pos; i_max;
+    state = Start;
+    context = `Offset_table;
+    tables = Uncached;
+    buf = Buffer.create 253; }
 
 
-let cff_common (dcff : cff_decoder) : common_decoder =
-  dcff.cff_common
+let decoder_source (d : common_decoder) : source =
+  `String(d.i)
 
 
-let ttf_common (dttf : ttf_decoder) : common_decoder =
-  dttf.ttf_common
-
-
-let common (d : decoder) : common_decoder =
-  match d with
-  | CFF(dcff) -> cff_common dcff
-  | TTF(dttf) -> ttf_common dttf
-
-
-let decoder_source (d : decoder) : source = `String((common d).i)
+let copy_and_initialize_decoder (d : common_decoder) : common_decoder =
+  make_initial_decoder (decoder_source d)
 
 
 let err_eoi (cd : common_decoder) : 'a ok = err (`Unexpected_eoi(cd.context))
@@ -435,50 +407,6 @@ let rec d_table_records (cd : common_decoder) (count : int) : unit ok =
   aux Alist.empty count
 
 
-let d_ttc_header (cd : common_decoder) : (ttc_element list) ok =
-  d_uint32 cd >>= function
-  | version_ttc  when version_ttc = !%% 0x00010000L || version_ttc = !%% 0x00020000L ->
-      d_long_offset_list cd >>= fun offsets ->
-      return (offsets |> List.map (fun offset -> (offset, cd)))
-
-  | version_ttc ->
-      err_version cd version_ttc
-
-
-let d_version (type a) (singlef : decoder -> a ok) (ttcf : (unit -> (ttc_element list) ok) -> a ok) (cd : common_decoder) : a ok =
-  d_uint32 cd >>= fun tagwint ->
-    match OtfTag.of_wide_int tagwint with
-    | t  when t = Tag.v_OTTO ->
-        singlef (CFF{
-          cff_common = cd;
-          cff_specific = (); (* FIXME; shoule be a record of TTF-specific data *)
-        })
-
-    | t  when t = Tag.v_true ->
-        singlef (TTF{
-          ttf_common = cd;
-          ttf_specific = {
-            loca_pos_and_format = Uncached;
-            glyf_pos            = Uncached;
-          };
-        })
-
-    | t  when t = Tag.v_1_0 ->
-        singlef (TTF{
-          ttf_common = cd;
-          ttf_specific = {
-            loca_pos_and_format = Uncached;
-            glyf_pos            = Uncached;
-          };
-        })
-
-    | t  when t = Tag.v_ttcf ->
-        ttcf (fun () -> d_ttc_header cd)
-
-    | t ->
-        err (`Unknown_flavour(t))
-
-
 (* -- offset table and table directory. -- *)
 let d_structure (cd : common_decoder) =
   d_uint16       cd >>= fun numTables ->
@@ -487,39 +415,17 @@ let d_structure (cd : common_decoder) =
   d_table_records cd numTables
 
 
-let decoder (src : source) : decoder_scheme ok =
-  let (i, i_pos, i_max) =
-    match src with
-    | `String(s) -> (s, 0, String.length s - 1)
-  in
-  let cd =
-    { i; i_pos; i_max;
-      state = Start;
-      context = `Offset_table;
-      tables = Uncached;
-      buf = Buffer.create 253; }
-  in
-  let singlef d = return (SingleDecoder(d)) in
-  let ttcf k =
-    k () >>= fun ttcelems ->
-    return (TrueTypeCollection(ttcelems))
-  in
-  d_version singlef ttcf cd
+(* --
+  `d_ttc_header_offset_list`
+    returns the list of offsets of TTC elements.
+   -- *)
+let d_ttc_header_offset_list (cd : common_decoder) : (int list) ok =
+  d_uint32 cd >>= function
+  | version_ttc  when version_ttc = !%% 0x00010000L || version_ttc = !%% 0x00020000L ->
+      d_long_offset_list cd
 
-
-let decoder_of_ttc_element (ttcelem : ttc_element) : decoder ok =
-  let (offset, cd) = ttcelem in
-  let delem =
-    { i = cd.i;  i_pos = cd.i_pos;  i_max = cd.i_max;
-      state = Start;
-      context = `Offset_table;
-      tables = cd.tables;
-      buf = Buffer.create 253; }
-  in
-  let singlef d = return d in
-  let ttcf _ = err `Layered_ttc in
-  seek_pos offset delem >>= fun () ->
-  d_version singlef ttcf delem
+  | version_ttc ->
+      err_version cd version_ttc
 
 
 let init_decoder (cd : common_decoder) : unit ok =
@@ -537,43 +443,6 @@ let init_decoder (cd : common_decoder) : unit ok =
         | Ok(()) as ok -> ok
         | Error(e)     -> err_fatal cd e
       end
-
-
-let init_glyf (dttf : ttf_decoder) : int ok =
-  match dttf.ttf_specific.glyf_pos with
-  | Cached(pos) ->
-      return pos
-
-  | Uncached ->
-      let cd = dttf.ttf_common in
-      seek_required_table Tag.glyf cd >>= fun _ ->
-      let pos = cur_pos cd in
-      dttf.ttf_specific.glyf_pos <- Cached(pos);
-      return pos
-
-
-let d_loca_format (cd : common_decoder) : loc_format ok =
-  d_uint16 cd >>= function
-  | 0 -> return ShortLocFormat
-  | 1 -> return LongLocFormat
-  | i -> err_loca_format cd i
-
-
-let init_loca (dttf : ttf_decoder) : (int * loc_format) ok =
-  match dttf.ttf_specific.loca_pos_and_format with
-  | Cached(pair) ->
-      return pair
-
-  | Uncached ->
-      let cd = dttf.ttf_common in
-      seek_required_table Tag.head cd >>= fun () ->
-      d_skip 50 cd >>= fun () ->
-      d_loca_format cd >>= fun locfmt ->
-      seek_required_table Tag.loca cd >>= fun () ->
-      let pos = cd.i_pos in
-      let pair = (pos, locfmt) in
-      dttf.ttf_specific.loca_pos_and_format <- Cached(pair);
-      return pair
 
 
 let table_list (cd : common_decoder) : (tag list) ok =

@@ -50,7 +50,7 @@ let main () =
     | Some(src) -> string_of_file src
   end >>= fun s ->
   begin
-    OtfDecBasic.decoder (`String(s)) >>= function
+    Otfm.decoder (`String(s)) >>= function
     | SingleDecoder(CFF(dcff)) -> return dcff
     | SingleDecoder(TTF(_))    -> err (`Msg "TrueType")
     | TrueTypeCollection(_)    -> err (`Msg "TTC")

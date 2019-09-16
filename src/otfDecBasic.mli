@@ -11,33 +11,14 @@ type tag = OtfTag.t
 type source = [ `String of string ]
 (** The type for input sources. *)
 
-type cff_decoder
-
-type ttf_decoder
-
-type decoder =
-  | CFF of cff_decoder
-  | TTF of ttf_decoder
-(** The type for single OpenType font decoders. *)
-
 type common_decoder
 
-val cff_common : cff_decoder -> common_decoder
+val make_initial_decoder : source -> common_decoder
 
-val ttf_common : ttf_decoder -> common_decoder
-
-val common : decoder -> common_decoder
-
-type ttc_element
-(** The type for TTC elements. *)
-
-type decoder_scheme =
-  | SingleDecoder      of decoder
-  | TrueTypeCollection of ttc_element list
-(** The type for OpenType font decoders, including those of TrueType Collection. *)
-
-val decoder_source : decoder -> source
+val decoder_source : common_decoder -> source
 (** [decoder_source d] is [d]'s input source. *)
+
+val copy_and_initialize_decoder : common_decoder -> common_decoder
 
 val e_version : common_decoder -> WideInt.t -> error
 
@@ -117,20 +98,10 @@ val d_offset_opt : int -> common_decoder -> (int option) ok
 
 val d_fetch_long : int -> (common_decoder -> 'a ok) -> common_decoder -> (int * 'a) ok
 
-val decoder : source -> decoder_scheme ok
-(** [decoder src] is a decoder decoding from [src]. *)
-
-val decoder_of_ttc_element : ttc_element -> decoder ok
-
 val init_decoder : common_decoder -> unit ok
 (** initializes a decoder. *)
 
-val init_glyf : ttf_decoder -> int ok
-(** returns the byte offset of [d]'s 'glyf' table if exists, or [None] otherwise. *)
-
-val d_loca_format : common_decoder -> loc_format ok
-
-val init_loca : ttf_decoder -> (int * loc_format) ok
+val d_ttc_header_offset_list : common_decoder -> (int list) ok
 
 val table_list : common_decoder -> (tag list) ok
 (** [table_list t] is the list of tables of the font decoded by [d]. *)

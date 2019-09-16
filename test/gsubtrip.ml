@@ -135,7 +135,7 @@ let main filename script type3tag type4tag gpostag =
     | Ok(src)       -> src
     | Error(`Msg e) -> begin print_endline e; exit 1 end
   in
-  OtfDecBasic.decoder (`String(src)) >>= function
+  Otfm.decoder (`String(src)) >>= function
   | SingleDecoder(d) ->
       begin
         Format.printf "@[<v2>@,";

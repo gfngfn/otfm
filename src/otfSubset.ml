@@ -14,8 +14,8 @@ let reverse_some opts =
   aux [] opts
 
 
-let make_cff (dcff : cff_decoder) (gidlst : glyph_id list) =
-  let decoder = CFF(dcff) in
+let make_cff (dcff : OtfDecCFF.cff_decoder) (gidlst : glyph_id list) =
+  let decoder = Otfm.CFF(dcff) in
 
 (* -- generates the subset of the glyph table -- *)
   gidlst |> List.fold_left (fun res gid ->
