@@ -30,7 +30,6 @@ type tag = Tag.t
 (* -- Decode -- *)
 
 type error = OtfError.t
-type error_ctx = OtfError.ctx
 
 type 'a ok = ('a, error) result
 

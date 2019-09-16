@@ -12,23 +12,24 @@ module Tag = OtfTag
 type tag = Tag.t
 type wint = WideInt.t
 
-type ctx = [ `Table of tag | `Offset_table | `Table_directory ]
+type context = [ `Table of tag | `Offset_table | `Table_directory ]
+
 type t =
 [
   | `Unknown_flavour                  of tag
   | `Unsupported_cmap_format          of int
   | `Unsupported_glyf_matching_points
   | `Missing_required_table           of tag
-  | `Unknown_version                  of ctx * wint
-  | `Unknown_loca_format              of ctx * int
-  | `Unknown_composite_format         of ctx * int
-  | `Invalid_offset                   of ctx * int
+  | `Unknown_version                  of context * wint
+  | `Unknown_loca_format              of context * int
+  | `Unknown_composite_format         of context * int
+  | `Invalid_offset                   of context * int
   | `Invalid_cp                       of int
   | `Invalid_cp_range                 of int * int
   | `Invalid_postscript_name          of string
-  | `Unexpected_eoi                   of ctx
+  | `Unexpected_eoi                   of context
 
-  | `Inconsistent_length_of_coverage  of ctx
+  | `Inconsistent_length_of_coverage  of context
   | `Inconsistent_length_of_class
   | `Invalid_lookup_order             of int
   | `Invalid_feature_index            of int
@@ -70,7 +71,7 @@ type t =
   | `Missing_head_table_for_encoding
 ]
 
-let pp_ctx ppf = function
+let pp_context ppf = function
 | `Table tag       -> pp ppf "table %a" Tag.pp tag
 | `Offset_table    -> pp ppf "offset table"
 | `Table_directory -> pp ppf "table directory"
@@ -85,13 +86,13 @@ let pp ppf = function
 | `Unsupported_glyf_matching_points ->
     pp ppf "@[Unsupported@ glyf@ matching@ points)@]"
 | `Unknown_version (ctx, v) ->
-    pp ppf "@[Unknown@ version (%LX)@ in@ %a@]" (WideInt.to_int64 v) pp_ctx ctx
+    pp ppf "@[Unknown@ version (%LX)@ in@ %a@]" (WideInt.to_int64 v) pp_context ctx
 | `Unknown_loca_format (ctx, v) ->
-    pp ppf "@[Unknown@ loca table format (%d)@ in@ %a@]" v pp_ctx ctx
+    pp ppf "@[Unknown@ loca table format (%d)@ in@ %a@]" v pp_context ctx
 | `Unknown_composite_format (ctx, v) ->
-    pp ppf "@[Unknown@ composite glyph format (%d)@ in@ %a@]" v pp_ctx ctx
+    pp ppf "@[Unknown@ composite glyph format (%d)@ in@ %a@]" v pp_context ctx
 | `Invalid_offset (ctx, o) ->
-    pp ppf "@[Invalid@ offset (%d)@ in@ %a@]" o pp_ctx ctx
+    pp ppf "@[Invalid@ offset (%d)@ in@ %a@]" o pp_context ctx
 | `Invalid_cp u ->
     pp ppf "@[Invalid@ Unicode@ code@ point@ (%a)@]" pp_cp u
 | `Invalid_cp_range (u0, u1) ->
@@ -99,10 +100,10 @@ let pp ppf = function
 | `Invalid_postscript_name n ->
     pp ppf "@[Invalid@ PostScript@ name (%S)@]" n
 | `Unexpected_eoi ctx ->
-    pp ppf "@[Unexpected@ end@ of@ input@ in %a@]" pp_ctx ctx
+    pp ppf "@[Unexpected@ end@ of@ input@ in %a@]" pp_context ctx
 
 | `Inconsistent_length_of_coverage ctx ->
-    pp ppf "@[Inconsistent@ length@ of@ coverage@ in %a@]" pp_ctx ctx
+    pp ppf "@[Inconsistent@ length@ of@ coverage@ in %a@]" pp_context ctx
 | `Inconsistent_length_of_class ->
     pp ppf "@[Inconsistent@ length@ of@ class@]"
 | `Missing_required_script_tag tag ->

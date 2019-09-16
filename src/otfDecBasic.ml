@@ -7,7 +7,7 @@ module Tag = OtfTag
 type tag = Tag.t
 
 type error = OtfError.t
-type error_ctx = OtfError.ctx
+type error_context = OtfError.context
 
 type 'a ok = ('a, error) result
 
@@ -34,7 +34,7 @@ type common_decoder =
     i_max                       : int;                        (* input maximal position.    *)
     mutable i_pos               : int;                        (* input current position.    *)
     mutable state               : decoder_state;              (* decoder state.             *)
-    mutable ctx                 : error_ctx;                  (* the current error context. *)
+    mutable context             : error_context;                 (* the current error context. *)
     mutable tables              : (table_record list) cache;     (* decoded table records.     *)
     mutable buf                 : Buffer.t;                   (* internal buffer.           *)
   }
@@ -84,20 +84,20 @@ let common (d : decoder) : common_decoder =
 let decoder_source (d : decoder) : source = `String((common d).i)
 
 
-let err_eoi (cd : common_decoder) : 'a ok = err (`Unexpected_eoi(cd.ctx))
+let err_eoi (cd : common_decoder) : 'a ok = err (`Unexpected_eoi(cd.context))
 
-let e_version (cd : common_decoder) (v : wint) : error = `Unknown_version(cd.ctx, v)
+let e_version (cd : common_decoder) (v : wint) : error = `Unknown_version(cd.context, v)
 
 let err_version (cd : common_decoder) (v : wint) : 'a ok = err (e_version cd v)
 
-let err_loca_format cd v      = err (`Unknown_loca_format(cd.ctx, v))
-let err_composite_format cd v = err (`Unknown_composite_format(cd.ctx, v))
-let err_coverage_length cd    = err (`Inconsistent_length_of_coverage(cd.ctx))
+let err_loca_format cd v      = err (`Unknown_loca_format(cd.context, v))
+let err_composite_format cd v = err (`Unknown_composite_format(cd.context, v))
+let err_coverage_length cd    = err (`Inconsistent_length_of_coverage(cd.context))
 let err_fatal cd e            = begin cd.state <- Fatal(e); err e end
 
 
-let set_ctx (cd : common_decoder) (ctx : error_ctx) : unit =
-  cd.ctx <- ctx
+let set_context (cd : common_decoder) (ctx : error_context) : unit =
+  cd.context <- ctx
 
 
 let miss (cd : common_decoder) (count : int) : bool =
@@ -110,7 +110,7 @@ let cur_pos (cd : common_decoder) : int =
 
 let seek_pos (pos : int) (cd : common_decoder) : unit ok =
   if pos > cd.i_max then
-    err (`Invalid_offset(cd.ctx, pos))
+    err (`Invalid_offset(cd.context, pos))
   else begin
     cd.i_pos <- pos;
     return ()
@@ -137,7 +137,7 @@ let seek_table (tag : tag) (cd : common_decoder) : (int option) ok =
       if pos > cd.i_max then
         err (`Invalid_offset(`Table(tag), pos))
       else begin
-        set_ctx cd (`Table(tag));
+        set_context cd (`Table(tag));
         cd.i_pos <- pos;
         return (Some(table.table_length))
       end
@@ -483,7 +483,7 @@ let d_version (type a) (singlef : decoder -> a ok) (ttcf : (unit -> (ttc_element
 let d_structure (cd : common_decoder) =
   d_uint16       cd >>= fun numTables ->
   d_skip (3 * 2) cd >>= fun () ->
-  set_ctx cd `Table_directory;
+  set_context cd `Table_directory;
   d_table_records cd numTables
 
 
@@ -495,7 +495,7 @@ let decoder (src : source) : decoder_scheme ok =
   let cd =
     { i; i_pos; i_max;
       state = Start;
-      ctx = `Offset_table;
+      context = `Offset_table;
       tables = Uncached;
       buf = Buffer.create 253; }
   in
@@ -512,7 +512,7 @@ let decoder_of_ttc_element (ttcelem : ttc_element) : decoder ok =
   let delem =
     { i = cd.i;  i_pos = cd.i_pos;  i_max = cd.i_max;
       state = Start;
-      ctx = `Offset_table;
+      context = `Offset_table;
       tables = cd.tables;
       buf = Buffer.create 253; }
   in
@@ -525,7 +525,7 @@ let decoder_of_ttc_element (ttcelem : ttc_element) : decoder ok =
 let init_decoder (cd : common_decoder) : unit ok =
   match cd.state with
   | Ready ->
-      cd.ctx <- `Table_directory;
+      cd.context <- `Table_directory;
       return ()
 
   | Fatal(e) ->
