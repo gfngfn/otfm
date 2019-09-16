@@ -8,7 +8,7 @@ type 'a ok = ('a, error) result
 
 type tag = OtfTag.t
 
-type src = [ `String of string ]
+type source = [ `String of string ]
 (** The type for input sources. *)
 
 type cff_decoder
@@ -36,8 +36,8 @@ type decoder_scheme =
   | TrueTypeCollection of ttc_element list
 (** The type for OpenType font decoders, including those of TrueType Collection. *)
 
-val decoder_src : decoder -> src
-(** [decoder_src d] is [d]'s input source. *)
+val decoder_source : decoder -> source
+(** [decoder_source d] is [d]'s input source. *)
 
 val e_version : common_decoder -> WideInt.t -> error
 
@@ -117,7 +117,7 @@ val d_offset_opt : int -> common_decoder -> (int option) ok
 
 val d_fetch_long : int -> (common_decoder -> 'a ok) -> common_decoder -> (int * 'a) ok
 
-val decoder : src -> decoder_scheme ok
+val decoder : source -> decoder_scheme ok
 (** [decoder src] is a decoder decoding from [src]. *)
 
 val decoder_of_ttc_element : ttc_element -> decoder ok

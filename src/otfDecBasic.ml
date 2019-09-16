@@ -11,7 +11,7 @@ type error_ctx = OtfError.ctx
 
 type 'a ok = ('a, error) result
 
-type src = [ `String of string ]
+type source = [ `String of string ]
 
 type decoder_state =
   | Fatal of error
@@ -81,7 +81,7 @@ let common (d : decoder) : common_decoder =
   | TTF(dttf) -> ttf_common dttf
 
 
-let decoder_src (d : decoder) : src = `String((common d).i)
+let decoder_source (d : decoder) : source = `String((common d).i)
 
 
 let err_eoi (cd : common_decoder) : 'a ok = err (`Unexpected_eoi(cd.ctx))
@@ -487,7 +487,7 @@ let d_structure (cd : common_decoder) =
   d_table_records cd numTables
 
 
-let decoder (src : src) : decoder_scheme ok =
+let decoder (src : source) : decoder_scheme ok =
   let (i, i_pos, i_max) =
     match src with
     | `String(s) -> (s, 0, String.length s - 1)
