@@ -73,7 +73,7 @@ val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 
 
 (** {2:glyf glyf table} *)
 
-val glyf : decoder -> glyf_loc -> (glyph_descr option, error) result
+val glyf : ttf_decoder -> glyf_loc -> (glyph_descr, error) result
 (** [glyf d loc] is the glyph descroption located at [loc] by reading
     the {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf}
     table. Glyph locations are obtainted via {!loca}. *)
@@ -218,7 +218,7 @@ val kern : decoder ->
 
 (** {2:loca loca table} *)
 
-val loca : decoder -> glyph_id -> (glyf_loc option, error) result
+val loca : ttf_decoder -> glyph_id -> (glyf_loc option, error) result
 (** [loca d gid] looks up the location of the glyph with id [gid] by
     reading the {{:https://www.microsoft.com/typography/otspec/loca.htm}loca}
     table. The result can be used with {!val:glyf} to lookup the glyph. *)
@@ -566,7 +566,7 @@ type cff_info = {
   charstring_info     : charstring_info;
 }
 
-val cff : decoder -> (cff_info option, error) result
+val cff : cff_decoder -> (cff_info, error) result
 
 type charstring_element
 
@@ -615,10 +615,13 @@ val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, er
 
 val charstring_bbox : path list -> (csx * csx * csy * csy) option
 
-type raw_glyph
+type ttf_raw_glyph
 
-val get_raw_glyph : decoder -> cff_info option -> glyph_id -> (raw_glyph option, error) result
+type cff_raw_glyph
 
+val get_ttf_raw_glyph : ttf_decoder -> glyph_id -> (ttf_raw_glyph option, error) result
+
+val get_cff_raw_glyph : common_decoder -> cff_info -> glyph_id -> (cff_raw_glyph option, error) result
 
 module Encode : sig
 
@@ -667,9 +670,9 @@ module Encode : sig
     | CFFGlyph      of raw_table
         (* CFF *)
 
-  val truetype_outline_tables : raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+  val truetype_outline_tables : ttf_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
-  val cff_outline_tables : decoder -> cff_info -> raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+  val cff_outline_tables : common_decoder -> cff_info -> cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
 end
 

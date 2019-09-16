@@ -107,9 +107,11 @@ type glyph_composite_descr =
     a glyph id, a translation and an optional linear transform [a b c d]
     (column major). *)
 
-type glyph_descr =
-  [ `Simple of glyph_simple_descr
-  | `Composite of glyph_composite_descr ] * (int * int * int * int)
+type glyph_descr_main =
+  | Simple    of glyph_simple_descr
+  | Composite of glyph_composite_descr
+
+type glyph_descr = glyph_descr_main * (int * int * int * int)
 (** The type for glyph descriptions. A simple or composite descriptions
     with the glyph's [(minx, miny, maxx, maxy)]'s bounding box. *)
 

@@ -6,8 +6,8 @@
 
 open OtfTypes
 open OtfUtils
+open OtfDecBasic
 
-type decoder = OtfDecBasic.decoder
 
 let pp_cp = OtfError.pp_cp
 
@@ -66,7 +66,7 @@ let pp_cmap ppf d =
       ) (Ok())
 
 
-let pp_glyf ppf has_glyf (d : decoder) =
+let pp_glyf ppf has_glyf (dttf : ttf_decoder) =
   if not has_glyf then Ok () else
   let pp_bbox ppf (minx, miny, maxx, maxy) =
     pp ppf "@[(bbox@ %d@ %d@ %d@ %d)@]" minx miny maxx maxy
@@ -95,21 +95,20 @@ let pp_glyf ppf has_glyf (d : decoder) =
     List.iter (pp_component ppf) cs;
     pp ppf ")@]"
   in
-  match OtfDecBasic.glyph_count (OtfDecBasic.common d) with
+  match OtfDecBasic.glyph_count (ttf_common dttf) with
   | Error _ as e -> e
   | Ok gc ->
       pp ppf "@,@[<v1>(glyf";
       let rec loop gid =
         if gid >= gc then (pp ppf "@]"; Ok ()) else
-        match Otfm.loca d gid with
+        match Otfm.loca dttf gid with
         | Error _ as e -> e
         | Ok None -> pp ppf "@,@[(glyph-no-outline %d)@]" gid; loop (gid + 1)
         | Ok (Some gloc) ->
-            match Otfm.glyf d gloc with
+            match Otfm.glyf dttf gloc with
             | Error _ as e -> e
-            | Ok None -> pp ppf "(none)"; loop (gid + 1)
-            | Ok (Some (`Simple cs, bb)) -> pp_simple ppf gid cs bb; loop (gid + 1)
-            | Ok (Some (`Composite cs, bb)) ->
+            | Ok (Simple cs, bb) -> pp_simple ppf gid cs bb; loop (gid + 1)
+            | Ok (Composite cs, bb) ->
                 pp_composite ppf gid cs bb; loop (gid + 1)
       in
       loop 0
@@ -245,7 +244,11 @@ let pp_tables ppf inf ts d =
   pp_os2  ppf d >>= fun () ->
   pp_cmap ppf d >>= fun () ->
   pp_hmtx ppf d >>= fun () ->
-  pp_glyf ppf (List.mem OtfTag.glyf ts) d >>= fun () ->
+  begin
+    match d with
+    | TTF(dttf) -> pp_glyf ppf (List.mem OtfTag.glyf ts) dttf
+    | CFF(_)    -> return ()
+  end >>= fun () ->
   pp_kern ppf (List.mem OtfTag.kern ts) d >>= fun () ->
   if !err then (Error `Reported) else Ok ()
 

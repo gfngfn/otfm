@@ -1,5 +1,7 @@
 
+open OtfTypes
 open OtfUtils
+open OtfDecBasic
 
 
 let reverse_some opts =
@@ -12,12 +14,16 @@ let reverse_some opts =
   aux [] opts
 
 
-let make d cffinfo gidlst =
+let make_cff (dcff : cff_decoder) (gidlst : glyph_id list) =
+  let d = cff_common dcff in
+  let decoder = CFF(dcff) in
+
+  Otfm.cff dcff >>= fun cffinfo ->
 
 (* -- generates the subset of the glyph table -- *)
   gidlst |> List.fold_left (fun res gid ->
     res >>= fun rgacc ->
-    Otfm.get_raw_glyph d cffinfo gid >>= fun rg ->
+    Otfm.get_cff_raw_glyph d cffinfo gid >>= fun rg ->
     return (rg :: rgacc)
   ) (return []) >>= fun rgacc ->
   match reverse_some rgacc with
@@ -25,11 +31,7 @@ let make d cffinfo gidlst =
       return None
 
   | Some(rglst) ->
-      let encf =
-        match cffinfo with
-        | None          -> Otfm.Encode.truetype_outline_tables
-        | Some(cffinfo) -> Otfm.Encode.cff_outline_tables d cffinfo
-      in
+      let encf = Otfm.Encode.cff_outline_tables d cffinfo in
       encf rglst >>= fun (info, gdata) ->
       let rawtbl_hmtx = info.Otfm.Encode.hmtx in
       let (glyph_tables, oltype) =
@@ -42,7 +44,7 @@ let make d cffinfo gidlst =
       in
 
     (* -- updates the 'maxp' table -- *)
-      Otfm.maxp d >>= fun maxp ->
+      Otfm.maxp decoder >>= fun maxp ->
       let maxpnew =
         { maxp with
           Otfm.maxp_num_glyphs = info.Otfm.Encode.number_of_glyphs;
@@ -51,7 +53,7 @@ let make d cffinfo gidlst =
       Otfm.Encode.maxp oltype maxpnew >>= fun rawtbl_maxp ->
 
     (* -- updates the 'head' table -- *)
-      Otfm.head d >>= fun head ->
+      Otfm.head decoder >>= fun head ->
       let headnew =
         { head with
           head_xmin                = info.Otfm.Encode.xmin;
@@ -64,7 +66,7 @@ let make d cffinfo gidlst =
       Otfm.Encode.head headnew >>= fun rawtbl_head ->
 
     (* -- updates the 'hhea' table -- *)
-      Otfm.hhea d >>= fun hhea ->
+      Otfm.hhea decoder >>= fun hhea ->
       let hheanew =
         { hhea with
           hhea_advance_width_max      = info.Otfm.Encode.advance_width_max;

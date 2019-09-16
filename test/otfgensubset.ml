@@ -51,11 +51,12 @@ let main () =
   end >>= fun s ->
   begin
     OtfDecBasic.decoder (`String(s)) >>= function
-    | SingleDecoder(d)      -> return d
-    | TrueTypeCollection(_) -> err (`Msg "unsupported TTC")
-  end >>= fun d ->
+    | SingleDecoder(CFF(dcff)) -> return dcff
+    | SingleDecoder(TTF(_))    -> err (`Msg "TrueType")
+    | TrueTypeCollection(_)    -> err (`Msg "TTC")
+  end >>= fun dcff ->
 
-  OtfSubset.make d None(* TrueType *) gidlst >>= function
+  OtfSubset.make_cff dcff gidlst >>= function
   | None ->
       print_endline "None";
       return ()

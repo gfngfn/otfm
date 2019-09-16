@@ -160,7 +160,8 @@ let rec d_encoding_record offset_cmap (cd : common_decoder) : cmap_subtable ok =
   return ((cd, offset), ids)
 
 
-let cmap d : (cmap_subtable list) ok =
+let cmap (decoder : decoder) : (cmap_subtable list) ok =
+  let d = common decoder in
   init_decoder d >>= fun () ->
   seek_required_table Tag.cmap d >>= fun () ->
   let offset_cmap = cur_pos d in
@@ -349,7 +350,7 @@ let d_composite_glyph d =
   loop Alist.empty
 
 
-let glyf (dttf : ttf_decoder) loc =
+let glyf (dttf : ttf_decoder) (loc : glyf_loc) : glyph_descr ok =
   let cd = ttf_common dttf in
   init_decoder cd >>= fun () ->
   init_glyf dttf >>= fun pos ->
@@ -363,18 +364,16 @@ let glyf (dttf : ttf_decoder) loc =
         err_composite_format cd ccount
       else if ccount = -1 then
         d_composite_glyph cd >>= fun components ->
-        let ans = (`Composite(components), (xmin, ymin, xmax, ymax)) in
-        return (Some(ans))
+        return (Composite(components), (xmin, ymin, xmax, ymax))
       else
         d_simple_glyph cd ccount >>= fun contours ->
-        let ans = (`Simple(contours), (xmin, ymin, xmax, ymax)) in
-        return (Some(ans))
+        return (Simple(contours), (xmin, ymin, xmax, ymax))
 
 
 (* -- head table -- *)
 
-let head (d : decoder) : head ok =
-  let cd = common d in
+let head (decoder : decoder) : head ok =
+  let cd = common decoder in
   init_decoder cd >>= fun () ->
   seek_required_table Tag.head cd >>= fun () ->
   d_uint32 cd >>= fun version ->
@@ -392,13 +391,7 @@ let head (d : decoder) : head ok =
   d_uint16 cd >>= fun head_mac_style ->
   d_uint16 cd >>= fun head_lowest_rec_ppem ->
   d_skip 2 cd >>= fun () -> (* -- fontDirectionHint -- *)
-  d_uint16 cd >>= fun locfmt ->
-  begin
-    match locfmt with
-    | 0 -> return ShortLocFormat
-    | 1 -> return LongLocFormat
-    | _ -> err (`Invalid_index_to_loc_format(locfmt))
-  end >>= fun head_index_to_loc_format ->
+  d_loca_format cd >>= fun head_index_to_loc_format ->
   return {
     head_font_revision; head_flags; head_units_per_em; head_created;
     head_modified; head_xmin; head_ymin; head_xmax; head_ymax;
@@ -408,8 +401,8 @@ let head (d : decoder) : head ok =
 
 (* -- hhea table -- *)
 
-let hhea (d : decoder) : hhea ok =
-  let cd = common d in
+let hhea (decoder : decoder) : hhea ok =
+  let cd = common decoder in
   init_decoder cd >>= fun () ->
   seek_required_table Tag.hhea cd >>= fun () ->
   d_uint32 cd >>= fun version ->
@@ -460,8 +453,8 @@ let rec d_hlsb goffset i f acc adv cd =
     d_hlsb goffset (i - 1) f acc' adv cd
 
 
-let hmtx (d : decoder) f acc =
-  let cd = common d in
+let hmtx (decoder : decoder) f acc =
+  let cd = common decoder in
   glyph_count cd >>= fun glyph_count ->
   d_hm_count  cd >>= fun hm_count ->
   seek_required_table Tag.hmtx cd >>= fun () ->
@@ -507,8 +500,8 @@ type maxp = {
 }
 
 
-let maxp (d : decoder) : maxp ok =
-  let cd = common d in
+let maxp (decoder : decoder) : maxp ok =
+  let cd = common decoder in
   init_decoder cd >>= fun () ->
   seek_required_table Tag.maxp cd >>= fun () ->
   d_uint32 cd >>= fun version ->
@@ -677,8 +670,8 @@ let rec d_name_records pos_name soff ncount f acc langs seen d =
       d_iter (ncount - 1) f acc langs seen d
 
 
-let name (d : decoder) f acc =
-  let cd = common d in
+let name (decoder : decoder) f acc =
+  let cd = common decoder in
   init_decoder cd >>= fun () ->
   seek_required_table Tag.name cd >>= fun () ->
   let pos_name = cur_pos cd in
@@ -734,8 +727,8 @@ type os2 = {
   os2_us_max_context         : int option;
 }
 
-let os2 (d : decoder) : os2 ok =
-  let cd = common d in
+let os2 (decoder : decoder) : os2 ok =
+  let cd = common decoder in
   init_decoder cd >>= fun () ->
   seek_required_table Tag.os2 cd >>= fun () ->
   d_uint16 cd >>= fun version ->
@@ -851,7 +844,8 @@ let rec kern_tables ntables t p acc d =
           kern_tables (ntables - 1) t p acc d
 
 
-let kern d t p acc =
+let kern (decoder : decoder) t p acc =
+  let d = common decoder in
   init_decoder d >>= fun () ->
   seek_table Tag.kern d >>= function
   | None ->
@@ -891,7 +885,7 @@ let loca_with_length (dttf : ttf_decoder) (gid : glyph_id) =
     | LongLocFormat  -> loca_long pos_loca cd gid
 
 
-let loca (dttf : ttf_decoder) (gid : glyph_id) =
+let loca (dttf : ttf_decoder) (gid : glyph_id) : (glyf_loc option) ok =
   loca_with_length dttf gid >>= function
   | Some((loc, _)) -> return (Some(loc))
   | None           -> return None
@@ -1024,7 +1018,7 @@ let d_with_coverage (type a) (offset_Substitution_table : int) (cdf : common_dec
 
 
 type gxxx_script = {
-  script_decoder             : decoder;
+  script_decoder             : common_decoder;
   script_tag                 : string;
   script_offset_Script_table : int;
   script_offset_FeatureList  : int;
@@ -1054,20 +1048,20 @@ let d_tag_offset_list d : ((string * int) list) ok =
   d_list (d_tag_offset_record offset_ScriptList) d
 
 
-let gxxx_script tag_Gxxx (d : decoder) : ((gxxx_script list) option) ok =
-  let cd = common d in
-  init_decoder cd >>= fun () ->
-  seek_table tag_Gxxx cd >>= function
+let gxxx_script tag_Gxxx (decoder : decoder) : ((gxxx_script list) option) ok =
+  let d = common decoder in
+  init_decoder d >>= fun () ->
+  seek_table tag_Gxxx d >>= function
   | None ->
       return None
 
   | Some(_) ->
-      let offset_Gxxx = cur_pos cd in
-      d_uint32 cd >>= fun version ->
-      confirm (version = !%% 0x00010000L) (e_version cd version) >>= fun () ->
-      d_fetch offset_Gxxx d_tag_offset_list cd >>= fun scriptList ->
-      d_offset offset_Gxxx cd >>= fun offset_FeatureList ->
-      d_offset offset_Gxxx cd >>= fun offset_LookupList ->
+      let offset_Gxxx = cur_pos d in
+      d_uint32 d >>= fun version ->
+      confirm (version = !%% 0x00010000L) (e_version d version) >>= fun () ->
+      d_fetch offset_Gxxx d_tag_offset_list d >>= fun scriptList ->
+      d_offset offset_Gxxx d >>= fun offset_FeatureList ->
+      d_offset offset_Gxxx d >>= fun offset_LookupList ->
       let scriptList_res =
         scriptList |> List.map (fun (scriptTag, offset_Script_table) ->
           {
@@ -1088,7 +1082,7 @@ let gpos_script = gxxx_script Tag.gpos
 
 
 type gxxx_langsys = {
-  langsys_decoder            : decoder;
+  langsys_decoder            : common_decoder;
   langsys_tag                : string;
   langsys_offset_LangSys     : int;
   langsys_offset_FeatureList : int;
@@ -1109,14 +1103,13 @@ let gpos_langsys_tag = gxxx_langsys_tag
 
 let gxxx_langsys (script : gxxx_script) : (gxxx_langsys option * gxxx_langsys list) ok =
   let d = script.script_decoder in
-  let cd = common d in
   let offset_Script_table = script.script_offset_Script_table in
   let offset_FeatureList = script.script_offset_FeatureList in
   let offset_LookupList = script.script_offset_LookupList in
   Format.fprintf fmtGSUB "offset_Script_table = %d@," offset_Script_table;  (* for debug *)
-  seek_pos offset_Script_table cd >>= fun () ->
-  d_offset_opt offset_Script_table cd >>= fun offset_DefaultLangSys_opt ->
-  d_list (d_tag_offset_record offset_Script_table) cd >>= fun langSysList ->
+  seek_pos offset_Script_table d >>= fun () ->
+  d_offset_opt offset_Script_table d >>= fun offset_DefaultLangSys_opt ->
+  d_list (d_tag_offset_record offset_Script_table) d >>= fun langSysList ->
   let defaultLangSys_res =
     match offset_DefaultLangSys_opt with
     | None ->
@@ -1151,7 +1144,7 @@ let gpos_langsys = gxxx_langsys
 
 
 type gxxx_feature = {
-  feature_decoder           : decoder;
+  feature_decoder           : common_decoder;
   feature_tag               : string;
   feature_offset_Feature    : int;
   feature_offset_LookupList : int;
@@ -1171,23 +1164,22 @@ let gpos_feature_tag = gxxx_feature_tag
 
 let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature list) ok =
   let d = langsys.langsys_decoder in
-  let cd = common d in
   let offset_LangSys_table = langsys.langsys_offset_LangSys in
   let offset_FeatureList = langsys.langsys_offset_FeatureList in
   let offset_LookupList = langsys.langsys_offset_LookupList in
 
   Format.fprintf fmtGSUB "offset_LangSys_table = %d@," offset_LangSys_table;
 
-  seek_pos offset_LangSys_table cd >>= fun () ->
+  seek_pos offset_LangSys_table d >>= fun () ->
     (* -- now the position is set to the beginning of the required LangSys table *)
-  d_uint16 cd >>= fun offset_LookupOrder ->
+  d_uint16 d >>= fun offset_LookupOrder ->
   confirm (offset_LookupOrder = 0) (`Invalid_lookup_order(offset_LookupOrder)) >>= fun () ->
-  d_uint16 cd >>= fun requiredFeatureIndex ->
-  d_list d_uint16 cd >>= fun featureIndex_list ->
+  d_uint16 d >>= fun requiredFeatureIndex ->
+  d_list d_uint16 d >>= fun featureIndex_list ->
     (* -- now we are going to see FeatureList table -- *)
   Format.fprintf fmtGSUB "offset_FeatureList = %d@," offset_FeatureList;  (* for debug *)
-  seek_pos offset_FeatureList cd >>= fun () ->
-  d_list_filtered (d_tag_offset_record offset_FeatureList) (fun fi -> List.mem fi featureIndex_list) cd >>= fun featureList ->
+  seek_pos offset_FeatureList d >>= fun () ->
+  d_list_filtered (d_tag_offset_record offset_FeatureList) (fun fi -> List.mem fi featureIndex_list) d >>= fun featureList ->
   let featureList_res =
     featureList |> List.map (fun (featureTag, offset_Feature_table) ->
       {
@@ -1205,8 +1197,8 @@ let gxxx_feature (langsys : gxxx_langsys) : (gxxx_feature option * gxxx_feature 
 
         | _ ->
             begin
-              seek_pos offset_FeatureList cd >>= fun () ->
-              d_list_access (d_tag_offset_record offset_FeatureList) requiredFeatureIndex cd >>= function
+              seek_pos offset_FeatureList d >>= fun () ->
+              d_list_access (d_tag_offset_record offset_FeatureList) requiredFeatureIndex d >>= function
               | None           -> err (`Invalid_feature_index(requiredFeatureIndex))
               | Some(_) as opt -> return opt
             end
@@ -1234,23 +1226,22 @@ let gpos_feature = gxxx_feature
 
 let gxxx_subtable_list (type a) (lookup_gxxx : common_decoder -> a ok) (feature : gxxx_feature) : (a list) ok =
   let d = feature.feature_decoder in
-  let cd = common d in
   let offset_Feature_table = feature.feature_offset_Feature in
   let offset_LookupList = feature.feature_offset_LookupList in
   Format.fprintf fmtGSUB "offset_Feature_table = %d@," offset_Feature_table;  (* for debug *)
-  seek_pos offset_Feature_table cd >>= fun () ->
+  seek_pos offset_Feature_table d >>= fun () ->
     (* -- now the position is set to the beginning of the required Feature table -- *)
   Format.fprintf fmtGSUB "---- Feature table ----@,";  (* for debug *)
-  d_uint16 cd >>= fun featureParams ->
+  d_uint16 d >>= fun featureParams ->
 (*
   confirm (featureParams = 0) (`Invalid_feature_params(featureParams)) >>= fun () ->
 *)
-  d_list d_uint16 cd >>= fun lookupListIndexList ->
+  d_list d_uint16 d >>= fun lookupListIndexList ->
   Format.fprintf fmtGSUB "offset_LookupList = %d@," offset_LookupList;  (* for debug *)
-  seek_pos offset_LookupList cd >>= fun () ->
+  seek_pos offset_LookupList d >>= fun () ->
     (* -- now the position is set to the beginning of the LookupList table -- *)
-  d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookupListIndexList) cd >>= fun offsetlst_Lookup_table ->
-  seek_every_pos offsetlst_Lookup_table lookup_gxxx cd
+  d_list_filtered (d_offset offset_LookupList) (fun l -> List.mem l lookupListIndexList) d >>= fun offsetlst_Lookup_table ->
+  seek_every_pos offsetlst_Lookup_table lookup_gxxx d
 
 
 let d_ligature_table d : (glyph_id list * glyph_id) ok =
@@ -2243,8 +2234,8 @@ let d_math_variants d : math_variants ok =
   }
 
 
-let math (d : decoder) : (math option) ok =
-  let cd = common d in
+let math (decoder : decoder) : (math option) ok =
+  let cd = common decoder in
   init_decoder cd >>= fun () ->
   seek_table Tag.math cd >>= function
     | None ->
@@ -5234,7 +5225,7 @@ module Encode = struct
     end)
 
 
-  let enc_cff_table (d : decoder) (enc : encoder) (cffinfo : cff_info) (glyphlst : raw_glyph list) =
+  let enc_cff_table (d : common_decoder) (enc : encoder) (cffinfo : cff_info) (glyphlst : raw_glyph list) =
     let cff_first = cffinfo.cff_first in
     let header = cff_first.cff_header in
     let name = cff_first.cff_name in
