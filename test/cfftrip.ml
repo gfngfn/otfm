@@ -103,15 +103,14 @@ let main fmt =
     | Error(`Msg e) -> begin print_endline e; exit 1 end
   in
   OtfDecBasic.decoder (`String(src)) >>= function
-  | SingleDecoder(d) ->
+  | SingleDecoder(TTF(_)) ->
+      pp fmt "Not a CFF\n";
+      Ok()
+
+  | SingleDecoder(CFF(dcff)) ->
       begin
         print_endline "finish initializing decoder";
-        Otfm.cff d >>= function
-        | None ->
-            pp fmt "Not a CFF\n";
-            Ok()
-
-        | Some(cffinfo) ->
+        Otfm.cff dcff >>= fun cffinfo ->
             let (x1, y1, x2, y2) = cffinfo.Otfm.font_bbox in
             pp fmt "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
             pp fmt "IsFixedPitch: %B\n" cffinfo.Otfm.is_fixed_pitch;

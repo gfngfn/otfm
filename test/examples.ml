@@ -3,7 +3,7 @@
 let otf_postscript_name bytes =
   let print_error e = Format.eprintf "@[%a@]@." OtfError.pp e in
   let print_name d =
-    match OtfDecBasic.postscript_name d with
+    match OtfDecBasic.postscript_name (OtfDecBasic.common d) with
        | Error e -> print_error e
        | Ok (Some n) -> Format.printf "%s@." n
        | Ok None -> ()

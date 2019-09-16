@@ -6,6 +6,8 @@
 
 open OtfTypes
 open OtfUtils
+open OtfDecBasic
+
 
 let pp_cp = OtfError.pp_cp
 
@@ -64,7 +66,7 @@ let pp_cmap ppf d =
       ) (Ok())
 
 
-let pp_glyf ppf has_glyf d =
+let pp_glyf ppf has_glyf (dttf : ttf_decoder) =
   if not has_glyf then Ok () else
   let pp_bbox ppf (minx, miny, maxx, maxy) =
     pp ppf "@[(bbox@ %d@ %d@ %d@ %d)@]" minx miny maxx maxy
@@ -93,21 +95,20 @@ let pp_glyf ppf has_glyf d =
     List.iter (pp_component ppf) cs;
     pp ppf ")@]"
   in
-  match OtfDecBasic.glyph_count d with
+  match OtfDecBasic.glyph_count (ttf_common dttf) with
   | Error _ as e -> e
   | Ok gc ->
       pp ppf "@,@[<v1>(glyf";
       let rec loop gid =
         if gid >= gc then (pp ppf "@]"; Ok ()) else
-        match Otfm.loca d gid with
+        match Otfm.loca dttf gid with
         | Error _ as e -> e
         | Ok None -> pp ppf "@,@[(glyph-no-outline %d)@]" gid; loop (gid + 1)
         | Ok (Some gloc) ->
-            match Otfm.glyf d gloc with
+            match Otfm.glyf dttf gloc with
             | Error _ as e -> e
-            | Ok None -> pp ppf "(none)"; loop (gid + 1)
-            | Ok (Some (`Simple cs, bb)) -> pp_simple ppf gid cs bb; loop (gid + 1)
-            | Ok (Some (`Composite cs, bb)) ->
+            | Ok (Simple cs, bb) -> pp_simple ppf gid cs bb; loop (gid + 1)
+            | Ok (Composite cs, bb) ->
                 pp_composite ppf gid cs bb; loop (gid + 1)
       in
       loop 0
@@ -243,7 +244,11 @@ let pp_tables ppf inf ts d =
   pp_os2  ppf d >>= fun () ->
   pp_cmap ppf d >>= fun () ->
   pp_hmtx ppf d >>= fun () ->
-  pp_glyf ppf (List.mem OtfTag.glyf ts) d >>= fun () ->
+  begin
+    match d with
+    | TTF(dttf) -> pp_glyf ppf (List.mem OtfTag.glyf ts) dttf
+    | CFF(_)    -> return ()
+  end >>= fun () ->
   pp_kern ppf (List.mem OtfTag.kern ts) d >>= fun () ->
   if !err then (Error `Reported) else Ok ()
 
@@ -254,20 +259,20 @@ let pp_single_font ppf inf d =
     | Ok v -> f v
     | Error e -> Error (e :> [ OtfError.t | `Reported | `Msg of string ])
     in
-      OtfDecBasic.flavour d >>= fun f ->
       let fs =
-        match f with
-        | TTF_OT   -> "TTF-OpenType"
-        | TTF_true -> "TTF-TrueType"
-        | CFF      -> "CFF"
+        match d with
+        | OtfDecBasic.TTF(_) -> "TTF-OpenType"
+(*        | TTF(_) -> "TTF-TrueType" *)
+        | OtfDecBasic.CFF(_) -> "CFF"
       in
+      let cd = OtfDecBasic.common d in
       pp ppf "@,@[<1>(flavor %s)@]" fs;
-      OtfDecBasic.postscript_name d >>= fun name ->
+      OtfDecBasic.postscript_name cd >>= fun name ->
       let oname = match name with None -> "<none>" | Some n -> n in
       pp ppf "@,@[<1>(postscript-name %s)@]" oname;
-      OtfDecBasic.glyph_count d >>= fun glyph_count ->
+      OtfDecBasic.glyph_count cd >>= fun glyph_count ->
       pp ppf "@,@[<1>(glyph-count %d)@]" glyph_count;
-      OtfDecBasic.table_list d >>= fun ts ->
+      OtfDecBasic.table_list cd >>= fun ts ->
       pp ppf "@,@[<1>(tables ";
       List.iter (fun t -> pp ppf "@ %a" OtfTag.pp t) ts;
       pp ppf ")@]";
@@ -290,7 +295,7 @@ let pp_file ppf inf =
           res >>= fun i ->
           OtfDecBasic.decoder_of_ttc_element ttcelem >>= fun d ->
           let name =
-            match OtfDecBasic.postscript_name d with
+            match OtfDecBasic.postscript_name (OtfDecBasic.common d) with
             | Error(_)       -> "<error>"
             | Ok(None)       -> "<none>"
             | Ok(Some(name)) -> name
@@ -324,8 +329,7 @@ let dec_file inf = match string_of_file inf with
     | Ok(TrueTypeCollection(_)) ->
         Ok ()
     | Ok(SingleDecoder(d)) ->
-        OtfDecBasic.flavour d      >>= fun () ->
-        OtfDecBasic.table_list d   >>= fun () ->
+        OtfDecBasic.table_list (OtfDecBasic.common d) >>= fun () ->
         Otfm.cmap d         >>= fun () ->
         Otfm.head d         >>= fun () ->
         Otfm.hhea d         >>= fun () ->
@@ -341,7 +345,7 @@ let ps_file inf = match string_of_file inf with
     match OtfDecBasic.decoder (`String s) with
     | Ok(OtfDecBasic.SingleDecoder(d)) ->
         begin
-          match OtfDecBasic.postscript_name d with
+          match OtfDecBasic.postscript_name (OtfDecBasic.common d) with
           | Error e -> Error (e :> [ OtfError.t | `Reported | `Msg of string ])
           | Ok None -> Printf.printf "%s: <none>\n" inf; Ok ()
           | Ok (Some n) -> Printf.printf "%s: %s\n" inf n; Ok ()
