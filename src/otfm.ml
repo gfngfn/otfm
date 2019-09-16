@@ -5018,7 +5018,7 @@ module Encode = struct
 
 
 
-  let truetype_outline_tables (glyphlst : raw_glyph list) : (glyph_output_info * glyph_data) ok =
+  let ttf_outline_tables (glyphlst : raw_glyph list) : (glyph_output_info * glyph_data) ok =
 (*
     Printf.printf "# 'hmtx', 'glyf', and 'loca' table@,";
 *)

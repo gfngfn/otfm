@@ -670,7 +670,7 @@ module Encode : sig
     | CFFGlyph      of raw_table
         (* CFF *)
 
-  val truetype_outline_tables : ttf_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+  val ttf_outline_tables : ttf_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
   val cff_outline_tables : cff_decoder -> cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
