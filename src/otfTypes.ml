@@ -3,9 +3,6 @@ type loc_format =
   | ShortLocFormat
   | LongLocFormat
 
-type flavour = TTF_true | TTF_OT | CFF
-(** The type for OpenType flavours. *)
-
 type device_table = int * int * int * int
 
 type byte = char
