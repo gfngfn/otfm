@@ -516,3 +516,39 @@ let postscript_name d =
     | _ -> d_skip (5 * 2) d >>= loop (ncount - 1)
   in
   loop ncount ()
+
+
+let get_uint16 data offset =
+  let b0 = Char.code (String.get data offset) in
+  let b1 = Char.code (String.get data (offset + 1)) in
+  (b0 lsl 8) lor b1
+
+
+let get_int16 data i =
+  let ui = get_uint16 data i in
+  if ui >= 0x8000 then ui - 0x10000 else ui
+
+
+let d_hm_count (cd : common_decoder) : int ok =
+  seek_required_table Tag.hhea cd >>= fun () ->
+  d_skip (4 + 15 * 2) cd >>= fun () ->
+  d_uint16            cd >>= fun hm_count ->
+  return hm_count
+
+
+let hmtx_single (d : common_decoder) (gid : glyph_id) =
+  glyph_count d >>= fun glyph_count ->
+  d_hm_count  d >>= fun hm_count ->
+  seek_required_table Tag.hmtx d >>= fun () ->
+  if gid < hm_count then
+    d_skip (4 * gid) d >>= fun () ->
+    d_uint16 d >>= fun aw ->
+    d_int16  d >>= fun lsb ->
+    return (aw, lsb)
+  else
+    d_skip (4 * (hm_count - 1)) d >>= fun () ->
+    d_uint16 d >>= fun aw ->
+    d_skip 2 d >>= fun () ->
+    d_skip (2 * (gid - hm_count)) d >>= fun () ->
+    d_int16  d >>= fun lsb ->
+    return (aw, lsb)

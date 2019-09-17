@@ -156,3 +156,15 @@ type hhea = {
 }
 (** The type for
     {{:https://www.microsoft.com/typography/otspec/hhea.htm}hhea} tables. *)
+
+
+type raw_glyph = {
+  old_glyph_id            : glyph_id;
+  glyph_aw                : int;
+  glyph_lsb               : int;
+  glyph_bbox              : int * int * int * int;
+  glyph_data              : string;
+  glyph_data_length       : int;
+  glyph_data_offset       : int option;
+  glyph_composite_offsets : (glyph_id * int) list;
+}

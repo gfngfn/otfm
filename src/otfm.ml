@@ -489,13 +489,6 @@ let hhea (decoder : decoder) : hhea ok =
 
 (* -- hmtx table -- *)
 
-let d_hm_count (cd : common_decoder) : int ok =
-  seek_required_table Tag.hhea cd >>= fun () ->
-  d_skip (4 + 15 * 2) cd >>= fun () ->
-  d_uint16            cd >>= fun hm_count ->
-  return hm_count
-
-
 let rec d_hmetric goffset i f acc last_adv cd =
   if i = 0 then
     return (acc, last_adv)
@@ -522,24 +515,6 @@ let hmtx (decoder : decoder) f acc =
   seek_required_table Tag.hmtx cd >>= fun () ->
   d_hmetric hm_count hm_count f acc (-1) cd >>= fun (acc, last_adv) ->
   d_hlsb glyph_count (glyph_count - hm_count) f acc last_adv cd
-
-
-let hmtx_single (d : common_decoder) (gid : glyph_id) =
-  glyph_count d >>= fun glyph_count ->
-  d_hm_count  d >>= fun hm_count ->
-  seek_required_table Tag.hmtx d >>= fun () ->
-  if gid < hm_count then
-    d_skip (4 * gid) d >>= fun () ->
-    d_uint16 d >>= fun aw ->
-    d_int16  d >>= fun lsb ->
-    return (aw, lsb)
-  else
-    d_skip (4 * (hm_count - 1)) d >>= fun () ->
-    d_uint16 d >>= fun aw ->
-    d_skip 2 d >>= fun () ->
-    d_skip (2 * (gid - hm_count)) d >>= fun () ->
-    d_int16  d >>= fun lsb ->
-    return (aw, lsb)
 
 
 (* -- maxp table -- *)
@@ -918,40 +893,6 @@ let kern (decoder : decoder) t p acc =
       confirm (version = 0) (e_version d (!% version)) >>= fun () ->
       d_uint16 d >>= fun ntables ->
       kern_tables ntables t p acc d
-
-
-(* -- loca table -- *)
-
-let loca_short pos_loca (cd : common_decoder) (gid : glyph_id) =
-  seek_pos (pos_loca + gid * 2) cd >>= fun () ->
-  d_uint16 cd >>= fun o1 ->
-  d_uint16 cd >>= fun o2 ->
-  let o1 = o1 * 2 in
-  let o2 = o2 * 2 in
-  if o1 = o2 then return None else return (Some(o1, o2 - o1))
-
-
-let loca_long pos_loca (cd : common_decoder) (gid : glyph_id) =
-  seek_pos (pos_loca + gid * 4) cd >>= fun () ->
-  d_uint32_int cd >>= fun o1 ->
-  d_uint32_int cd >>= fun o2 ->
-  if o1 = o2 then return None else return (Some(o1, o2 - o1))
-
-
-let loca_with_length (dttf : ttf_decoder) (gid : glyph_id) =
-  let open OtfDecTTF in
-  let cd = ttf_common dttf in
-  init_decoder cd >>= fun () ->
-  init_loca dttf >>= fun (pos_loca, locfmt) ->
-    match locfmt with
-    | ShortLocFormat -> loca_short pos_loca cd gid
-    | LongLocFormat  -> loca_long pos_loca cd gid
-
-
-let loca (dttf : ttf_decoder) (gid : glyph_id) : (glyf_loc option) ok =
-  loca_with_length dttf gid >>= function
-  | Some((loc, _)) -> return (Some(loc))
-  | None           -> return None
 
 
 (*---------------------------------------------------------------------------
@@ -4130,31 +4071,7 @@ let charstring_bbox (pathlst : path list) =
   | BBox(xmin, xmax, ymin, ymax) -> (Some((xmin, xmax, ymin, ymax)))
 
 
-type raw_glyph = {
-  old_glyph_id            : glyph_id;
-  glyph_aw                : int;
-  glyph_lsb               : int;
-  glyph_bbox              : int * int * int * int;
-  glyph_data              : string;
-  glyph_data_length       : int;
-  glyph_data_offset       : int option;
-  glyph_composite_offsets : (glyph_id * int) list;
-}
-
 type cff_raw_glyph = raw_glyph
-
-type ttf_raw_glyph = raw_glyph
-
-
-let get_uint16 data offset =
-  let b0 = Char.code (String.get data offset) in
-  let b1 = Char.code (String.get data (offset + 1)) in
-  (b0 lsl 8) lor b1
-
-
-let get_int16 data i =
-  let ui = get_uint16 data i in
-  if ui >= 0x8000 then ui - 0x10000 else ui
 
 
 let set_uint16 bytes offset ui =
@@ -4164,86 +4081,6 @@ let set_uint16 bytes offset ui =
     Bytes.set bytes offset       (Char.chr b0);
     Bytes.set bytes (offset + 1) (Char.chr b1);
   end
-
-
-let get_composite_offsets (data : string) : ((glyph_id * int) list, error) result =
-
-  let rec loop i acc =
-    let flags = get_uint16 data i in
-    let i = i + 2 in
-    let gid = get_uint16 data i in
-    let accnew = Alist.extend acc (gid, i) in
-    let i = i + 2 in
-    let i = i + (if flags land 1 > 0 then 4 else 2) in
-    let d =
-      if flags land 8 > 0 then  (* -- scale -- *)
-        2
-      else if flags land 64 > 0 then  (* -- xy scale -- *)
-        4
-      else if flags land 128 > 0 then  (* -- m2 -- *)
-        8
-      else
-        0
-    in
-    if flags land 32 > 0 then
-      loop (i + d) accnew
-    else
-      return (Alist.to_list accnew)
-  in
-
-  let numberOfContours = get_int16 data 0 in
-  if numberOfContours >= 0 then
-    return []
-  else
-    loop 10 Alist.empty
-
-
-let get_ttf_raw_glyph (dttf : ttf_decoder) (gid : glyph_id) : (ttf_raw_glyph option) ok =
-  let open OtfDecTTF in
-  let d = ttf_common dttf in
-  loca_with_length dttf gid >>= function
-  | None ->
-      let rawg =
-        {
-          old_glyph_id = gid;
-          glyph_aw = 0;
-          glyph_lsb = 0;
-          glyph_bbox = (0, 0, 0, 0);
-          glyph_data = "";
-          glyph_data_length = 0;
-          glyph_data_offset = None;
-          glyph_composite_offsets = [];
-        }
-      in
-      return (Some(rawg))
-
-  | Some((loc, len)) ->
-      init_decoder d >>= fun () ->
-      init_glyf dttf >>= fun pos_glyf ->
-          let pos = pos_glyf + loc in
-          seek_pos pos d >>= fun () ->
-          d_int16 d >>= fun _ ->
-          d_int16 d >>= fun xmin ->
-          d_int16 d >>= fun ymin ->
-          d_int16 d >>= fun xmax ->
-          d_int16 d >>= fun ymax ->
-          seek_pos pos d >>= fun () ->
-          d_bytes len d >>= fun data ->
-          get_composite_offsets data >>= fun pairlst ->
-          hmtx_single d gid >>= fun (aw, lsb) ->
-          let rawg =
-            {
-              old_glyph_id = gid;
-              glyph_aw = aw;
-              glyph_lsb = lsb;
-              glyph_bbox = (xmin, ymin, xmax, ymax);
-              glyph_data = data;
-              glyph_data_length = len;
-              glyph_data_offset = Some(pos);
-              glyph_composite_offsets = pairlst;
-            }
-          in
-          return (Some(rawg))
 
 
 let get_cff_raw_glyph (dcff : cff_decoder) (gid : glyph_id) : (cff_raw_glyph option) ok =
@@ -5039,7 +4876,8 @@ module Encode = struct
 
 
 
-  let ttf_outline_tables (glyphlst : raw_glyph list) : (glyph_output_info * glyph_data) ok =
+  let ttf_outline_tables (glyphlst : OtfDecTTF.ttf_raw_glyph list) : (glyph_output_info * glyph_data) ok =
+    let glyphlst = glyphlst |> List.map OtfDecTTF.ttf_raw_glyph in
 (*
     Printf.printf "# 'hmtx', 'glyf', and 'loca' table@,";
 *)

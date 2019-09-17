@@ -102,7 +102,7 @@ let pp_glyf ppf has_glyf (dttf : ttf_decoder) =
       pp ppf "@,@[<v1>(glyf";
       let rec loop gid =
         if gid >= gc then (pp ppf "@]"; Ok ()) else
-        match Otfm.loca dttf gid with
+        match OtfDecTTF.loca dttf gid with
         | Error _ as e -> e
         | Ok None -> pp ppf "@,@[(glyph-no-outline %d)@]" gid; loop (gid + 1)
         | Ok (Some gloc) ->

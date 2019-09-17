@@ -236,13 +236,6 @@ val kern : decoder ->
 
     {b Limitations.} Only format 0 kerning tables are supported. *)
 
-(** {2:loca loca table} *)
-
-val loca : OtfDecTTF.ttf_decoder -> glyph_id -> (glyf_loc option, error) result
-(** [loca d gid] looks up the location of the glyph with id [gid] by
-    reading the {{:https://www.microsoft.com/typography/otspec/loca.htm}loca}
-    table. The result can be used with {!val:glyf} to lookup the glyph. *)
-
 (** {1:limitations Limitations}
 
     As it stands [Otfm] has the following limitations.  Some of these
@@ -635,11 +628,7 @@ val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, er
 
 val charstring_bbox : path list -> (csx * csx * csy * csy) option
 
-type ttf_raw_glyph
-
 type cff_raw_glyph
-
-val get_ttf_raw_glyph : OtfDecTTF.ttf_decoder -> glyph_id -> (ttf_raw_glyph option, error) result
 
 val get_cff_raw_glyph : OtfDecCFF.cff_decoder -> glyph_id -> (cff_raw_glyph option, error) result
 
@@ -690,7 +679,7 @@ module Encode : sig
     | CFFGlyph      of raw_table
         (* CFF *)
 
-  val ttf_outline_tables : ttf_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+  val ttf_outline_tables : OtfDecTTF.ttf_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
   val cff_outline_tables : OtfDecCFF.cff_decoder -> cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 

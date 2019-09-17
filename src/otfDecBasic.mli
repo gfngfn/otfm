@@ -130,3 +130,11 @@ val postscript_name : common_decoder -> (string option) ok
 (** [poscript_name d] is the PostScript name of [d]. Looks up and validates
     as mandated by the OTF standard, don't rely on {!name} if you really
     need this information. *)
+
+val get_uint16 : string -> int -> int
+
+val get_int16 : string -> int -> int
+
+val d_hm_count : common_decoder -> int ok
+
+val hmtx_single : common_decoder -> glyph_id -> (int * int, error) result
