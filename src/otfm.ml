@@ -3117,19 +3117,19 @@ module Encode = struct
   let enc_cff_table (dcff : OtfDecCFF.cff_decoder) (enc : encoder) (glyphlst : raw_glyph list) =
     let open OtfDecCFF in
     let d = cff_common dcff in
-    OtfDecCFF.cff dcff >>= fun cffinfo ->
-    let cff_first = cffinfo.cff_first in
-    let header = cff_first.cff_header in
-    let name = cff_first.cff_name in
-    let dict_Top = cff_first.top_dict in
-    let stridx = cff_first.string_index in
+    OtfDecCFF.cff dcff >>= fun cff_top ->
+    let cff_first = cff_top.cff_first in
+    let header       = cff_first.cff_header in
+    let name         = cff_first.cff_name in
+    let dict_Top     = cff_first.top_dict in
+    let stridx       = cff_first.string_index in
     let gsubridx_org = cff_first.gsubr_index in
-    let offset_CFF = cff_first.offset_CFF in
+    let offset_CFF   = cff_first.offset_CFF in
 
     let numGlyphs = List.length glyphlst in
     let glypharr = Array.of_list glyphlst in
+    OtfDecCFF.cff_private_info dcff >>= fun privinfo ->
     begin
-      let (_, _, privinfo, _) = cffinfo.charstring_info in
       match privinfo with
       | SinglePrivate(singlepriv) ->
           return None
@@ -3161,7 +3161,6 @@ module Encode = struct
       | Some(glyph_offset) ->
           let cstate = { numarg = 0; numstem = 0; used_gsubr_set = IntSet.empty; used_lsubr_set = IntSet.empty; } in
           let stk : int Stack.t = Stack.create () in
-          let (_, _, privinfo, _) = cffinfo.charstring_info in
           let extend_set s = (function None -> Some(s) | Some(s0) -> Some(IntSet.union s0 s)) in
           begin
             match privinfo with

@@ -17,9 +17,7 @@ val cff_raw_glyph : cff_raw_glyph -> raw_glyph
 
 val get_cff_raw_glyph : cff_decoder -> glyph_id -> (cff_raw_glyph option, error) result
 
-type charstring_info = cff_decoder * subroutine_index * private_info * int
-
-type cff_info = {
+type cff_top = {
   cff_first           : cff_first;
   font_name           : string;
   is_fixed_pitch      : bool;
@@ -32,14 +30,16 @@ type cff_info = {
   stroke_width        : int;
   cid_info            : cff_cid_info option;
   number_of_glyphs    : int;
-  charstring_info     : charstring_info;
 }
 
-val cff : cff_decoder -> cff_info ok
+val cff : cff_decoder -> cff_top ok
+
+val cff_private_info : cff_decoder -> private_info ok
+(* FIXME; should be hidden *)
 
 val pp_parsed_charstring : Format.formatter -> parsed_charstring -> unit
 
-val charstring : charstring_info -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
+val charstring : cff_decoder -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
 
 type path_element =
   | LineTo         of cspoint
@@ -47,7 +47,7 @@ type path_element =
 
 type path = cspoint * path_element list
 
-val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, error) result
+val charstring_absolute : cff_decoder -> glyph_id -> ((path list) option, error) result
 
 val charstring_bbox : path list -> (csx * csx * csy * csy) option
 

@@ -29,8 +29,8 @@ let string_of_file inf =
   | Sys_error e -> (Error (`Msg e))
 
 
-let charstring_ topdict gid =
-    match OtfDecCFF.charstring_absolute topdict.OtfDecCFF.charstring_info gid with
+let charstring_ dcff gid =
+    match OtfDecCFF.charstring_absolute dcff gid with
     | Error(e)      -> Error(e :> error)
     | Ok(None)      -> Error(`Msg (Printf.sprintf "no CharString for GID %d" gid))
     | Ok(Some(pcs)) ->
@@ -121,7 +121,7 @@ let main fmt =
             pp fmt "PaintType: %d\n" cffinfo.paint_type;
             pp fmt "StrokeWidth: %d\n" cffinfo.stroke_width;
 
-            charstring_ cffinfo gid >>= fun (bbox, pcs) ->
+            charstring_ dcff gid >>= fun (bbox, pcs) ->
 
             let fout = open_out outname in
             Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
