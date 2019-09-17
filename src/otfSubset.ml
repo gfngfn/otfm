@@ -20,7 +20,7 @@ let make_cff (dcff : OtfDecCFF.cff_decoder) (gidlst : glyph_id list) =
 (* -- generates the subset of the glyph table -- *)
   gidlst |> List.fold_left (fun res gid ->
     res >>= fun rgacc ->
-    Otfm.get_cff_raw_glyph dcff gid >>= fun rg ->
+    OtfDecCFF.get_cff_raw_glyph dcff gid >>= fun rg ->
     return (rg :: rgacc)
   ) (return []) >>= fun rgacc ->
   match reverse_some rgacc with
