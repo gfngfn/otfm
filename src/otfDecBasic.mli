@@ -96,6 +96,12 @@ val d_offset : int -> common_decoder -> int ok
 val d_offset_opt : int -> common_decoder -> (int option) ok
 (** same as [d_offset] except that it treats [0] as [None]. *)
 
+val d_fetch : int -> (common_decoder -> 'a ok) -> common_decoder -> 'a ok
+
+val d_fetch_opt : int -> (common_decoder -> 'a ok) -> common_decoder -> ('a option) ok
+
+val d_fetch_list : int -> (common_decoder -> ('a list) ok) -> common_decoder -> ('a list) ok
+
 val d_fetch_long : int -> (common_decoder -> 'a ok) -> common_decoder -> (int * 'a) ok
 
 val init_decoder : common_decoder -> unit ok

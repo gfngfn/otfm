@@ -1010,53 +1010,6 @@ let combine_coverage d coverage lst =
   | Invalid_argument(_) -> err_coverage_length d
 
 
-let d_fetch offset_origin df d =
-  let pos_before = cur_pos d in
-  Format.fprintf fmtgen "(d_fetch) | pos_before = %d@," pos_before;
-  d_offset offset_origin d >>= fun offset ->
-  Format.fprintf fmtgen "          | rel_offset = %d@," (offset - offset_origin);
-  Format.fprintf fmtgen "          | offset     = %d@," offset;
-  seek_pos offset d >>= fun () ->
-  df d >>= fun res ->
-  seek_pos (pos_before + 2) d >>= fun () ->
-  return res
-
-
-let d_fetch_opt offset_origin df d =
-  let pos_before = cur_pos d in
-  d_offset_opt offset_origin d >>= function
-    | None ->
-        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
-        Format.fprintf fmtgen "              | NULL";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return None
-
-    | Some(offset) ->
-        Format.fprintf fmtgen "(d_fetch_opt) | pos_before = %d@," pos_before;
-        Format.fprintf fmtgen "              | non-NULL@,";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun res ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return (Some(res))
-
-
-let d_fetch_list offset_origin df d =
-  let pos_before = cur_pos d in
-  Format.fprintf fmtgen "(d_fetch_list) | pos_before = %d@," pos_before;
-  d_offset_opt offset_origin d >>= function
-    | None ->
-        Format.fprintf fmtgen "               | NULL@,";
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return []
-
-    | Some(offset) ->
-        Format.fprintf fmtgen "               | non-NULL@,";
-        seek_pos offset d >>= fun () ->
-        df d >>= fun lst ->
-        seek_pos (pos_before + 2) d >>= fun () ->
-        return lst
-
-
 let seek_every_pos (type a) (offsetlst : int list) (cdf : common_decoder -> a ok) (cd : common_decoder) : (a list) ok =
   let rec aux acc offsetlst =
   match offsetlst with
