@@ -29,12 +29,12 @@ let string_of_file inf =
   | Sys_error e -> (Error (`Msg e))
 
 
-let charstring topdict gid =
-    match Otfm.charstring_absolute topdict.Otfm.charstring_info gid with
+let charstring_ topdict gid =
+    match OtfDecCFF.charstring_absolute topdict.OtfDecCFF.charstring_info gid with
     | Error(e)      -> Error(e :> error)
     | Ok(None)      -> Error(`Msg (Printf.sprintf "no CharString for GID %d" gid))
     | Ok(Some(pcs)) ->
-        match Otfm.charstring_bbox pcs with
+        match OtfDecCFF.charstring_bbox pcs with
         | None       -> Error(`Msg "no bounding box")
         | Some(bbox) -> Ok((bbox, pcs))
 
@@ -57,11 +57,11 @@ let output_bbox fmt fout (xmin, xmax, ymin, ymax) =
 
 let output_path_element fout csptacc pe =
   match pe with
-  | Otfm.LineTo((x, y)) ->
+  | OtfDecCFF.LineTo((x, y)) ->
       Printf.fprintf fout "L%d,%d " (svgx x) (svgy y);
       (OL, x, y) :: csptacc
 
-  | Otfm.BezierTo((xA, yA), (xB, yB), (xC, yC)) ->
+  | OtfDecCFF.BezierTo((xA, yA), (xB, yB), (xC, yC)) ->
       Printf.fprintf fout "C%d,%d %d,%d %d,%d " (svgx xA) (svgy yA) (svgx xB) (svgy yB) (svgx xC) (svgy yC);
       (OC, xC, yC) :: (OB, xB, yB) :: (OA, xA, yA) :: csptacc
 
@@ -110,17 +110,18 @@ let main fmt =
   | SingleDecoder(CFF(dcff)) ->
       begin
         print_endline "finish initializing decoder";
-        Otfm.cff dcff >>= fun cffinfo ->
-            let (x1, y1, x2, y2) = cffinfo.Otfm.font_bbox in
+        OtfDecCFF.cff dcff >>= fun cffinfo ->
+            let open OtfDecCFF in
+            let (x1, y1, x2, y2) = cffinfo.font_bbox in
             pp fmt "FontBBox: (%d, %d, %d, %d)\n" x1 y1 x2 y2;
-            pp fmt "IsFixedPitch: %B\n" cffinfo.Otfm.is_fixed_pitch;
-            pp fmt "ItalicAngle: %d\n" cffinfo.Otfm.italic_angle;
-            pp fmt "UnderlinePosition: %d\n" cffinfo.Otfm.underline_position;
-            pp fmt "UnderlineThickness: %d\n" cffinfo.Otfm.underline_thickness;
-            pp fmt "PaintType: %d\n" cffinfo.Otfm.paint_type;
-            pp fmt "StrokeWidth: %d\n" cffinfo.Otfm.stroke_width;
+            pp fmt "IsFixedPitch: %B\n" cffinfo.is_fixed_pitch;
+            pp fmt "ItalicAngle: %d\n" cffinfo.italic_angle;
+            pp fmt "UnderlinePosition: %d\n" cffinfo.underline_position;
+            pp fmt "UnderlineThickness: %d\n" cffinfo.underline_thickness;
+            pp fmt "PaintType: %d\n" cffinfo.paint_type;
+            pp fmt "StrokeWidth: %d\n" cffinfo.stroke_width;
 
-            charstring cffinfo gid >>= fun (bbox, pcs) ->
+            charstring_ cffinfo gid >>= fun (bbox, pcs) ->
 
             let fout = open_out outname in
             Printf.fprintf fout "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
@@ -146,16 +147,17 @@ let main fmt =
             Printf.fprintf fout "</svg>";
             close_out fout;
 
-            match cffinfo.Otfm.cid_info with
+            match cffinfo.OtfDecCFF.cid_info with
             | None ->
                 pp fmt "Not a CIDFont\n";
                 Ok()
 
             | Some(cidinfo) ->
+                let open OtfDecCFF in
                 pp fmt "CIDFont\n";
-                pp fmt "Registry: '%s'\n" cidinfo.Otfm.registry;
-                pp fmt "Ordering: '%s'\n" cidinfo.Otfm.ordering;
-                pp fmt "Supplement: %d\n" cidinfo.Otfm.supplement;
+                pp fmt "Registry: '%s'\n" cidinfo.registry;
+                pp fmt "Ordering: '%s'\n" cidinfo.ordering;
+                pp fmt "Supplement: %d\n" cidinfo.supplement;
                 Ok()
       end
 
