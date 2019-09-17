@@ -32,3 +32,5 @@ val return : 'a -> ('a, 'b) result
 val err : 'a -> ('b, 'a) result
 
 val confirm : bool -> OtfError.t -> (unit, OtfError.t) result
+
+val is_in_range : int -> int -> int -> bool

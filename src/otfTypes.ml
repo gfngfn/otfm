@@ -168,3 +168,15 @@ type raw_glyph = {
   glyph_data_offset       : int option;
   glyph_composite_offsets : (glyph_id * int) list;
 }
+
+module IntSet = Set.Make
+  (struct
+    type t = int
+    let compare i j = i - j
+  end)
+
+module IntMap = Map.Make
+  (struct
+    type t = int
+    let compare i j = i - j
+  end)

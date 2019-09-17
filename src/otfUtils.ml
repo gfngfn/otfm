@@ -58,3 +58,6 @@ let err e                    = Error(e)
 
 let confirm b e =
   if not b then err e else return ()
+
+
+let is_in_range a b x = (a <= x && x <= b)

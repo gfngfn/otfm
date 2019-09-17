@@ -549,89 +549,6 @@ val math : decoder -> (math option, error) result
 (** [math d] returns the whole information in the
     {{:https://www.microsoft.com/typography/otspec/math.htm}MATH} table of [d]. *)
 
-type cff_cid_info = {
-  registry          : string;
-  ordering          : string;
-  supplement        : int;
-  cid_font_version  : float;
-  cid_font_revision : int;
-  cid_font_type     : int;
-  cid_count         : int;
-}
-
-type charstring_info
-
-type cff_first
-
-type cff_info = {
-  cff_first           : cff_first;
-  font_name           : string;
-  is_fixed_pitch      : bool;
-  italic_angle        : int;
-  underline_position  : int;
-  underline_thickness : int;
-  paint_type          : int;
-  (* font_matrix : float * float * float * float; *)
-  font_bbox           : int * int * int * int;
-  stroke_width        : int;
-  cid_info            : cff_cid_info option;
-  number_of_glyphs    : int;
-  charstring_info     : charstring_info;
-}
-
-val cff : OtfDecCFF.cff_decoder -> (cff_info, error) result
-
-type charstring_element
-
-type csx = int
-
-type csy = int
-
-type cspoint = csx * csy
-
-type stem_argument = string  (* temporary *)
-
-type parsed_charstring =
-  | HStem     of int * int * cspoint list                                         (** hstem (1) *)
-  | VStem     of int * int * cspoint list                                         (** vstem (3) *)
-  | VMoveTo   of int                                                              (** vmoveto (4) *)
-  | RLineTo   of cspoint list                                                     (** rlineto (5) *)
-  | HLineTo   of int list                                                         (** hlineto (6) *)
-  | VLineTo   of int list                                                         (** vlineto (7) *)
-  | RRCurveTo of (cspoint * cspoint * cspoint) list                               (** rrcurveto (8) *)
-  | HStemHM   of int * int * cspoint list                                         (** hstemhm (18) *)
-  | HintMask  of stem_argument                                                    (** hintmask (19) *)
-  | CntrMask  of stem_argument                                                    (** cntrmask (20) *)
-  | RMoveTo   of cspoint                                                          (** rmoveto (21) *)
-  | HMoveTo   of int                                                              (** hmoveto (22) *)
-  | VStemHM   of int * int * cspoint list                                         (** vstemhm (23) *)
-  | VVCurveTo of csx option * (csy * cspoint * csy) list                          (** vvcurveto (26) *)
-  | HHCurveTo of csy option * (csx * cspoint * csx) list                          (** hhcurveto (27) *)
-  | VHCurveTo of (int * cspoint * int) list * int option                          (** vhcurveto (30) *)
-  | HVCurveTo of (int * cspoint * int) list * int option                          (** hvcurveto (31) *)
-  | Flex      of cspoint * cspoint * cspoint * cspoint * cspoint * cspoint * int  (** flex (12 35) *)
-  | HFlex     of int * cspoint * int * int * int * int                            (** hflex (12 34) *)
-  | HFlex1    of cspoint * cspoint * int * int * cspoint * int                    (** hflex1 (12 36) *)
-  | Flex1     of cspoint * cspoint * cspoint * cspoint * cspoint * int            (** flex1 (12 37) *)
-
-val pp_parsed_charstring : Format.formatter -> parsed_charstring -> unit
-
-val charstring : charstring_info -> glyph_id -> (((int option * parsed_charstring list) option), error) result  (* temporary *)
-
-type path_element =
-  | LineTo         of cspoint
-  | BezierTo       of cspoint * cspoint * cspoint
-
-type path = cspoint * path_element list
-
-val charstring_absolute : charstring_info -> glyph_id -> ((path list) option, error) result
-
-val charstring_bbox : path list -> (csx * csx * csy * csy) option
-
-type cff_raw_glyph
-
-val get_cff_raw_glyph : OtfDecCFF.cff_decoder -> glyph_id -> (cff_raw_glyph option, error) result
-
 module Encode : sig
 
   type raw_table
@@ -681,7 +598,7 @@ module Encode : sig
 
   val ttf_outline_tables : OtfDecTTF.ttf_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
-  val cff_outline_tables : OtfDecCFF.cff_decoder -> cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
+  val cff_outline_tables : OtfDecCFF.cff_decoder -> OtfDecCFF.cff_raw_glyph list -> ((glyph_output_info * glyph_data), error) result
 
 end
 
