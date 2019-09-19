@@ -91,14 +91,6 @@ val cmap_subtable : cmap_subtable -> ('a -> map_kind -> cp_range -> glyph_id -> 
     (UCS-4) and format 4 (UCS-2) cmap table formats are supported. *)
 
 
-(** {2:glyf glyf table} *)
-
-val glyf : OtfDecTTF.ttf_decoder -> glyf_loc -> (glyph_descr, error) result
-(** [glyf d loc] is the glyph descroption located at [loc] by reading
-    the {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf}
-    table. Glyph locations are obtainted via {!loca}. *)
-
-
 (** {2:head head table} *)
 
 val head : decoder -> (head, error) result
