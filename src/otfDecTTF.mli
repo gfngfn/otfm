@@ -6,10 +6,8 @@ open OtfDecBasic
 type ttf_decoder
 
 val ttf_common : ttf_decoder -> common_decoder
-(** injection mapping. *)
 
 val make_initial_ttf : common_decoder -> ttf_decoder
-(** This is just for internal use but cannot be private. Do not use this. *)
 
 val init_glyf : ttf_decoder -> int ok
 (** returns the byte offset of [d]'s 'glyf' table if exists, or [None] otherwise. *)

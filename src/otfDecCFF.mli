@@ -10,7 +10,6 @@ val cff_common : cff_decoder -> common_decoder
 
 val make_initial_cff : common_decoder -> cff_decoder
 
-
 type cff_raw_glyph
 
 val cff_raw_glyph : cff_raw_glyph -> raw_glyph
