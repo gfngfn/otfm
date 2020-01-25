@@ -106,7 +106,7 @@ let pp_glyf ppf has_glyf (dttf : ttf_decoder) =
         | Error _ as e -> e
         | Ok None -> pp ppf "@,@[(glyph-no-outline %d)@]" gid; loop (gid + 1)
         | Ok (Some gloc) ->
-            match Otfm.glyf dttf gloc with
+            match OtfDecTTF.glyf dttf gloc with
             | Error _ as e -> e
             | Ok (Simple cs, bb) -> pp_simple ppf gid cs bb; loop (gid + 1)
             | Ok (Composite cs, bb) ->
