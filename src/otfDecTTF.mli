@@ -32,7 +32,6 @@ val glyf : ttf_decoder -> glyf_loc -> (glyph_descr, error) result
     the {{:https://www.microsoft.com/typography/otspec/glyf.htm}glyf}
     table. Glyph locations are obtainted via {!loca}. *)
 
-
 type ttf_raw_glyph
 
 val ttf_raw_glyph : ttf_raw_glyph -> raw_glyph
