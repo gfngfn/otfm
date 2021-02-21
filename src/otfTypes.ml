@@ -30,6 +30,7 @@ module WideInt : sig
   val is_in_uint32 : t -> bool
   val is_in_int64 : t -> bool
   val is_neg : t -> bool
+  val compare : t -> t -> int
   val pp : Format.formatter -> t -> unit
 end = struct
   type t = Int64.t
@@ -50,6 +51,7 @@ end = struct
   let is_in_int32 iw = -0x80000000L <= iw && iw < 0x80000000L
   let is_in_int64 iw = Int64.min_int <= iw && iw <= Int64.max_int
   let is_neg iw = iw < Int64.zero
+  let compare = Int64.compare
   let pp fmt iw = Format.fprintf fmt "%LX" iw
 end
 

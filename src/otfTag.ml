@@ -85,5 +85,5 @@ let to_bytes t =
 let to_wide_int x = x
 let of_wide_int x = x
 
-let compare = Pervasives.compare
+let compare = WideInt.compare
 let pp ppf t = Format.fprintf ppf "'%s'" (to_bytes t)

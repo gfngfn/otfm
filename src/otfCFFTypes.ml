@@ -22,10 +22,10 @@ module DictMap = Map.Make
     type t = cff_key
     let compare kt1 kt2 =
       match (kt1, kt2) with
-      | (ShortKey(i1), ShortKey(i2)) -> Pervasives.compare i1 i2
+      | (ShortKey(i1), ShortKey(i2)) -> Int.compare i1 i2
       | (ShortKey(_), LongKey(_))    -> -1
       | (LongKey(_), ShortKey(_))    -> 1
-      | (LongKey(i1), LongKey(i2))   -> Pervasives.compare i1 i2
+      | (LongKey(i1), LongKey(i2))   -> Int.compare i1 i2
   end)
 
 

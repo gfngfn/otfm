@@ -2951,7 +2951,17 @@ module Encode = struct
   module SubrsIndexMap = Map.Make
     (struct
       type t = subrs_index_location
-      let compare i j = Pervasives.compare i j
+      let compare i j =
+        match (i, j) with
+        | (Global, Global) -> 0
+        | (Global, _)      -> 1
+
+        | (LocalInTopDict, Global)             -> -1
+        | (LocalInTopDict, LocalInTopDict)     -> 0
+        | (LocalInTopDict, LocalInFontDict(_)) -> 1
+
+        | (LocalInFontDict(n1), LocalInFontDict(n2)) -> Int.compare n1 n2
+        | (LocalInFontDict(_), _)                    -> -1
     end)
 
 
